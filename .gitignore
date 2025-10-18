@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# OS / Editor
+.DS_Store
+.vscode/
+
+# Large artifacts
+*.onnx
+*.pt
+*.tflite
+*.pth
