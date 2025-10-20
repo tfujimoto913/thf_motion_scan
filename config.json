@@ -1,0 +1,65 @@
+{
+  "thresholds": {
+    "confidence_min": 0.7,
+    "joint_distance_max": 150,
+    "frame_skip_tolerance": 3,
+    "single_leg_squat": {
+      "knee_flexion_min": 87,
+      "reps_required": 3,
+      "comment": "90° - MediaPipe誤差3° = 87°"
+    },
+    "skater_lunge": {
+      "step_width_ratio_min": 1.5,
+      "lift_height_ratio_min": 0.10,
+      "knee_extension_min": 137,
+      "reps_required_each_side": 5,
+      "comment": "基準幅比、下肢長比で正規化"
+    },
+    "stride_mimic": {
+      "hip_extension_min": 172,
+      "foot_clearance_ratio_min": 0.05,
+      "reps_required": 10,
+      "comment": "175° - 3° = 172°、下肢長比"
+    },
+    "jump_landing": {
+      "jump_height_ratio_min": 0.18,
+      "knee_flexion_min": 57,
+      "knee_flexion_max": 87,
+      "reps_required": 5,
+      "comment": "下肢長比、着地時膝角度範囲"
+    },
+    "upper_body_swing": {
+      "arm_amplitude_ratio_min": 1.5,
+      "reps_required": 10,
+      "comment": "肩幅比"
+    },
+    "push_pull": {
+      "pull_distance_ratio_min": 0.6,
+      "push_angle_min": 167,
+      "reps_required_each": 10,
+      "comment": "肩幅比、170° - 3° = 167°"
+    },
+    "cross_step": {
+      "step_width_ratio_min": 1.5,
+      "knee_flexion_min": 87,
+      "reps_required_each_side": 5,
+      "comment": "基準幅比、90° - 3° = 87°"
+    },
+    "pelvic_stability": {
+      "tilt_excellent": 0.02,
+      "tilt_good": 0.05,
+      "tilt_improvement": 0.10,
+      "comment": "骨盤安定性評価の閾値（Y座標差）"
+    }
+  },
+  "normalization": {
+    "shoulder_width": "landmarks 11-12 distance",
+    "pelvis_width": "landmarks 23-24 distance",
+    "leg_length": "average hip to ankle distance",
+    "base_width": "max(shoulder_width, pelvis_width)"
+  },
+  "data_integrity": {
+    "random_seed": 42,
+    "nan_handling": "preserve"
+  }
+}

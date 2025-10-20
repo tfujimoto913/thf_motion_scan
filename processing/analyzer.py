@@ -1,3 +1,12 @@
+"""
+Purpose: THF Motion Scanのメインエントリーポイント
+Responsibility: 動画解析・スコアリング・結果保存の統合処理
+Dependencies: mediapipe, opencv, config.json
+Created: 2025-10-19 by Claude
+Decision Log: ADR-002
+
+CRITICAL: config.json閾値参照必須、ハードコード禁止
+"""
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -7,7 +16,25 @@ from pathlib import Path
 from datetime import datetime
 
 class MotionAnalyzer:
-    def __init__(self):
+    """
+    What: THF Motion Scan 分析クラス
+    Why: 動画から姿勢データを抽出し、テスト種別に応じたスコアリングを実行
+    Design Decision: MediaPipe Poseを使用（ADR-002）
+
+    CRITICAL: config.json依存、初期化時に設定読み込み必須
+    """
+    def __init__(self, config_path='config.json'):
+        """
+        What: MediaPipe初期化とconfig.json読み込み
+        Why: 閾値外部化によるデータ整合性保証（ADR-002）
+        Design Decision: config.json一元管理
+
+        CRITICAL: config_path変更時は全テスト更新必須
+        """
+        # PHASE CORE LOGIC: config.json読み込み
+        with open(config_path, 'r', encoding='utf-8') as f:
+            self.config = json.load(f)
+
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=False,
@@ -18,7 +45,13 @@ class MotionAnalyzer:
         self.mp_drawing = mp.solutions.drawing_utils
         
     def analyze_video(self, video_path, test_type):
-        """動画を解析してスコアを返す"""
+        """
+        What: 動画から姿勢ランドマークを抽出し評価
+        Why: テスト種別に応じたスコアリング実行
+        Design Decision: フレーム単位処理後に集計評価（ADR-002）
+
+        CRITICAL: test_type不一致時はエラー、新規テスト追加時はconfig.json更新必須
+        """
         print(f"🎥 動画を解析中: {video_path}")
         print(f"📋 テストタイプ: {test_type}")
         
@@ -86,7 +119,13 @@ class MotionAnalyzer:
         }
     
     def calculate_score(self, landmarks_data, test_type):
-        """ランドマークデータからスコアを計算"""
+        """
+        What: テスト種別に応じたスコアリングロジック振り分け
+        Why: 各テストで評価基準が異なるため
+        Design Decision: Strategy Pattern採用（ADR-002）
+
+        CRITICAL: 新規テスト追加時は対応メソッド実装必須
+        """
         if not landmarks_data:
             return {'total': 0, 'details': '姿勢が検出できませんでした'}
         
@@ -96,41 +135,48 @@ class MotionAnalyzer:
             return {'total': 0, 'details': f'未実装のテスト: {test_type}'}
     
     def score_pelvic_stability(self, landmarks_data):
-        """骨盤安定テストのスコアリング"""
-        # 左右の腰のランドマーク（23: 左腰, 24: 右腰）
+        """
+        What: 骨盤安定性テストのスコアリング（左右hip Y座標差で評価）
+        Why: 片脚立位時の骨盤水平性を定量評価
+        Design Decision: config.json閾値参照でスコア判定（ADR-002）
+
+        CRITICAL: 閾値変更はconfig.jsonのみ、ここでのハードコード禁止
+        """
+        # PHASE CORE LOGIC: 骨盤傾き計算（landmarks 23, 24）
         hip_angles = []
-        
+
         for frame_data in landmarks_data:
             landmarks = frame_data['landmarks']
             if len(landmarks) > 24:
                 left_hip = landmarks[23]
                 right_hip = landmarks[24]
-                
+
                 # 骨盤の傾き（Y座標の差）を計算
                 hip_tilt = abs(left_hip['y'] - right_hip['y'])
                 hip_angles.append(hip_tilt)
-        
+
         if not hip_angles:
             return {'total': 0, 'details': '腰のランドマークが検出できませんでした'}
-        
-        # 平均的な傾きを計算
+
+        # 統計値計算
         avg_tilt = np.mean(hip_angles)
         max_tilt = np.max(hip_angles)
         std_tilt = np.std(hip_angles)
-        
+
+        # CRITICAL: config.json閾値参照（ハードコード禁止）
+        thresholds = self.config['thresholds']['pelvic_stability']
+        tilt_excellent = thresholds['tilt_excellent']
+        tilt_good = thresholds['tilt_good']
+        tilt_improvement = thresholds['tilt_improvement']
+
         # スコアリング（0-3点）
-        # 平均傾き < 0.02: 3点（優秀）
-        # 平均傾き < 0.05: 2点（良好）
-        # 平均傾き < 0.10: 1点（改善の余地あり）
-        # それ以上: 0点（要トレーニング）
-        
-        if avg_tilt < 0.02:
+        if avg_tilt < tilt_excellent:
             score = 3
             level = "優秀"
-        elif avg_tilt < 0.05:
+        elif avg_tilt < tilt_good:
             score = 2
             level = "良好"
-        elif avg_tilt < 0.10:
+        elif avg_tilt < tilt_improvement:
             score = 1
             level = "改善の余地あり"
         else:
@@ -149,7 +195,13 @@ class MotionAnalyzer:
         }
     
     def save_results(self, results, output_dir='processing/output'):
-        """結果をJSONファイルに保存"""
+        """
+        What: 解析結果をJSONファイルに保存
+        Why: 結果の永続化と後続処理での参照
+        Design Decision: タイムスタンプ付きファイル名で重複回避（ADR-002）
+
+        CRITICAL: 個人情報含む場合は匿名化処理後に保存
+        """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
@@ -179,7 +231,7 @@ def main():
     
     try:
         results = analyzer.analyze_video(args.input, args.test)
-        output_file = analyzer.save_results(results, args.output)
+        analyzer.save_results(results, args.output)
         
         print("\n" + "=" * 60)
         print("📊 解析結果サマリー")
