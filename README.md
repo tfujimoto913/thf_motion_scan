@@ -7,7 +7,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-72%25-yellow.svg)](coverage.json)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-動画からMediaPipeを使用して身体ランドマークを抽出し、7種類の機能的動作テストを評価するシステムです。理学療法士やトレーナー向けに、客観的な動作評価と数値化されたフィードバックを提供します。
+動画からMediaPipeを使用して身体ランドマークを抽出し、アイスホッケーに特化した7種類の機能的動作テストを評価するシステムです。クライアントに客観的な動作評価と数値化されたフィードバックを提供します。
 
 ## 🎯 プロジェクト概要
 
