@@ -1,6 +1,6 @@
 # THF Motion Scan
 
-**トーマステストフレームワーク（THF）動作分析システム**
+**The Hockey Future（THF）動作分析システム**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-53%20passed-brightgreen.svg)](tests/)
@@ -13,7 +13,7 @@
 
 ### THF Motion Scanとは
 
-トーマステストフレームワーク（Thomas Test Framework）は、アスリートやリハビリテーション患者の機能的動作能力を評価するための標準化されたテストバッテリーです。本システムは、動画解析とAIによる自動評価を組み合わせ、以下を実現します：
+The Hockey Future Motion Scanは、アイスホッケーに特化した機能的動作能力を評価するための標準化されたテストバッテリーです。本システムは、動画解析とAIによる自動評価を組み合わせ、以下を実現します：
 
 - **客観的評価**: MediaPipe Poseによる33キーポイント抽出
 - **標準化**: 身体スケール正規化により個人差を吸収
