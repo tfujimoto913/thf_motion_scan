@@ -28,3 +28,16 @@ tests/test_videos/*.mov
 # Test outputs
 tests/output/
 warnings.json
+
+# AWS SAM
+.aws-sam/
+samconfig.toml.bak
+packaged.yaml
+.aws/
+
+# Docker
+.docker/
+
+# Temporary files
+*.tmp
+/tmp/
