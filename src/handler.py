@@ -1,7 +1,19 @@
 """
-THF Motion Scan - AWS Lambda Handler
-Purpose: S3イベントをトリガーに動画処理を実行
-Created: 2025-10-24
+Purpose: S3イベントをトリガーにした動画処理のLambdaエントリーポイント
+Responsibility:
+  - S3/SQSイベントの受信とパース
+  - 動画ダウンロードと一時ファイル管理
+  - VideoProcessingWorkerの実行
+  - 結果のS3保存とDynamoDB記録
+Dependencies: processing.worker, boto3, config.json
+Created: 2025-10-24 by Claude
+Decision Log: ADR-007, ADR-008
+
+CRITICAL:
+  - 環境変数RESULTS_BUCKET, TABLE_NAME必須
+  - 一時ファイルのクリーンアップ必須（os.unlink）
+  - DynamoDB TTL設定（90日）必須
+  - S3イベントとSQSイベント両対応
 """
 import json
 import os

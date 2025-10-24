@@ -1,3 +1,17 @@
+# ==============================================================================
+# THF Motion Scan - CloudFormation Template
+# Purpose: S3→SQS→Lambda→DynamoDB のサーバーレス動画処理基盤
+# Architecture: Event-driven processing with SQS buffering
+# Decision Log: ADR-007, ADR-008
+#
+# CRITICAL:
+#   - VideosBucket は QueuePolicy に依存（DependsOn: QueuePolicy）
+#   - QueuePolicy の Condition は AccountId ベース（循環依存回避、ADR-008）
+#   - Lambda には ECR イメージ使用（linux/amd64、ADR-009）
+#   - S3 ライフサイクル: videos 30日削除、results 90日Glacier移行
+#   - DynamoDB TTL: 90日自動削除
+# ==============================================================================
+
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: THF Motion Scan - AWS Serverless Application

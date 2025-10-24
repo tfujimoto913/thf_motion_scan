@@ -292,3 +292,153 @@
   | ADR記録 | ADR-001〜004 | ADR-005〜006 | +2件 |
 - 参照: CLAUDE.md §Phase制導入、docs/phase2_completion_report.md
 - 破壊的変更: なし
+## ADR-007: AWS Lambda Container Architectureの選択
+- 日付: 2025-10-24
+- 決定者: Human + Claude
+- 決定: THF Motion ScanをAWS Lambda Container Imageとしてデプロイ
+- 理由:
+  - **MediaPipe依存**: MediaPipeは250MB+の大容量パッケージでZip形式では制限超過
+  - **OpenCV依存**: システムライブラリ（mesa-libGL）が必要でLambda Layer非対応
+  - **再現性**: Dockerfileによる環境完全再現
+  - **ローカルテスト**: docker run で Lambda 環境を完全再現可能
+- アーキテクチャ選択:
+  - **S3 → SQS → Lambda → DynamoDB** のイベント駆動型
+  - **SQS バッファリング**: Lambda 同時実行数制限対策、リトライ制御
+  - **DLQ（Dead Letter Queue）**: 3回失敗後の隔離
+  - **S3 ライフサイクル**: videos 30日削除、results 90日 Glacier 移行
+  - **DynamoDB TTL**: 90日自動削除（コスト最適化）
+- 影響:
+  - `Dockerfile`: 新規作成
+    - ベースイメージ: `public.ecr.aws/lambda/python:3.11`
+    - システム依存: mesa-libGL, gcc, gcc-c++, make
+    - アプリコード: config.json, processing/, src/handler.py
+  - `template.yaml`: CloudFormation テンプレート作成
+    - VideosBucket: S3 動画アップロード用
+    - ResultsBucket: S3 結果保存用
+    - ProcessingQueue: SQS キュー（VisibilityTimeout 960秒）
+    - DeadLetterQueue: SQS DLQ（maxReceiveCount 3）
+    - ProcessingFunction: Lambda 関数（Timeout 900秒、MemorySize 3008MB）
+    - ResultsTable: DynamoDB テーブル（video_id + processed_at 複合キー）
+  - `src/handler.py`: Lambda ハンドラー作成
+    - S3/SQS イベント両対応
+    - 一時ファイル管理（tempfile + os.unlink）
+    - VideoProcessingWorker 統合
+    - 結果の S3 保存と DynamoDB 記録
+  - `samconfig.toml`: SAM CLI 設定
+    - stack_name: thf-motion-scan
+    - region: ap-northeast-1
+    - resolve_image_repos: true
+- 技術詳細:
+  - **Lambda Timeout**: 900秒（15分、動画処理対応）
+  - **Lambda Memory**: 3008MB（MediaPipe 最大メモリ要件）
+  - **SQS VisibilityTimeout**: 960秒（Lambda Timeout + 60秒バッファ）
+  - **S3 イベント通知**: videos/*.mp4 作成時に SQS 送信
+  - **DynamoDB キースキーマ**:
+    - HASH: video_id (S3 パス)
+    - RANGE: processed_at (タイムスタンプ)
+- セキュリティ:
+  - **IAM Policies**: S3ReadPolicy, S3CrudPolicy, DynamoDBCrudPolicy
+  - **環境変数**: RESULTS_BUCKET, TABLE_NAME（template.yaml 管理）
+  - **S3 バケット**: AccountId サフィックスで一意性保証
+- デプロイフロー:
+  1. Docker イメージビルド: `docker buildx build --platform linux/amd64 ...`
+  2. ECR プッシュ: `docker push <account-id>.dkr.ecr.<region>.amazonaws.com/thf-motion-scan:latest`
+  3. SAM ビルド: `sam build`
+  4. SAM デプロイ: `sam deploy`
+- 参照: AWS_DEPLOYMENT_GUIDE.md
+- 破壊的変更: なし（新規インフラ構築）
+
+## ADR-008: CloudFormation循環依存の解決
+- 日付: 2025-10-25
+- 決定者: Claude
+- 決定: QueuePolicy の Condition を AccountId ベースに変更
+- 問題:
+  - **循環依存エラー**: `VideosBucket` ← `QueuePolicy` ← `VideosBucket`
+  - **原因**: 
+    - VideosBucket が QueuePolicy に依存（`DependsOn: QueuePolicy`）
+    - QueuePolicy の Condition が VideosBucket を参照（`aws:SourceArn: !GetAtt VideosBucket.Arn`）
+  - **エラーメッセージ**: "Circular dependency between resources: [VideosBucket, QueuePolicy]"
+- 解決策:
+  - **QueuePolicy Condition 変更**:
+    - 旧: `ArnLike: { aws:SourceArn: !GetAtt VideosBucket.Arn }`
+    - 新: `StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }`
+  - **依存関係**: VideosBucket → QueuePolicy（一方向のみ）
+- 技術的根拠:
+  - **セキュリティ**: AccountId 制限で同一アカウント内の S3 のみ許可
+  - **循環回避**: VideosBucket への参照を削除
+  - **AWS ベストプラクティス**: AccountId ベース制限は推奨パターン
+- 影響:
+  - `template.yaml` 修正:
+    ```yaml
+    QueuePolicy:
+      Properties:
+        PolicyDocument:
+          Statement:
+            - Condition:
+                StringEquals:
+                  aws:SourceAccount: !Ref AWS::AccountId
+    ```
+  - セキュリティレベル: 維持（同一アカウント制限）
+- トレードオフ:
+  - **メリット**: 循環依存解消、デプロイ成功
+  - **デメリット**: 特定バケットのみに制限不可（同一アカウント内の全 S3 が許可）
+  - **リスク評価**: 低（VideosBucket 以外からの通知はアプリレベルで無視）
+- 参照: template.yaml:83-85
+- 破壊的変更: なし（内部実装変更のみ）
+
+## ADR-009: Docker Multi-Platform Build対応（arm64→amd64）
+- 日付: 2025-10-25
+- 決定者: Claude
+- 決定: Lambda 用に linux/amd64 単一プラットフォームイメージをビルド
+- 問題:
+  - **Lambda デプロイ失敗**: "The image manifest, config or layer media type for the source image is not supported"
+  - **原因 1（初回）**: arm64 イメージを Lambda にデプロイ
+    - ローカル Mac（Apple Silicon）で `docker build` 実行 → arm64 イメージ生成
+    - Lambda は x86_64（amd64）のみサポート
+  - **原因 2（2回目）**: マルチアーキテクチャマニフェスト生成
+    - `docker buildx build --platform linux/amd64` 実行
+    - Docker Buildx がデフォルトで provenance/SBOM attestation 生成
+    - ECR に `application/vnd.oci.image.index.v1+json` としてプッシュ
+    - Lambda はマルチアーキテクチャマニフェスト非対応
+- 解決策:
+  - **単一プラットフォームビルド**:
+    ```bash
+    docker buildx build \
+      --platform linux/amd64 \
+      --provenance=false \
+      --sbom=false \
+      --load \
+      -t thf-motion-scan:latest .
+    ```
+  - **検証コマンド**:
+    ```bash
+    # アーキテクチャ確認
+    docker image inspect thf-motion-scan:latest --format '{{.Architecture}}'
+    # 期待値: amd64
+    
+    # ECR マニフェストタイプ確認
+    aws ecr describe-images --repository-name thf-motion-scan --image-ids imageTag=latest
+    # 期待値: application/vnd.docker.distribution.manifest.v2+json
+    ```
+- 技術詳細:
+  - **--platform linux/amd64**: Lambda 要件に合わせた単一プラットフォーム指定
+  - **--provenance=false**: ビルド証明（provenance attestation）無効化
+  - **--sbom=false**: SBOM（Software Bill of Materials）無効化
+  - **--load**: ビルド結果をローカル Docker にロード
+  - **manifest types**:
+    - ✅ `application/vnd.docker.distribution.manifest.v2+json`: 単一プラットフォーム（Lambda 対応）
+    - ❌ `application/vnd.oci.image.index.v1+json`: マルチアーキテクチャ（Lambda 非対応）
+- トラブルシューティング履歴:
+  1. **初回ビルド**: `docker build` → arm64 イメージ → Lambda 失敗
+  2. **2回目ビルド**: `docker build --platform linux/amd64` → マルチマニフェスト → Lambda 失敗
+  3. **3回目ビルド**: `docker buildx build --platform linux/amd64 --provenance=false --sbom=false` → 成功
+- 影響:
+  - `Dockerfile` ヘッダーに CRITICAL コメント追加
+  - ビルドコマンド標準化: Dockerfile コメントに記載
+  - ビルド時間: ~10分（yum install 346秒、pip install 258秒）
+- セキュリティ影響:
+  - **provenance/SBOM 無効化**: サプライチェーンセキュリティ情報削減
+  - **リスク評価**: 低（内部利用のみ、ECR アクセス制限済み）
+  - **代替策**: 将来的に Lambda がマルチマニフェスト対応後に再有効化検討
+- 参照: Dockerfile:7-11, AWS_DEPLOYMENT_GUIDE.md
+- 破壊的変更: なし（ビルドプロセス変更のみ）

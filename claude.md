@@ -60,15 +60,20 @@ def func_name(arg: type) -> type:
 
 ## 🔄 Phase制導入
 
-| Phase | 目的 | 主担当 | Human承認 |
-|:------|:-----|:-------|:----------|
-| 0 | 環境・ルール同期 | Claude | ✅ |
-| 1 | データIngest | Claude+GPT | ✅ |
-| 2 | Processing | Claude+GPT | ✅ |
-| 3 | Output整合 | Claude+GPT | ✅ |
-| 4 | Dashboard/Recovery | Claude | ✅ |
+| Phase | 目的 | 主担当 | Human承認 | 状態 |
+|:------|:-----|:-------|:----------|:-----|
+| 0 | 環境・ルール同期 | Claude | ✅ | ✅ 完了 |
+| 1 | データIngest（pose_extractor, normalizer） | Claude+GPT | ✅ | ✅ 完了 |
+| 2 | Processing（evaluators, health_check, worker） | Claude+GPT | ✅ | ✅ 完了 |
+| 3 | Testing & Documentation | Claude+GPT | ✅ | ✅ 完了 |
+| 4 | Cloud Deployment（AWS Lambda, S3, DynamoDB） | Claude | ✅ | ✅ 完了 |
+| 5 | Dashboard/Recovery（未実施） | Claude | - | - |
 
 **Phase Gate**: 各Phase完了時に承認なしでは次へ進めない
+
+**Phase更新履歴**:
+- 2025-10-25: Phase 4をCloud Deploymentに変更（旧Dashboard/Recoveryは Phase 5へ）
+- Phase 4完了内容: AWS Lambda Container, ECR, SAM, CloudFormation（ADR-007〜009）
 
 ---
 
