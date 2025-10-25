@@ -480,3 +480,93 @@
   - Phase 4: セキュリティポリシー明文化予定
 - 参照: ADR-007, ADR-008, ADR-009, CLAUDE.md §コード品質
 - 破壊的変更: なし（ドキュメント整理のみ）
+
+## ADR-011: 出力物生成機能の実装
+- 日付: 2025-10-25
+- 決定者: Human + Claude
+- 決定: 評価結果をCSV/PNG/PDF形式で出力可能にする
+- 背景:
+  - **顧客納品要件**: JSON出力のみでは顧客納品に不十分
+  - **可視化要求**: グラフ・レポート形式での成果物が必要
+  - **データ分析要求**: Excelでの分析を可能にするCSV出力が必要
+  - **印刷可能要求**: 印刷可能なPDFレポートが必要
+- 決定内容:
+  - `processing/exporters/` モジュールを作成
+  - 4種類のエクスポーター実装:
+    - **BaseExporter**: 抽象基底クラス（共通機能）
+    - **CSVExporter**: CSV出力（pandas使用）
+    - **PNGPlotter**: PNG可視化（matplotlib使用）
+    - **PDFReporter**: PDFレポート生成（reportlab使用）
+  - `worker.py` への統合: `output_formats` オプション追加
+  - Unit tests作成: `tests/test_exporters.py` (14テスト)
+- 技術スタック:
+  - **pandas >= 2.0.0**: CSV出力、データフラット化
+  - **matplotlib >= 3.8.2**: PNG可視化、バーグラフ生成
+  - **reportlab >= 4.0.7**: PDFレポート生成、テーブル・段落構造化
+- 影響範囲:
+  - `requirements.txt`: 新規依存関係追加 (pandas, matplotlib, reportlab)
+  - `processing/exporters/`: 新規モジュール作成 (5ファイル)
+  - `processing/worker.py`: `output_formats` オプション追加、`_export_formats()` メソッド追加
+  - `tests/test_exporters.py`: 新規作成 (14テスト、全合格)
+- 実装詳細:
+  - **BaseExporter**:
+    - 抽象基底クラス（ABC使用）
+    - `export()` メソッド強制（サブクラスで実装必須）
+    - `validate_result()`: 評価結果の妥当性検証（score: 0-3範囲チェック）
+    - `get_output_path()`: 出力パス生成ヘルパー
+  - **CSVExporter**:
+    - `export()`: 単一結果のCSV出力
+    - `export_batch()`: 複数結果の一括CSV出力
+    - `_flatten_result()`: ネストした辞書をフラット化（evaluation.pelvic_stability.score形式）
+    - NaN値を空文字列に変換（CSV互換性）
+  - **PNGPlotter**:
+    - `export()`: 単一結果のバーグラフ出力
+    - `export_batch()`: 複数結果の比較グラフ出力
+    - `_plot_bar_chart()`: 横棒グラフ描画（0-3点スケール、カラーコード）
+    - スコア3=緑、2=黄、1=オレンジ、0=赤
+  - **PDFReporter**:
+    - `export()`: 包括的PDFレポート出力
+    - `_build_title()`: タイトルセクション構築
+    - `_build_summary()`: サマリーテーブル構築
+    - `_build_detailed_evaluation()`: 詳細評価テーブル構築
+    - `_build_health_check()`: ヘルスチェックセクション構築
+  - **worker.py統合**:
+    - `process_video()` に `output_formats` パラメータ追加
+    - `_export_formats()` メソッド追加（CSV/PNG/PDF一括出力）
+    - 出力ファイルパスを `result['exported_files']` に格納
+- 使用例:
+  ```python
+  from processing.worker import VideoProcessingWorker
+
+  worker = VideoProcessingWorker()
+  result = worker.process_video(
+      video_path='tests/test_videos/sample.mp4',
+      test_type='single_leg_squat',
+      output_dir='outputs',
+      output_formats=['csv', 'png', 'pdf']
+  )
+
+  # 出力ファイルパス: result['exported_files']
+  # {'csv': '/path/to/outputs/single_leg_squat_20251025_120000.csv',
+  #  'png': '/path/to/outputs/single_leg_squat_20251025_120000.png',
+  #  'pdf': '/path/to/outputs/single_leg_squat_20251025_120000.pdf'}
+  ```
+- テスト結果:
+  - **全テスト合格**: 14/14 passed in 8.24s
+  - BaseExporter: 4テスト（検証ロジック）
+  - CSVExporter: 3テスト（export, export_batch, エラーハンドリング）
+  - PNGPlotter: 3テスト（export, export_batch, エラーハンドリング）
+  - PDFReporter: 3テスト（export, カスタムタイトル, エラーハンドリング）
+  - Integration: 1テスト（全エクスポーター同時実行）
+- ワークフロー変更:
+  - 旧: 抽出 → 評価 → JSON保存
+  - 新: 抽出 → 評価 → JSON保存 + **CSV/PNG/PDF出力（オプション）**
+- セキュリティ:
+  - **個人情報除外**: CSVフラット化時に個人情報フィールド除外
+  - **パス匿名化**: video_path は _anonymize_path() 適用済み前提
+- パフォーマンス:
+  - **CSV出力**: ~0.1秒（pandas DataFrame変換）
+  - **PNG出力**: ~1秒（matplotlib描画）
+  - **PDF出力**: ~0.5秒（reportlab構築）
+- 参照: CLAUDE.md §出力物機能、processing/exporters/
+- 破壊的変更: なし（後方互換性維持、output_formatsはオプション）
