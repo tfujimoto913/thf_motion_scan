@@ -1,0 +1,244 @@
+{
+  "schema_version": "1.0.0",
+  "last_updated": "2025-10-25",
+  "global_settings": {
+    "score_range": {
+      "min": 0,
+      "max": 3,
+      "description": "All test scores use 0-3 scale: 0=Poor, 1=Fair, 2=Good, 3=Excellent"
+    },
+    "frame_detection": {
+      "min_detection_rate": 0.7,
+      "min_confidence": 0.5,
+      "description": "Minimum thresholds for valid landmark detection"
+    },
+    "scoring_method": {
+      "default": "min",
+      "description": "Default aggregation method: min (weakest link) or weighted_average"
+    },
+    "weight_validation": {
+      "sum_must_equal": 1.0,
+      "tolerance": 0.001,
+      "description": "All metric weights must sum to 1.0 within tolerance"
+    }
+  },
+  "test_types": {
+    "single_leg_squat": {
+      "display_name": "Single Leg Squat",
+      "description": "Evaluates pelvic stability and knee flexion during single-leg squat",
+      "metrics": [
+        {
+          "name": "pelvic_stability",
+          "weight": 0.5,
+          "unit": "meters",
+          "description": "Hip height difference between left and right sides",
+          "thresholds": {
+            "score_3": {"max": 0.03, "description": "Excellent: <3cm difference"},
+            "score_2": {"max": 0.05, "description": "Good: 3-5cm difference"},
+            "score_1": {"max": 0.08, "description": "Fair: 5-8cm difference"},
+            "score_0": {"min": 0.08, "description": "Poor: >8cm difference"}
+          }
+        },
+        {
+          "name": "knee_flexion",
+          "weight": 0.5,
+          "unit": "degrees",
+          "description": "Minimum knee flexion angle during squat",
+          "thresholds": {
+            "score_3": {"min": 80, "description": "Excellent: e80° flexion"},
+            "score_2": {"min": 60, "description": "Good: 60-80° flexion"},
+            "score_1": {"min": 45, "description": "Fair: 45-60° flexion"},
+            "score_0": {"max": 45, "description": "Poor: <45° flexion"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "upper_body_swing": {
+      "display_name": "Upper Body Swing",
+      "description": "Evaluates shoulder rotation range and trunk stability during swing motion",
+      "metrics": [
+        {
+          "name": "shoulder_rotation_range",
+          "weight": 0.6,
+          "unit": "degrees",
+          "description": "Maximum shoulder rotation range during swing",
+          "thresholds": {
+            "score_3": {"min": 90, "description": "Excellent: e90° rotation"},
+            "score_2": {"min": 70, "description": "Good: 70-90° rotation"},
+            "score_1": {"min": 50, "description": "Fair: 50-70° rotation"},
+            "score_0": {"max": 50, "description": "Poor: <50° rotation"}
+          }
+        },
+        {
+          "name": "trunk_stability",
+          "weight": 0.4,
+          "unit": "meters",
+          "description": "Shoulder height difference during swing",
+          "thresholds": {
+            "score_3": {"max": 0.05, "description": "Excellent: <5cm difference"},
+            "score_2": {"max": 0.08, "description": "Good: 5-8cm difference"},
+            "score_1": {"max": 0.12, "description": "Fair: 8-12cm difference"},
+            "score_0": {"min": 0.12, "description": "Poor: >12cm difference"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "skater_lunge": {
+      "display_name": "Skater Lunge",
+      "description": "Evaluates lateral stability and hip flexion depth during skater lunge",
+      "metrics": [
+        {
+          "name": "lateral_stability",
+          "weight": 0.5,
+          "unit": "meters",
+          "description": "Hip height difference between sides during lunge",
+          "thresholds": {
+            "score_3": {"max": 0.04, "description": "Excellent: <4cm difference"},
+            "score_2": {"max": 0.07, "description": "Good: 4-7cm difference"},
+            "score_1": {"max": 0.10, "description": "Fair: 7-10cm difference"},
+            "score_0": {"min": 0.10, "description": "Poor: >10cm difference"}
+          }
+        },
+        {
+          "name": "hip_flexion_depth",
+          "weight": 0.5,
+          "unit": "degrees",
+          "description": "Hip flexion angle at deepest point",
+          "thresholds": {
+            "score_3": {"min": 90, "description": "Excellent: e90° flexion"},
+            "score_2": {"min": 70, "description": "Good: 70-90° flexion"},
+            "score_1": {"min": 50, "description": "Fair: 50-70° flexion"},
+            "score_0": {"max": 50, "description": "Poor: <50° flexion"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "cross_step": {
+      "display_name": "Cross Step",
+      "description": "Evaluates hip rotation range and pelvic alignment during cross-step motion",
+      "metrics": [
+        {
+          "name": "hip_rotation_range",
+          "weight": 0.6,
+          "unit": "degrees",
+          "description": "Maximum hip rotation angle during cross-step",
+          "thresholds": {
+            "score_3": {"min": 45, "description": "Excellent: e45° rotation"},
+            "score_2": {"min": 35, "description": "Good: 35-45° rotation"},
+            "score_1": {"min": 25, "description": "Fair: 25-35° rotation"},
+            "score_0": {"max": 25, "description": "Poor: <25° rotation"}
+          }
+        },
+        {
+          "name": "pelvic_alignment",
+          "weight": 0.4,
+          "unit": "meters",
+          "description": "Hip height consistency during movement",
+          "thresholds": {
+            "score_3": {"max": 0.03, "description": "Excellent: <3cm variation"},
+            "score_2": {"max": 0.06, "description": "Good: 3-6cm variation"},
+            "score_1": {"max": 0.09, "description": "Fair: 6-9cm variation"},
+            "score_0": {"min": 0.09, "description": "Poor: >9cm variation"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "stride_mimic": {
+      "display_name": "Stride Mimic",
+      "description": "Evaluates stride length consistency and knee drive height",
+      "metrics": [
+        {
+          "name": "stride_length_consistency",
+          "weight": 0.5,
+          "unit": "coefficient_of_variation",
+          "description": "Coefficient of variation in stride length (lower is better)",
+          "thresholds": {
+            "score_3": {"max": 0.05, "description": "Excellent: CV <5%"},
+            "score_2": {"max": 0.10, "description": "Good: CV 5-10%"},
+            "score_1": {"max": 0.15, "description": "Fair: CV 10-15%"},
+            "score_0": {"min": 0.15, "description": "Poor: CV >15%"}
+          }
+        },
+        {
+          "name": "knee_drive_height",
+          "weight": 0.5,
+          "unit": "meters",
+          "description": "Maximum knee height relative to hip during stride",
+          "thresholds": {
+            "score_3": {"min": 0.30, "description": "Excellent: e30cm knee drive"},
+            "score_2": {"min": 0.20, "description": "Good: 20-30cm knee drive"},
+            "score_1": {"min": 0.10, "description": "Fair: 10-20cm knee drive"},
+            "score_0": {"max": 0.10, "description": "Poor: <10cm knee drive"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "push_pull": {
+      "display_name": "Push-Pull",
+      "description": "Evaluates shoulder extension range and trunk stability during push-pull motion",
+      "metrics": [
+        {
+          "name": "shoulder_extension_range",
+          "weight": 0.6,
+          "unit": "degrees",
+          "description": "Maximum shoulder extension angle during pull",
+          "thresholds": {
+            "score_3": {"min": 60, "description": "Excellent: e60° extension"},
+            "score_2": {"min": 45, "description": "Good: 45-60° extension"},
+            "score_1": {"min": 30, "description": "Fair: 30-45° extension"},
+            "score_0": {"max": 30, "description": "Poor: <30° extension"}
+          }
+        },
+        {
+          "name": "trunk_stability",
+          "weight": 0.4,
+          "unit": "meters",
+          "description": "Shoulder height difference during motion",
+          "thresholds": {
+            "score_3": {"max": 0.05, "description": "Excellent: <5cm difference"},
+            "score_2": {"max": 0.08, "description": "Good: 5-8cm difference"},
+            "score_1": {"max": 0.12, "description": "Fair: 8-12cm difference"},
+            "score_0": {"min": 0.12, "description": "Poor: >12cm difference"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    },
+    "jump_landing": {
+      "display_name": "Jump Landing",
+      "description": "Evaluates knee flexion on landing and pelvic stability during jump",
+      "metrics": [
+        {
+          "name": "landing_knee_flexion",
+          "weight": 0.5,
+          "unit": "degrees",
+          "description": "Knee flexion angle at initial contact",
+          "thresholds": {
+            "score_3": {"min": 45, "description": "Excellent: e45° flexion on landing"},
+            "score_2": {"min": 30, "description": "Good: 30-45° flexion"},
+            "score_1": {"min": 20, "description": "Fair: 20-30° flexion"},
+            "score_0": {"max": 20, "description": "Poor: <20° flexion (injury risk)"}
+          }
+        },
+        {
+          "name": "pelvic_stability",
+          "weight": 0.5,
+          "unit": "meters",
+          "description": "Hip height difference on landing",
+          "thresholds": {
+            "score_3": {"max": 0.03, "description": "Excellent: <3cm difference"},
+            "score_2": {"max": 0.05, "description": "Good: 3-5cm difference"},
+            "score_1": {"max": 0.08, "description": "Fair: 5-8cm difference"},
+            "score_0": {"min": 0.08, "description": "Poor: >8cm difference"}
+          }
+        }
+      ],
+      "overall_scoring": "min"
+    }
+  }
+}
