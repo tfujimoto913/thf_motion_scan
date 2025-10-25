@@ -160,6 +160,11 @@ threshold = config['thresholds']['confidence_min']
 # ✅ 再現性保証（乱数シード固定）
 random.seed(42)
 np.random.seed(42)
+
+# ✅ 特殊文字禁止（JSON/YAML）
+">=80deg flexion"  # ✅ OK
+">=80° flexion"    # ❌ NG (UTF-8 error)
+# CRITICAL: 度数記号（°）等の非ASCII文字はエンコーディングエラーの原因
 ```
 
 ---
