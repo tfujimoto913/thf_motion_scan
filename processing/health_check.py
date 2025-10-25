@@ -228,7 +228,7 @@ class HealthChecker:
         }
 
         # SECURITY REQUIREMENT: 環境変数除外確認
-        # （現状、config.jsonに環境変数なし。将来Azure連携時に注意）
+        # （現状、config.jsonに環境変数なし。将来AWS連携拡張時に注意）
 
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(warnings_data, f, indent=2, ensure_ascii=False)

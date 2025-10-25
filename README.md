@@ -614,6 +614,123 @@ GitHub UIでPull Request作成時、以下を含めてください：
 
 ---
 
+## 🚀 AWS デプロイ
+
+THF Motion ScanをAWS Serverlessアーキテクチャにデプロイする手順です。
+
+### アーキテクチャ
+
+```
+S3 (Videos) → SQS → Lambda (Container) → S3 (Results) + DynamoDB
+```
+
+**コンポーネント**:
+- **S3**: 動画アップロード＆結果保存
+- **SQS**: 非同期処理キュー
+- **Lambda**: MediaPipeによる動画解析（Container Image）
+- **DynamoDB**: 処理結果のメタデータ保存
+
+### 前提条件
+
+- AWSアカウント
+- AWS CLI（v2.31.20+）
+- AWS SAM CLI（v1.145.2+）
+- Docker Desktop（v28.5.1+）
+- IAM認証設定完了（`aws configure`）
+
+### デプロイ手順
+
+#### Step 1: ECRリポジトリ作成
+
+```bash
+# ECRリポジトリを作成
+aws ecr create-repository --repository-name thf-motion-scan --region ap-northeast-1
+
+# ECRログイン
+aws ecr get-login-password --region ap-northeast-1 | \
+  docker login --username AWS --password-stdin \
+  <account-id>.dkr.ecr.ap-northeast-1.amazonaws.com
+```
+
+#### Step 2: Dockerイメージをビルド＆プッシュ
+
+```bash
+# SAM buildでイメージをビルド
+sam build
+
+# イメージをECRにプッシュ
+docker tag thf-motion-scan:latest \
+  <account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/thf-motion-scan:latest
+
+docker push <account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/thf-motion-scan:latest
+```
+
+#### Step 3: SAMデプロイ
+
+```bash
+# 初回デプロイ（ガイド付き）
+sam deploy --guided
+
+# 2回目以降
+sam deploy
+```
+
+#### Step 4: 動作確認
+
+```bash
+# S3バケット名を取得
+aws cloudformation describe-stacks \
+  --stack-name thf-motion-scan \
+  --query 'Stacks[0].Outputs[?OutputKey==`VideosBucketName`].OutputValue' \
+  --output text
+
+# テスト動画をアップロード
+aws s3 cp test_video.mp4 s3://thf-motion-scan-videos-<account-id>/videos/single_leg_squat/test.mp4
+
+# Lambda実行ログを確認
+sam logs -n ProcessingFunction --stack-name thf-motion-scan --tail
+```
+
+### ローカルテスト
+
+```bash
+# イメージをビルド
+docker build -t thf-motion-scan:local .
+
+# ローカルで実行（テスト用）
+docker run --rm \
+  -e RESULTS_BUCKET=test-bucket \
+  -e TABLE_NAME=test-table \
+  thf-motion-scan:local
+```
+
+### モニタリング
+
+```bash
+# Lambda関数のログを確認
+sam logs -n ProcessingFunction --stack-name thf-motion-scan --tail
+
+# 特定の時間範囲のログ
+sam logs -n ProcessingFunction --start-time '10 minutes ago' --end-time 'now'
+```
+
+### コスト試算
+
+**無料枠（12ヶ月）**:
+- Lambda: 月100万リクエスト、40万GB-秒
+- S3: 5GB、20,000 GETリクエスト
+- DynamoDB: 25GB、25 WCU、25 RCU
+
+**想定コスト（100動画/月の場合）**:
+- Lambda: $5-10/月（実行時間による）
+- S3: $1-2/月
+- DynamoDB: $0-1/月
+- **合計: 約$6-13/月**
+
+詳細は [ADR-007](docs/adr/decision_log.md#adr-007-aws-lambda-container-architectureの選択) を参照してください。
+
+---
+
 ## 📜 ライセンス
 
 MIT License（予定）

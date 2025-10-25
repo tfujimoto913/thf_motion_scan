@@ -442,3 +442,41 @@
   - **代替策**: 将来的に Lambda がマルチマニフェスト対応後に再有効化検討
 - 参照: Dockerfile:7-11, AWS_DEPLOYMENT_GUIDE.md
 - 破壊的変更: なし（ビルドプロセス変更のみ）
+
+## ADR-010: Azure関連記述の削除とドキュメント整理
+- 日付: 2025-10-25
+- 決定者: Human + Claude
+- 決定: Phase 4でAWS統合完了後、古いAzure関連記述を削除し、ドキュメントを整理
+- 理由:
+  - **技術スタック変更**: Azure → AWS への移行完了（ADR-007〜009）
+  - **ドキュメント整合性**: 古い記述が残ると混乱を招く
+  - **コード品質向上**: CLAUDE.md準拠の一環として不要コメント削除
+  - **メンテナンス効率化**: 最新の技術スタックのみドキュメント化
+- 影響:
+  - `docs/phase2_completion_report.md`:
+    - 旧: "Azure統合の選択肢（Phase 4候補）"
+    - 新: "AWS統合完了（Phase 4完了済み）"
+    - AWS Lambda, S3, DynamoDB, SAM の記載に変更
+  - `docs/design/overview.md`:
+    - 旧: "Azure Blob Storage"
+    - 新: "AWS S3 (動画・JSON保存)", "AWS Lambda (サーバーレス処理)", "AWS DynamoDB (評価結果保存)"
+    - プロジェクト目的も更新: "トーマステストフレームワーク" → "アイスホッケー選手向け"
+  - `CLAUDE.md`:
+    - 旧: `api_key = os.getenv("AZURE_API_KEY")`
+    - 新: `api_key = os.getenv("AWS_SECRET_KEY")` (セキュリティ例の更新)
+  - `processing/health_check.py`:
+    - Azure関連コメント削除（存在する場合）
+- 技術詳細:
+  - **検証コマンド**: `grep -ri "azure" . --exclude-dir=.git --exclude-dir=.venv --exclude=*.pyc`
+  - **Phase 1完了条件**:
+    - ✅ ドキュメント内Azure記述削除
+    - ✅ コード内Azureコメント削除
+    - ✅ AWS関連記述への置換
+    - ✅ ADR-010記録
+- ワークフロー:
+  - Phase 1: ドキュメント・コード内Azure記述削除（本ADR）
+  - Phase 2: 出力物機能追加（CSV/PDF/PNG）予定
+  - Phase 3: ルール定義（test_rules.json）実装予定
+  - Phase 4: セキュリティポリシー明文化予定
+- 参照: ADR-007, ADR-008, ADR-009, CLAUDE.md §コード品質
+- 破壊的変更: なし（ドキュメント整理のみ）

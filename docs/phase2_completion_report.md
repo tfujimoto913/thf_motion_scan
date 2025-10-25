@@ -766,19 +766,18 @@ CLAUDE.md定義により、Phase 3は「Output整合」を目的としていま�
 
 **所要時間**: 2-3時間
 
-### Azure統合の選択肢（Phase 4候補）
+### AWS統合完了（Phase 4完了済み）
 
-Phase 3（Output整合）完了後、Phase 4でAzure統合を検討可能。
+Phase 3（Output整合）完了後、Phase 4でAWS統合を実施済み。
 
-**Azure統合内容**:
-1. Azure Functions: サーバーレス動画処理API
-2. Azure Blob Storage: 動画・JSON保存
-3. Azure Queue: 非同期処理キュー
-4. Azure Cosmos DB: 評価結果保存
+**AWS統合内容**:
+1. AWS Lambda: サーバーレス動画処理API
+2. AWS S3: 動画・JSON保存
+3. AWS DynamoDB: 評価結果保存
+4. AWS SAM: Infrastructure as Code
 
-**所要時間**: 3-5日
-
-**優先度**: Phase 3ドキュメント整備完了後に判断
+**完了日**: 2025-10-25
+**参照**: ADR-007, ADR-008, ADR-009
 
 ---
 

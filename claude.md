@@ -1,5 +1,5 @@
 # THF Motion Scan – AI協働プロトコル
-**v1.0** | Claude Code運用版 | 2025-10-19
+**v2.1** | Claude Code運用版 | 2025-10-25
 
 ---
 
@@ -67,13 +67,39 @@ def func_name(arg: type) -> type:
 | 2 | Processing（evaluators, health_check, worker） | Claude+GPT | ✅ | ✅ 完了 |
 | 3 | Testing & Documentation | Claude+GPT | ✅ | ✅ 完了 |
 | 4 | Cloud Deployment（AWS Lambda, S3, DynamoDB） | Claude | ✅ | ✅ 完了 |
-| 5 | Dashboard/Recovery（未実施） | Claude | - | - |
+| 5 | Dashboard/Recovery | Claude | - | 未実施 |
 
 **Phase Gate**: 各Phase完了時に承認なしでは次へ進めない
 
 **Phase更新履歴**:
 - 2025-10-25: Phase 4をCloud Deploymentに変更（旧Dashboard/Recoveryは Phase 5へ）
 - Phase 4完了内容: AWS Lambda Container, ECR, SAM, CloudFormation（ADR-007〜009）
+
+---
+
+## 🆕 v2.1 - AI Co-Maintenance Protocol
+
+**コンセプト**: "AIがコードを生成"→"AIがコード文化を維持"
+
+### 責務定義
+- **Claude Code**: 構文整合、型安全、Notion→コード変換、ドリフト監査
+- **GPT**: 概念設計、スキーマ監督、品質監査、GitHub→Notion同期監督
+
+### 実装優先度（Tier分類）
+```
+🔥 Tier A（今すぐ）: JSON Schema検証、SemVer厳守、冪等キー、ゴールデンテスト3件
+⚡ Tier B（1ヶ月）: 構造化ログ、CloudWatch、DLQ+リトライ、Notion整合チェック
+📈 Tier C（将来）: コストトラッキング、Feature Flag、バイアス監査
+```
+
+### ドリフト監査
+- **目的**: Notion定義と実装の不整合を自動検出
+- **実装**: `scripts/check_drift.py`
+- **実行**: Push時 + 日次スケジュール
+
+### Maintenance Window
+- **定義**: 日曜 22:00 - 月曜 01:00 JST
+- **ルール**: AIは構成変更を行わない
 
 ---
 
@@ -112,7 +138,7 @@ api_key = "sk-abc123..."
 
 # ✅ 必須
 import os
-api_key = os.getenv("AZURE_API_KEY")
+api_key = os.getenv("AWS_SECRET_KEY")
 ```
 
 ### 保護対象
@@ -170,12 +196,24 @@ np.random.seed(42)
 
 ---
 
+## ✅ デプロイ前チェックリスト
+
+- [ ] JSON Schema検証がCIでブロック
+- [ ] 冪等キー実装済み
+- [ ] ゴールデンテスト 3件以上
+- [ ] 構造化ログに `rules_version` + `artifact_sha`
+- [ ] DLQ + アラート設定
+- [ ] ドリフトチェック動作確認
+
+---
+
 ## 📚 詳細ドキュメント
 
 - **完全版**: `docs/framework_full.md`
 - **Phase別詳細**: `docs/phase_guide.md`
 - **ADR**: `docs/adr/decision_log.md`
 - **設計**: `docs/design/overview.md`
+- **ドリフト監査**: `scripts/check_drift.py`
 
 ---
 
@@ -193,7 +231,9 @@ thf-motion-scan/
 │   ├── ingest/           # Phase 1
 │   ├── processing/       # Phase 2
 │   ├── output/           # Phase 3
-│   └── dashboard/        # Phase 4
+│   └── dashboard/        # Phase 5
+├── scripts/
+│   └── check_drift.py    # ドリフト監査
 └── tests/
 ```
 
@@ -205,6 +245,7 @@ thf-motion-scan/
 - [ ] `docs/design/overview.md` 作成
 - [ ] `config.json` 作成
 - [ ] `.env` で環境変数設定
+- [ ] `scripts/check_drift.py` 設置
 - [ ] Git初期化
 
 ---

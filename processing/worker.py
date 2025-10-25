@@ -21,6 +21,7 @@ from .evaluators.stride_mimic import StrideMimicEvaluator
 from .evaluators.push_pull import PushPullEvaluator
 from .evaluators.jump_landing import JumpLandingEvaluator
 from .health_check import HealthChecker, apply_random_seed
+from .exporters import CSVExporter, PNGPlotter, PDFReporter
 
 
 class VideoProcessingWorker:
@@ -63,7 +64,8 @@ class VideoProcessingWorker:
     def process_video(self,
                       video_path: str,
                       test_type: str = 'single_leg_squat',
-                      output_dir: Optional[str] = None) -> Dict:
+                      output_dir: Optional[str] = None,
+                      output_formats: Optional[list] = None) -> Dict:
         """
         What: 動画処理メイン処理（抽出→品質チェック→評価→保存）
         Why: 統合ワークフロー実行
@@ -73,6 +75,7 @@ class VideoProcessingWorker:
             video_path: 動画ファイルのパス
             test_type: テストタイプ（現在は'single_leg_squat'のみ）
             output_dir: 結果を保存するディレクトリ（Noneの場合は保存しない）
+            output_formats: 出力形式リスト (['csv', 'png', 'pdf'] から選択、デフォルト None）
 
         Returns:
             Dict: {
@@ -163,7 +166,61 @@ class VideoProcessingWorker:
             )
             print(f"📋 警告ログ保存: {warnings_path}")
 
+            # PHASE CORE LOGIC: 出力形式エクスポート（ADR-011）
+            if output_formats:
+                exported_files = self._export_formats(result, output_dir, output_formats)
+                result['exported_files'] = exported_files
+
         return result
+
+    def _export_formats(self, result: Dict, output_dir: str, formats: list) -> Dict[str, str]:
+        """
+        What: 複数形式でエクスポート
+        Why: CSV/PNG/PDF形式での出力をサポート
+        Design Decision: フォーマットごとにエクスポーター使用（ADR-011）
+
+        Args:
+            result: 評価結果
+            output_dir: 出力ディレクトリ
+            formats: 出力形式リスト (['csv', 'png', 'pdf'])
+
+        Returns:
+            Dict[str, str]: {format: filepath} の辞書
+
+        CRITICAL: 不正な形式は無視して続行
+        """
+        exported = {}
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_filename = f"{result['test_type']}_{timestamp}"
+
+        # PHASE CORE LOGIC: 各形式でエクスポート
+        for fmt in formats:
+            try:
+                if fmt == 'csv':
+                    exporter = CSVExporter(output_dir)
+                    filepath = exporter.export(result, base_filename)
+                    exported['csv'] = filepath
+                    print(f"📄 CSV出力: {filepath}")
+
+                elif fmt == 'png':
+                    exporter = PNGPlotter(output_dir)
+                    filepath = exporter.export(result, base_filename)
+                    exported['png'] = filepath
+                    print(f"📊 PNG出力: {filepath}")
+
+                elif fmt == 'pdf':
+                    exporter = PDFReporter(output_dir)
+                    filepath = exporter.export(result, base_filename)
+                    exported['pdf'] = filepath
+                    print(f"📋 PDF出力: {filepath}")
+
+                else:
+                    print(f"⚠️  未サポート形式: {fmt}")
+
+            except Exception as e:
+                print(f"❌ {fmt}エクスポート失敗: {e}")
+
+        return exported
 
     def _save_results(self, result: Dict, output_dir: str) -> Path:
         """
@@ -227,7 +284,8 @@ class VideoProcessingWorker:
 
 def process_video(video_path: str,
                   test_type: str = 'single_leg_squat',
-                  output_dir: Optional[str] = None) -> Dict:
+                  output_dir: Optional[str] = None,
+                  output_formats: Optional[list] = None) -> Dict:
     """
     動画を処理する便利関数
 
@@ -235,9 +293,10 @@ def process_video(video_path: str,
         video_path: 動画ファイルのパス
         test_type: テストタイプ
         output_dir: 結果を保存するディレクトリ
+        output_formats: 出力形式リスト (['csv', 'png', 'pdf'])
 
     Returns:
         Dict: 処理結果
     """
     worker = VideoProcessingWorker()
-    return worker.process_video(video_path, test_type, output_dir)
+    return worker.process_video(video_path, test_type, output_dir, output_formats)
