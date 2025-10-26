@@ -3,30 +3,520 @@
     "confidence_min": 0.7,
     "joint_distance_max": 150,
     "frame_skip_tolerance": 3,
-    "single_leg_squat": {
-      "knee_flexion_min": 87,
-      "reps_required": 3,
-      "comment": "90° - MediaPipe誤差3° = 87°"
+    "T01_single_leg_squat": {
+      "execution": {
+        "knee_flexion": {
+          "excellent": 87,
+          "good": 67,
+          "fair": 42,
+          "comment": "90deg-3deg=87deg, 70deg-3deg=67deg, 45deg-3deg=42deg"
+        },
+        "completion": {
+          "target": 3,
+          "hysteresis": {
+            "start_angle": 160,
+            "end_threshold": 2,
+            "squat_threshold": 90
+          },
+          "comment": "3 reps required, hysteresis to prevent false detection"
+        }
+      },
+      "principles": {
+        "P1_compensation": {
+          "pelvis_tilt": {
+            "severe": 15,
+            "moderate": 10,
+            "mild": 5,
+            "comment": "degree, pelvis tilt angle thresholds"
+          },
+          "knee_deviation": {
+            "severe": 0.15,
+            "moderate": 0.10,
+            "comment": "ratio to base_width, knee lateral deviation"
+          },
+          "torso_lean": {
+            "threshold": 15,
+            "comment": "degree, torso lean from vertical"
+          },
+          "shoulder_drop": {
+            "threshold": 0.08,
+            "comment": "ratio to base_width, shoulder height difference"
+          }
+        },
+        "P2_stability": {
+          "pelvis_ratio": {
+            "high": 0.10,
+            "moderate": 0.05,
+            "comment": "ratio to base_width, pelvis lateral stability std dev"
+          },
+          "knee_ratio": {
+            "high": 0.08,
+            "moderate": 0.05,
+            "comment": "ratio to base_width, knee lateral stability std dev"
+          }
+        },
+        "P4_pelvis_level": {
+          "trendelenburg": {
+            "severe": 0.05,
+            "moderate": 0.03,
+            "mild": 0.01,
+            "comment": "ratio to base_width, hip height difference"
+          }
+        }
+      }
     },
-    "skater_lunge": {
-      "step_width_ratio_min": 1.5,
-      "lift_height_ratio_min": 0.10,
-      "knee_extension_min": 137,
-      "reps_required_each_side": 5,
-      "comment": "基準幅比、下肢長比で正規化"
+    "T02_skater_lunge": {
+      "execution": {
+        "step_width": {
+          "excellent": 1.5,
+          "good": 1.2,
+          "fair": 1.0,
+          "comment": "ratio to shoulder_width, lateral step distance"
+        },
+        "unloaded_leg": {
+          "knee_angle_threshold": 140,
+          "height_ratio_threshold": 0.10,
+          "comment": "degree for knee extension, ratio to leg_length for ankle height"
+        },
+        "completion": {
+          "target": 5,
+          "neutral_threshold": 0.05,
+          "comment": "5 reps each side, pelvis X threshold for neutral position"
+        }
+      },
+      "principles": {
+        "P5_pelvis_shift": {
+          "excellent": 90,
+          "good": 70,
+          "fair": 50,
+          "comment": "percentage, pelvis shift rate over feet distance"
+        },
+        "P4_pelvis_level": {
+          "trendelenburg": {
+            "mild": 0.03,
+            "moderate": 0.05,
+            "comment": "ratio to base_width, hip height difference during loading"
+          }
+        },
+        "P2_stability": {
+          "lateral_stability": {
+            "excellent": 0.03,
+            "moderate": 0.05,
+            "comment": "ratio to base_width, pelvis lateral std dev during loading phase"
+          }
+        }
+      }
     },
-    "stride_mimic": {
-      "hip_extension_min": 172,
-      "foot_clearance_ratio_min": 0.05,
-      "reps_required": 10,
-      "comment": "175° - 3° = 172°、下肢長比"
+    "T03_stride_mimic": {
+      "execution": {
+        "movement_range": {
+          "knee_flexion": {
+            "excellent_min": 60,
+            "excellent_max": 90,
+            "good_min": 90,
+            "good_max": 110,
+            "comment": "degree, support leg knee flexion angle range"
+          },
+          "hip_abduction": {
+            "excellent": 1.2,
+            "good": 1.0,
+            "comment": "ratio to shoulder_width, hip abduction width"
+          }
+        },
+        "bilateral_symmetry": {
+          "knee_angle": {
+            "excellent": 10,
+            "good": 20,
+            "comment": "degree, left-right knee angle difference"
+          },
+          "hip_abduction": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "ratio, left-right hip abduction width difference"
+          }
+        }
+      },
+      "principles": {
+        "P3_support_base": {
+          "ankle_stability": {
+            "excellent": 5,
+            "good": 10,
+            "comment": "degree, ankle angle std dev during support phase"
+          },
+          "kick_leg_abduction": {
+            "excellent_min": 30,
+            "excellent_max": 50,
+            "good_min": 20,
+            "good_max": 60,
+            "comment": "degree, kick leg hip abduction angle"
+          },
+          "support_time_symmetry": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "ratio, left-right support time difference"
+          }
+        },
+        "P2_center_of_mass": {
+          "height_stability": {
+            "excellent": 0.1,
+            "good": 0.2,
+            "comment": "ratio, COM height variation during support phase"
+          },
+          "forward_movement": {
+            "excellent": 2.0,
+            "good": 1.5,
+            "comment": "ratio to shoulder_width, COM horizontal movement per cycle"
+          },
+          "projection_offset": {
+            "excellent": 0.3,
+            "good": 0.5,
+            "comment": "ratio to shoulder_width, COM-ankle horizontal distance"
+          }
+        },
+        "P4_joint_angles": {
+          "support_knee": {
+            "excellent_min": 70,
+            "excellent_max": 100,
+            "good_min": 60,
+            "good_max": 120,
+            "comment": "degree, support leg knee angle during support phase"
+          },
+          "hip_extension": {
+            "excellent": 20,
+            "good": 10,
+            "comment": "degree, hip extension angle at kick-off completion"
+          },
+          "trunk_lean": {
+            "excellent_min": 10,
+            "excellent_max": 25,
+            "good_min": 5,
+            "good_max": 35,
+            "comment": "degree, trunk forward lean angle"
+          }
+        }
+      }
     },
-    "jump_landing": {
-      "jump_height_ratio_min": 0.18,
-      "knee_flexion_min": 57,
-      "knee_flexion_max": 87,
-      "reps_required": 5,
-      "comment": "下肢長比、着地時膝角度範囲"
+    "T04_jump_landing": {
+      "execution": {
+        "jump_height": {
+          "excellent": 0.15,
+          "good": 0.10,
+          "comment": "ratio to body_height, normalized jump height"
+        },
+        "landing_timing_sync": {
+          "excellent": 0.05,
+          "good": 0.10,
+          "comment": "seconds, left-right ankle landing time difference"
+        },
+        "posture_stability": {
+          "excellent": 1.0,
+          "good": 2.0,
+          "comment": "ratio to shoulder_width, normalized sway distance after landing"
+        }
+      },
+      "principles": {
+        "P2_center_of_mass": {
+          "descent_control": {
+            "excellent": 2.0,
+            "good": 3.0,
+            "comment": "ratio, max_descent_speed / avg_descent_speed"
+          },
+          "horizontal_position": {
+            "excellent": 0.2,
+            "good": 0.4,
+            "comment": "ratio to shoulder_width, COM-foot horizontal distance"
+          },
+          "height_maintenance": {
+            "excellent_min": 0.15,
+            "excellent_max": 0.25,
+            "good_min": 0.10,
+            "good_max": 0.35,
+            "comment": "ratio, hip descent rate from standing to landing nadir"
+          }
+        },
+        "P4_joint_angles": {
+          "knee_flexion": {
+            "excellent_min": 70,
+            "excellent_max": 100,
+            "good_min": 60,
+            "good_max": 120,
+            "comment": "degrees, knee angle at landing nadir"
+          },
+          "hip_flexion": {
+            "excellent_min": 70,
+            "excellent_max": 100,
+            "good_min": 60,
+            "good_max": 120,
+            "comment": "degrees, hip angle at landing nadir"
+          },
+          "ankle_angle": {
+            "excellent_min": 80,
+            "excellent_max": 100,
+            "good_min": 70,
+            "good_max": 110,
+            "comment": "degrees, ankle angle during landing phase"
+          }
+        },
+        "P1_joint_coordination": {
+          "ankle_knee_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.10,
+            "good_min": 0.00,
+            "good_max": 0.15,
+            "comment": "seconds, ankle-knee flexion start timing difference"
+          },
+          "knee_hip_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.10,
+            "good_min": 0.00,
+            "good_max": 0.15,
+            "comment": "seconds, knee-hip flexion start timing difference"
+          },
+          "coordination_consistency": {
+            "excellent": 0.4,
+            "good": 0.6,
+            "comment": "coefficient of variation, joint angular velocity consistency"
+          }
+        }
+      }
+    },
+    "T05_upper_body_swing": {
+      "execution": {
+        "trunk_rotation_range": {
+          "excellent": 90,
+          "good": 60,
+          "comment": "degrees, total left + right trunk rotation range"
+        },
+        "arm_swing_range": {
+          "excellent": 1.5,
+          "good": 1.0,
+          "comment": "ratio to body_height, normalized average wrist trajectory length"
+        },
+        "left_right_symmetry": {
+          "excellent": 0.15,
+          "good": 0.30,
+          "comment": "ratio, left-right rotation angle difference rate"
+        }
+      },
+      "principles": {
+        "P7_kinetic_chain": {
+          "hip_shoulder_timing": {
+            "excellent_min": 0.05,
+            "excellent_max": 0.15,
+            "good_min": 0.00,
+            "good_max": 0.25,
+            "comment": "seconds, hip-shoulder rotation onset timing difference"
+          },
+          "shoulder_elbow_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.10,
+            "good_min": 0.00,
+            "good_max": 0.15,
+            "comment": "seconds, shoulder-elbow peak velocity timing difference"
+          },
+          "elbow_wrist_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.10,
+            "good_min": 0.00,
+            "good_max": 0.15,
+            "comment": "seconds, elbow-wrist peak velocity timing difference"
+          }
+        },
+        "P4_joint_angles": {
+          "shoulder_rom": {
+            "excellent_min": 80,
+            "excellent_max": 110,
+            "good_min": 70,
+            "good_max": 130,
+            "comment": "degrees, shoulder angle at swing maximum"
+          },
+          "elbow_extension": {
+            "excellent_min": 140,
+            "excellent_max": 170,
+            "good_min": 120,
+            "good_max": 180,
+            "comment": "degrees, minimum elbow angle during swing"
+          },
+          "trunk_lateral_flexion": {
+            "excellent": 15,
+            "good": 25,
+            "comment": "degrees, maximum trunk lateral flexion during swing"
+          }
+        },
+        "P6_force_direction": {
+          "wrist_horizontality": {
+            "excellent": 0.15,
+            "good": 0.25,
+            "comment": "ratio to body_height, normalized vertical wrist variation"
+          },
+          "com_stability": {
+            "excellent": 2.0,
+            "good": 3.5,
+            "comment": "ratio to shoulder_width, normalized COM movement distance"
+          },
+          "trajectory_reproducibility": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "coefficient of variation, cycle-to-cycle wrist displacement consistency"
+          }
+        }
+      }
+    },
+    "T06_push_pull": {
+      "execution": {
+        "push_distance": {
+          "excellent": 0.8,
+          "good": 0.5,
+          "comment": "ratio to shoulder_width, normalized forward wrist movement"
+        },
+        "pull_distance": {
+          "excellent": 0.6,
+          "good": 0.4,
+          "comment": "ratio to shoulder_width, normalized backward elbow movement"
+        },
+        "left_right_symmetry": {
+          "excellent": 0.15,
+          "good": 0.30,
+          "comment": "ratio, average left-right movement difference"
+        }
+      },
+      "principles": {
+        "P1_compensation": {
+          "torso_lean": {
+            "excellent": 10,
+            "good": 20,
+            "comment": "degrees, trunk forward/backward lean from vertical"
+          },
+          "shoulder_elevation": {
+            "excellent": 0.05,
+            "good": 0.10,
+            "comment": "ratio to shoulder_width, shoulder height difference during movement"
+          },
+          "pelvis_tilt": {
+            "excellent": 0.05,
+            "good": 0.10,
+            "comment": "ratio to base_width, pelvis anterior/posterior tilt variation"
+          }
+        },
+        "P6_force_direction": {
+          "push_trajectory_linearity": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "ratio to shoulder_width, normalized deviation from ideal straight line"
+          },
+          "pull_trajectory_linearity": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "ratio to shoulder_width, normalized deviation from ideal straight line"
+          },
+          "com_movement": {
+            "excellent": 0.25,
+            "good": 0.40,
+            "comment": "ratio to shoulder_width, normalized COM z-axis movement range"
+          }
+        },
+        "P7_kinetic_chain": {
+          "push_chain_timing": {
+            "excellent_min": 0.05,
+            "excellent_max": 0.15,
+            "good_min": 0.00,
+            "good_max": 0.25,
+            "comment": "seconds, shoulder-elbow peak velocity timing difference"
+          },
+          "pull_chain_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.12,
+            "good_min": 0.00,
+            "good_max": 0.20,
+            "comment": "seconds, wrist-elbow peak velocity timing difference"
+          },
+          "transition_efficiency": {
+            "excellent": 0.20,
+            "good": 0.35,
+            "comment": "seconds, push end to pull start transition time"
+          }
+        }
+      }
+    },
+    "T07_cross_step": {
+      "execution": {
+        "cross_distance": {
+          "excellent": 1.2,
+          "good": 0.8,
+          "comment": "ratio to shoulder_width, lateral cross step distance"
+        },
+        "trunk_rotation": {
+          "excellent": 45,
+          "good": 30,
+          "comment": "degrees, maximum trunk rotation angle during cross step"
+        },
+        "left_right_symmetry": {
+          "excellent": 0.15,
+          "good": 0.30,
+          "comment": "ratio, average left-right movement difference"
+        }
+      },
+      "principles": {
+        "P7_kinetic_chain": {
+          "hip_shoulder_timing": {
+            "excellent_min": 0.05,
+            "excellent_max": 0.15,
+            "good_min": 0.00,
+            "good_max": 0.25,
+            "comment": "seconds, hip-shoulder rotation onset timing difference"
+          },
+          "support_cross_timing": {
+            "excellent_min": 0.03,
+            "excellent_max": 0.12,
+            "good_min": 0.00,
+            "good_max": 0.20,
+            "comment": "seconds, COM shift to cross leg landing timing difference"
+          },
+          "acceleration_pattern": {
+            "excellent_min": 0.4,
+            "excellent_max": 0.6,
+            "good_min": 0.3,
+            "good_max": 0.7,
+            "comment": "ratio, max velocity timing during cross movement (0=start, 1=end)"
+          }
+        },
+        "P5_body_control": {
+          "pelvis_height": {
+            "excellent": 0.08,
+            "good": 0.15,
+            "comment": "ratio, pelvis height variation during cross phase"
+          },
+          "trunk_verticality": {
+            "excellent": 10,
+            "good": 20,
+            "comment": "degrees, trunk lean from vertical during cross step"
+          },
+          "linear_progression": {
+            "excellent": 0.15,
+            "good": 0.30,
+            "comment": "ratio, forward-backward COM variation over lateral movement"
+          }
+        },
+        "P3_support_base": {
+          "foot_width": {
+            "excellent_min": 1.0,
+            "excellent_max": 1.4,
+            "good_min": 0.7,
+            "good_max": 1.7,
+            "comment": "ratio to shoulder_width, foot distance at cross landing"
+          },
+          "knee_stability": {
+            "excellent": 8,
+            "good": 15,
+            "comment": "degrees, support leg knee angle std dev during cross phase"
+          },
+          "com_foot_distance": {
+            "excellent": 0.25,
+            "good": 0.40,
+            "comment": "ratio to shoulder_width, COM to foot center horizontal distance"
+          }
+        }
+      }
     },
     "upper_body_swing": {
       "arm_amplitude_ratio_min": 1.5,

@@ -66,13 +66,13 @@ TEST_TYPES = [
     'jump_landing'
 ]
 
-# テストタイプ表示名
+# テストタイプ表示名（日本語）
 TEST_TYPE_DISPLAY = {
-    'single_leg_squat': 'Single Leg Squat',
-    'upper_body_swing': 'Upper Body Swing',
-    'skater_lunge': 'Skater Lunge',
-    'cross_step': 'Cross Step',
-    'stride_mimic': 'Stride Mimic',
-    'push_pull': 'Push Pull',
-    'jump_landing': 'Jump Landing'
+    'single_leg_squat': '片脚スタンススクワット',
+    'upper_body_swing': '上体スイング',
+    'skater_lunge': 'スケーターランジ',
+    'cross_step': 'クロスステップ模倣',
+    'stride_mimic': 'スケートストライド模倣',
+    'push_pull': 'プッシュプル動作',
+    'jump_landing': 'ミニジャンプ＆着地'
 }

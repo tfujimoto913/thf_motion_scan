@@ -29,6 +29,7 @@ def generate_demo_data():
     Design Decision: tests/fixtures/sample_landmarks.json を使用（ADR-014）
 
     CRITICAL: 実際の評価器ロジックを使用
+    UPDATED: クライアントID形式を FirstLast-yymmdd に変更（ADR-015予定）
     """
     print("🎭 デモデータ生成開始...")
 
@@ -53,6 +54,17 @@ def generate_demo_data():
         'stride_mimic',
         'push_pull',
         'jump_landing'
+    ]
+
+    # デモクライアント定義（FirstLast-yymmdd形式）
+    demo_clients = [
+        'TaroYamada-100315',    # Taro Yamada (2010-03-15生)
+        'YukiSato-110822',      # Yuki Sato (2011-08-22生)
+        'KenjiTanaka-091201',   # Kenji Tanaka (2009-12-01生)
+        'AikoWatanabe-120510',  # Aiko Watanabe (2012-05-10生)
+        'RyoSuzuki-100730',     # Ryo Suzuki (2010-07-30生)
+        'MaiNakamura-110915',   # Mai Nakamura (2011-09-15生)
+        'SotaKobayashi-091105'  # Sota Kobayashi (2009-11-05生)
     ]
 
     # 直近1週間のタイムスタンプ生成
@@ -82,9 +94,12 @@ def generate_demo_data():
             # TODO: worker.process_landmarks() メソッドが必要
             # 現状はworker.process_video()のみ対応のため、簡易的な実装
 
+            # クライアントIDを選択（循環使用）
+            client_id = demo_clients[idx % len(demo_clients)]
+
             # 仮の結果構造（実際の評価器出力に合わせて調整必要）
             result = {
-                'video_id': f'thf-motion-scan-videos-demo/videos/{test_type}/demo_athlete_{idx+1:03d}.mp4',
+                'video_id': f'thf-motion-scan-videos-demo/videos/{test_type}/{client_id}.mp4',
                 'processed_at': timestamps[idx],
                 'test_type': test_type,
                 'score': 0.0,  # 評価器実行後に更新
@@ -102,7 +117,7 @@ def generate_demo_data():
                     'low_confidence_frames': 0
                 },
                 'evaluation': {},  # 評価器実行後に更新
-                'result_s3_key': f'results/2025/10/{20+idx}/demo_athlete_{idx+1:03d}_{timestamps[idx].replace("-", "").replace(":", "")[:15]}.json',
+                'result_s3_key': f'results/2025/10/{20+idx}/{client_id}_{timestamps[idx].replace("-", "").replace(":", "")[:15]}.json',
                 'ttl': int((now + timedelta(days=90)).timestamp())
             }
 

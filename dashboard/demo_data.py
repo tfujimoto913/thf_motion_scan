@@ -63,9 +63,10 @@ def get_demo_results_legacy() -> List[Dict[str, Any]]:
     ]
 
     # PHASE CORE LOGIC: DynamoDB Item形式のサンプルデータ（手動作成版）
+    # UPDATED: クライアントID形式を FirstLast-yymmdd に変更（ADR-015予定）
     demo_results = [
         {
-            'video_id': 'thf-motion-scan-videos-demo/videos/single_leg_squat/demo_athlete_001.mp4',
+            'video_id': 'thf-motion-scan-videos-demo/videos/single_leg_squat/TaroYamada-100315.mp4',
             'processed_at': timestamps[0],
             'test_type': 'single_leg_squat',
             'score': 2.8,
@@ -98,7 +99,7 @@ def get_demo_results_legacy() -> List[Dict[str, Any]]:
             'ttl': int((now + timedelta(days=90)).timestamp())
         },
         {
-            'video_id': 'thf-motion-scan-videos-demo/videos/skater_lunge/demo_athlete_002.mp4',
+            'video_id': 'thf-motion-scan-videos-demo/videos/skater_lunge/YukiSato-110822.mp4',
             'processed_at': timestamps[1],
             'test_type': 'skater_lunge',
             'score': 1.5,
@@ -131,7 +132,7 @@ def get_demo_results_legacy() -> List[Dict[str, Any]]:
             'ttl': int((now + timedelta(days=90)).timestamp())
         },
         {
-            'video_id': 'thf-motion-scan-videos-demo/videos/upper_body_swing/demo_athlete_003.mp4',
+            'video_id': 'thf-motion-scan-videos-demo/videos/upper_body_swing/KenjiTanaka-091201.mp4',
             'processed_at': timestamps[2],
             'test_type': 'upper_body_swing',
             'score': 2.3,
@@ -164,7 +165,7 @@ def get_demo_results_legacy() -> List[Dict[str, Any]]:
             'ttl': int((now + timedelta(days=90)).timestamp())
         },
         {
-            'video_id': 'thf-motion-scan-videos-demo/videos/cross_step/demo_athlete_004.mp4',
+            'video_id': 'thf-motion-scan-videos-demo/videos/cross_step/AikoWatanabe-120510.mp4',
             'processed_at': timestamps[3],
             'test_type': 'cross_step',
             'score': 0.5,
@@ -197,7 +198,7 @@ def get_demo_results_legacy() -> List[Dict[str, Any]]:
             'ttl': int((now + timedelta(days=90)).timestamp())
         },
         {
-            'video_id': 'thf-motion-scan-videos-demo/videos/jump_landing/demo_athlete_005.mp4',
+            'video_id': 'thf-motion-scan-videos-demo/videos/jump_landing/RyoSuzuki-100730.mp4',
             'processed_at': timestamps[4],
             'test_type': 'jump_landing',
             'score': 2.0,
