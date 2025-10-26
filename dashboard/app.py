@@ -20,9 +20,10 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# dashboard/config.py をインポート
+# dashboard/config.py, demo_data.py をインポート
 sys.path.insert(0, str(Path(__file__).parent))
 from config import get_resource_names, TEST_TYPES, TEST_TYPE_DISPLAY
+from demo_data import get_demo_results
 
 # AWS クライアント初期化
 @st.cache_resource
@@ -40,15 +41,33 @@ def get_aws_clients():
     return s3_client, dynamodb, resources
 
 
-def upload_video_page(s3_client, resources):
+def upload_video_page(s3_client, resources, demo_mode=False):
     """
     What: 動画アップロードページ
     Why: S3 VideosBucketへの動画アップロード機能
     Design Decision: Streamlit file_uploader使用（ADR-014）
 
+    Args:
+        s3_client: S3クライアント
+        resources: AWSリソース名
+        demo_mode: デモモードフラグ
+
     CRITICAL: videos/{test_type}/ パス構造でアップロード
     """
     st.header("📤 動画アップロード")
+
+    # デモモード時の表示
+    if demo_mode:
+        st.info("🎭 **デモモード**: 動画アップロードは無効です")
+        st.success("✅ デモデータは「📊 評価結果一覧」ページで確認できます")
+        st.markdown("---")
+        st.markdown("""
+        ### デモモードについて
+        - AWS環境なしでUIを確認できます
+        - サンプルデータ（5件）を表示します
+        - 実際のアップロードを行うには、デモモードをOFFにしてください
+        """)
+        return
 
     if not resources:
         st.error("❌ AWS設定エラー: AccountIdが取得できません")
@@ -91,24 +110,40 @@ def upload_video_page(s3_client, resources):
                     st.error(f"❌ アップロード失敗: {str(e)}")
 
 
-def results_list_page(dynamodb, resources):
+def results_list_page(dynamodb, resources, demo_mode=False):
     """
     What: 評価結果一覧ページ
     Why: DynamoDBから評価結果を取得して一覧表示
     Design Decision: pandas DataFrameで表形式表示（ADR-014）
 
+    Args:
+        dynamodb: DynamoDB resource
+        resources: AWSリソース名
+        demo_mode: デモモードフラグ
+
     CRITICAL: DynamoDB Scanは項目数が多い場合にコスト増加
     """
     st.header("📊 評価結果一覧")
 
-    if not resources:
-        st.error("❌ AWS設定エラー: AccountIdが取得できません")
-        return
+    # デモモード時の表示
+    if demo_mode:
+        st.info("🎭 **デモモード**: サンプルデータを表示中")
+        items = get_demo_results()
+    else:
+        if not resources:
+            st.error("❌ AWS設定エラー: AccountIdが取得できません")
+            return
 
+        try:
+            table = dynamodb.Table(resources['table_name'])
+            response = table.scan()
+            items = response['Items']
+        except Exception as e:
+            st.error(f"❌ データ取得エラー: {str(e)}")
+            return
+
+    # 共通処理（デモモード・通常モード両対応）
     try:
-        table = dynamodb.Table(resources['table_name'])
-        response = table.scan()
-        items = response['Items']
 
         if not items:
             st.warning("評価結果がありません。動画をアップロードしてください。")
@@ -149,7 +184,7 @@ def results_list_page(dynamodb, resources):
             show_result_detail(df, selected_video)
 
     except Exception as e:
-        st.error(f"❌ データ取得エラー: {str(e)}")
+        st.error(f"❌ データ処理エラー: {str(e)}")
 
 
 def show_result_detail(df: pd.DataFrame, video_id: str):
@@ -217,11 +252,24 @@ def main():
         st.info("AWS認証情報を確認してください（~/.aws/credentials または環境変数）")
         return
 
-    # AWS Account ID表示
-    if resources:
-        st.sidebar.success(f"✅ AWS Account: {resources['account_id']}")
+    # デモモードトグル
+    st.sidebar.markdown("---")
+    demo_mode = st.sidebar.toggle(
+        "🎭 デモモード",
+        value=False,
+        help="AWS環境なしでUIを確認できます。サンプルデータを表示します。"
+    )
+
+    if demo_mode:
+        st.sidebar.warning("🎭 デモモード ON")
+        st.sidebar.info("サンプルデータ（5件）を表示中")
+    else:
+        # AWS Account ID表示
+        if resources:
+            st.sidebar.success(f"✅ AWS Account: {resources['account_id']}")
 
     # サイドバーでページ選択
+    st.sidebar.markdown("---")
     page = st.sidebar.radio(
         "ページ選択",
         ["📤 動画アップロード", "📊 評価結果一覧"]
@@ -229,9 +277,9 @@ def main():
 
     # ページ表示
     if page == "📤 動画アップロード":
-        upload_video_page(s3_client, resources)
+        upload_video_page(s3_client, resources, demo_mode)
     elif page == "📊 評価結果一覧":
-        results_list_page(dynamodb, resources)
+        results_list_page(dynamodb, resources, demo_mode)
 
 
 if __name__ == "__main__":

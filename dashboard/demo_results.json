@@ -1,0 +1,233 @@
+[
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/single_leg_squat/demo_athlete_001.mp4",
+    "processed_at": "2025-10-20T20:23:05.362794",
+    "test_type": "single_leg_squat",
+    "score": 2.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "pelvic_stability": {
+        "score": 2,
+        "value": 0.068,
+        "unit": "meters"
+      },
+      "knee_flexion": {
+        "score": 3,
+        "value": 70.625,
+        "unit": "degrees"
+      }
+    },
+    "result_s3_key": "results/2025/10/20/demo_athlete_001_20251020T202305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/upper_body_swing/demo_athlete_002.mp4",
+    "processed_at": "2025-10-21T20:23:05.362794",
+    "test_type": "upper_body_swing",
+    "score": 2.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "shoulder_rotation": {
+        "score": 3,
+        "value": 80.501,
+        "unit": "degrees"
+      },
+      "core_stability": {
+        "score": 2,
+        "value": 0.026,
+        "unit": "meters"
+      }
+    },
+    "result_s3_key": "results/2025/10/21/demo_athlete_002_20251021T202305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/skater_lunge/demo_athlete_003.mp4",
+    "processed_at": "2025-10-23T20:23:05.362794",
+    "test_type": "skater_lunge",
+    "score": 1.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "lateral_stability": {
+        "score": 1,
+        "value": 0.094,
+        "unit": "meters"
+      },
+      "depth_control": {
+        "score": 3,
+        "value": 76.917,
+        "unit": "degrees"
+      }
+    },
+    "result_s3_key": "results/2025/10/22/demo_athlete_003_20251023T202305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/cross_step/demo_athlete_004.mp4",
+    "processed_at": "2025-10-24T20:23:05.362794",
+    "test_type": "cross_step",
+    "score": 1.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "step_width": {
+        "score": 1,
+        "value": 1.246,
+        "unit": "ratio"
+      },
+      "balance": {
+        "score": 2,
+        "value": 0.031,
+        "unit": "meters"
+      }
+    },
+    "result_s3_key": "results/2025/10/23/demo_athlete_004_20251024T202305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/stride_mimic/demo_athlete_005.mp4",
+    "processed_at": "2025-10-25T20:23:05.362794",
+    "test_type": "stride_mimic",
+    "score": 3.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "stride_length": {
+        "score": 3,
+        "value": 1.111,
+        "unit": "ratio"
+      },
+      "hip_rotation": {
+        "score": 3,
+        "value": 30.894,
+        "unit": "degrees"
+      }
+    },
+    "result_s3_key": "results/2025/10/24/demo_athlete_005_20251025T202305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/push_pull/demo_athlete_006.mp4",
+    "processed_at": "2025-10-26T08:23:05.362794",
+    "test_type": "push_pull",
+    "score": 2.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "force_balance": {
+        "score": 3,
+        "value": 0.916,
+        "unit": "ratio"
+      },
+      "core_engagement": {
+        "score": 2,
+        "value": 0.04,
+        "unit": "meters"
+      }
+    },
+    "result_s3_key": "results/2025/10/25/demo_athlete_006_20251026T082305.json",
+    "ttl": 1769253785
+  },
+  {
+    "video_id": "thf-motion-scan-videos-demo/videos/jump_landing/demo_athlete_007.mp4",
+    "processed_at": "2025-10-26T17:23:05.362794",
+    "test_type": "jump_landing",
+    "score": 2.0,
+    "video_info": {
+      "total_frames": 942,
+      "fps": 57.86856913512495,
+      "duration_sec": 16.278266666666667,
+      "detected_frames": 942,
+      "detection_rate": 1.0
+    },
+    "health_check": {
+      "is_valid": true,
+      "warnings": [],
+      "detection_rate": 1.0,
+      "low_confidence_frames": 0
+    },
+    "evaluation": {
+      "landing_stability": {
+        "score": 3,
+        "value": 0.022,
+        "unit": "meters"
+      },
+      "knee_alignment": {
+        "score": 2,
+        "value": 7.983,
+        "unit": "degrees"
+      }
+    },
+    "result_s3_key": "results/2025/10/26/demo_athlete_007_20251026T172305.json",
+    "ttl": 1769253785
+  }
+]

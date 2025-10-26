@@ -751,3 +751,86 @@
   - ADR-008（S3バケットポリシー、AccountId制限）
   - CLAUDE.md §セキュリティ
 - 破壊的変更: なし（既存実装を文書化）
+
+## ADR-014: Phase 5 - Streamlit Dashboard実装
+- 日付: 2025-10-26
+- 決定者: Human + Claude
+- 状態: ✅ Accepted
+- 関連ADR: ADR-007（AWS Lambda）, ADR-011（出力物生成）
+- コンテキスト:
+  - Phase 0-4完了（ローカルMVP、AWS本番環境、セキュリティ）
+  - 動画アップロード・評価結果確認のUIが不在
+  - コーチへのデモ・フィードバック収集が必要
+  - 「早く動かす」優先（2-3時間で完成目標）
+- 決定内容:
+  - **Streamlit Dashboard実装**（React/Next.js不採用）
+  - **1. 技術選定: Streamlit**:
+    - 理由:
+      - Pythonのみ（既存コードと統一）
+      - 実装速度最速（2-3時間）
+      - AWS統合簡単（boto3使用）
+    - トレードオフ:
+      - ✅ 高速プロトタイプ作成
+      - ❌ カスタマイズ制限あり
+      - 将来的にReact移行可能（必要なら）
+  - **2. 実装機能**:
+    - **動画アップロード（S3）**:
+      - テストタイプ選択（7種目）
+      - MP4ファイルアップロード
+      - S3 VideosBucketへ自動アップロード
+      - videos/{test_type}/ パス構造
+    - **評価結果一覧（DynamoDB）**:
+      - DynamoDB Scan（全結果取得）
+      - pandas DataFrame表示
+      - テストタイプフィルタ
+    - **詳細結果表示**:
+      - 総合スコア表示
+      - Health Check情報
+      - JSON詳細表示
+  - **3. AWS統合**:
+    - AccountId自動取得（STS GetCallerIdentity）
+    - S3バケット名動的生成（ADR-007準拠）
+    - st.cache_resource でAWSクライアントシングルトン化
+- 実装詳細:
+  - **dashboard/app.py（238行）**:
+    - upload_video_page(): S3アップロード
+    - results_list_page(): DynamoDB一覧表示
+    - show_result_detail(): 詳細結果表示
+  - **dashboard/config.py（61行）**:
+    - get_aws_account_id(): AccountId取得
+    - get_resource_names(): リソース名動的生成
+    - TEST_TYPES, TEST_TYPE_DISPLAY: 7種目定義
+  - **run_dashboard.sh**:
+    - 仮想環境明示的アクティベート
+    - Streamlit起動スクリプト
+- 技術スタック:
+  - Streamlit 1.28.0
+  - boto3 1.34.0（S3, DynamoDB）
+  - Plotly 5.18.0（グラフ可視化準備）
+  - pandas 2.0.3（DataFrame表示）
+- 起動方法:
+  ```bash
+  ./run_dashboard.sh
+  # または
+  .venv/bin/streamlit run dashboard/app.py
+  ```
+- 影響範囲:
+  - requirements.txt: Streamlit, Plotly追加
+  - 新規ファイル:
+    - dashboard/app.py（238行）
+    - dashboard/config.py（61行）
+    - run_dashboard.sh（起動スクリプト）
+  - 総計: 327行追加
+- パフォーマンス:
+  - DynamoDB Scan: 項目数多い場合にコスト増加（将来的にQuery最適化検討）
+  - Streamlit再実行: st.cache_resource で最小化
+- 次のステップ:
+  - コーチフィードバック収集
+  - 必要に応じて機能追加:
+    - グラフ可視化（Plotly）
+    - DLQ監視（Recovery機能）
+    - CSV/PDF生成済みファイルダウンロード
+- 参照:
+  - Git commit: bf1c096（feat: Phase 5完了）
+  - CLAUDE.md §Phase制導入（Phase 5: Dashboard/Recovery）
+- 破壊的変更: なし（新規実装）
