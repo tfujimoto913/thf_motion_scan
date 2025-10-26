@@ -41,3 +41,12 @@ packaged.yaml
 # Temporary files
 *.tmp
 /tmp/
+
+# Security (ADR-013)
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.yaml

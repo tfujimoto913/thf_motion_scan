@@ -570,3 +570,184 @@
   - **PDF出力**: ~0.5秒（reportlab構築）
 - 参照: CLAUDE.md §出力物機能、processing/exporters/
 - 破壊的変更: なし（後方互換性維持、output_formatsはオプション）
+
+## ADR-012: Phase 3 - ルール定義ファイルの充実
+- 日付: 2025-10-25
+- 決定者: Human + Claude
+- 状態: ✅ Accepted
+- 関連ADR: ADR-002（config.json外部化）, ADR-003（正規化処理）
+- コンテキスト:
+  - Phase 2完了後、以下の課題が存在：
+    1. 評価閾値がconfig.jsonとコード両方に散在
+    2. 7種目の評価ルールが統一的に定義されていない
+    3. 閾値変更時に複数ファイル修正が必要
+    4. 重み合計の整合性チェックが手動
+- 決定内容:
+  - **test_rules.json + RuleValidator + BaseEvaluator** を実装
+  - **1. test_rules.json**:
+    - 全7種目の評価ルール定義:
+      - single_leg_squat, upper_body_swing, skater_lunge
+      - cross_step, stride_mimic, push_pull, jump_landing
+    - グローバル設定:
+      - score_range (0-3)
+      - frame_detection (min_detection_rate: 0.7)
+      - weight_validation (sum=1.0, tolerance=0.001)
+    - メトリック構造:
+      ```json
+      {
+        "name": "pelvic_stability",
+        "weight": 0.5,
+        "unit": "meters",
+        "thresholds": {
+          "score_3": {"max": 0.03},
+          "score_2": {"max": 0.05},
+          "score_1": {"max": 0.08},
+          "score_0": {"min": 0.08}
+        }
+      }
+      ```
+  - **2. RuleValidator (processing/config/rule_validator.py)**:
+    - 3層検証システム:
+      - validate_schema(): 必須フィールド確認
+      - validate_weights(): 重み合計=1.0 ± tolerance(0.001)
+      - validate_thresholds(): min/max排他性
+      - load_test_rules(): 統合検証付きロード関数
+  - **3. BaseEvaluator (processing/evaluators/base_evaluator.py)**:
+    - 全evaluatorの抽象基底クラス:
+      - get_metric_threshold(): 動的閾値取得
+      - get_metric_weight(): 重み取得
+      - calculate_overall_score(): 統一スコア計算（min/weighted_average）
+      - config.json（レガシー）とtest_rules.json（新）の両対応
+- テスト結果:
+  - **26テスト全パス（0.03秒）**:
+    - スキーマ検証: 8テスト
+    - 重み検証: 3テスト
+    - 閾値検証: 3テスト
+    - 統合テスト: 6テスト
+    - 実ファイル検証: 3テスト（7種目存在確認、重み合計確認含む）
+    - その他: 3テスト
+- 影響:
+  - メリット:
+    - ✅ 評価ルールの一元管理
+    - ✅ 重み整合性の自動検証
+    - ✅ 新規種目追加が容易（JSONに追加するだけ）
+    - ✅ config.json（レガシー）との共存可能
+  - 制約:
+    - ⚠️ JSON特殊文字禁止（°→deg）※UTF-8エラー防止
+    - ⚠️ 重み合計は必ず1.0（tolerance=0.001）
+    - ⚠️ min/max同時指定不可（排他的）
+- 技術スタック:
+  - JSON Schema検証
+  - Python ABC（抽象基底クラス）
+  - pytest（26テスト）
+  - UTF-8エンコーディング対応
+- 変更ファイル:
+  - 新規作成:
+    - processing/config/test_rules.json（244行）
+    - processing/config/rule_validator.py（301行）
+    - processing/config/__init__.py（17行）
+    - processing/evaluators/base_evaluator.py（283行）
+    - tests/test_rule_validator.py（475行）
+  - 更新:
+    - processing/evaluators/__init__.py（BaseEvaluator追加）
+    - CLAUDE.md（特殊文字禁止ルール追加）
+  - 総計: 1,320行追加
+- Lessons Learned:
+  - **UTF-8エンコーディング問題**:
+    - 現象: 度数記号（°）使用時に UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb0
+    - 原因: Claude Code の Write tool が特殊文字をISO-8859-1でエンコード
+    - 解決: iconv -f ISO-8859-1 -t UTF-8 で変換
+    - 対策: 今後はJSON/YAMLで特殊文字使用禁止（CLAUDE.mdに明記済み）
+- 参照:
+  - Git commit: 189eb39 (feat: Phase 3完了)
+  - Git commit: 8865f22 (docs: CLAUDE.md 特殊文字禁止ルール追加)
+- 破壊的変更: なし（BaseEvaluatorは新規、既存evaluatorへの統合は段階的実施予定）
+
+## ADR-013: セキュリティポリシーの明文化
+- 日付: 2025-10-26
+- 決定者: Human + Claude
+- 状態: ✅ Accepted
+- 関連ADR: ADR-004（Health Check）, ADR-007（AWS Lambda）
+- コンテキスト:
+  - AWS本番環境デプロイ完了（Lambda, S3, DynamoDB稼働中）
+  - 個人情報（顔データ、氏名、パス）を含む動画処理
+  - セキュリティルールが散在（CLAUDE.md, コードコメント, template.yaml）
+  - 統一的なセキュリティポリシー文書が不在
+- 決定内容:
+  - **プロジェクト全体のセキュリティポリシーを体系化**
+  - **1. 個人情報保護**:
+    - 顔データ: 処理後即座に匿名化ID変換（処理中のみメモリ保持）
+    - 氏名・パス: ログ出力禁止、warnings.jsonでパス匿名化
+    - 実装:
+      - `health_check._anonymize_path()`: フルパス→ファイル名のみ（ADR-004）
+      - Lambda一時ファイル: `os.unlink()`で即削除（handler.py:95）
+  - **2. 認証情報管理**:
+    - APIキー・シークレット: 環境変数のみ（`.env`またはLambda環境変数）
+    - コード内ハードコード: 絶対禁止
+    - 実装:
+      - handler.py: `os.environ.get('RESULTS_BUCKET')`（36-39行目）
+      - template.yaml: Lambda環境変数で注入
+      - .gitignore: `.env`, `*.pem`, `*.key` 除外
+  - **3. ログ出力制限**:
+    - 禁止対象: 環境変数、個人情報、フルパス
+    - 許可対象: 匿名化済みファイル名、エラーメッセージ、統計情報
+    - 実装:
+      - warnings.json: 個人情報除外（ADR-004）
+      - handler.py: S3キーのみ出力（バケット名除外可）
+  - **4. データ保持期間**:
+    - 動画（S3 VideosBucket）: 30日後自動削除
+    - 結果JSON（S3 ResultsBucket）: 90日後Glacier移行
+    - DynamoDB: 90日後TTL自動削除
+    - 実装:
+      - template.yaml: S3 LifecycleConfiguration（ADR-007）
+      - handler.py: DynamoDB TTL設定（193行目）
+  - **5. アクセス制御**:
+    - IAM最小権限原則:
+      - Lambda: S3読み取り（Videos）, S3書き込み（Results）, DynamoDB書き込み
+      - 人間: AWS Console経由（IAM User/Role）
+    - S3バケットポリシー: AccountId制限（ADR-008）
+    - 実装:
+      - template.yaml: Policies（S3ReadPolicy, S3CrudPolicy, DynamoDBCrudPolicy）
+  - **6. セキュリティチェックリスト**:
+    - [ ] 環境変数に機密情報を保存（.envは.gitignore）
+    - [ ] コード内にAPIキー・パスワードが存在しないか確認
+    - [ ] ログに個人情報が含まれていないか確認
+    - [ ] S3バケットがパブリックアクセス禁止になっているか確認
+    - [ ] DynamoDB暗号化有効（デフォルト有効）
+    - [ ] Lambda関数にVPC設定（必要に応じて）
+    - [ ] CloudWatch Logsの保持期間設定（コスト最適化）
+- 技術詳細:
+  - **匿名化例**:
+    ```python
+    # ❌ 禁止
+    print(f"処理中: /Users/taka919191/videos/john_doe_squat.mp4")
+
+    # ✅ 推奨
+    print(f"処理中: john_doe_squat.mp4")  # パス匿名化済み
+    ```
+  - **環境変数例**:
+    ```python
+    # ❌ 禁止
+    AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
+
+    # ✅ 推奨
+    AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+    ```
+  - **TTL設定例**:
+    ```python
+    'ttl': int(datetime.now().timestamp()) + (90 * 24 * 60 * 60)  # 90日後
+    ```
+- 影響範囲:
+  - 既存コード: ✅ 全て準拠済み（ADR-004, ADR-007で実装）
+  - 新規開発: 本ADRに準拠必須
+  - デプロイ前: セキュリティチェックリスト実施必須
+- リスク評価:
+  - **高リスク**: 個人情報漏洩、APIキー漏洩 → 本ADRで対策済み
+  - **中リスク**: データ保持期間超過 → S3 Lifecycle/DynamoDB TTLで自動化
+  - **低リスク**: CloudWatch Logsコスト増大 → 保持期間設定で対応
+- 参照:
+  - ADR-004（Health Check、warnings.json、匿名化）
+  - ADR-007（AWS Lambda、IAM Policies）
+  - ADR-008（S3バケットポリシー、AccountId制限）
+  - CLAUDE.md §セキュリティ
+- 破壊的変更: なし（既存実装を文書化）

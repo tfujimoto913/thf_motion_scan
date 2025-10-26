@@ -26,12 +26,24 @@ Globals:
         TABLE_NAME: !Ref ResultsTable
 
 Resources:
+  # CloudWatch Logs: Lambda関数ログ保持期間設定（ADR-013）
+  ProcessingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-ProcessingFunction'
+      RetentionInDays: 30
+
   # S3バケット: アップロード用
   VideosBucket:
     Type: AWS::S3::Bucket
     DependsOn: QueuePolicy
     Properties:
       BucketName: !Sub 'thf-motion-scan-videos-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
           - Id: DeleteAfter30Days
@@ -54,6 +66,11 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub 'thf-motion-scan-results-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
           - Id: MoveToGlacierAfter90Days
@@ -101,7 +118,9 @@ Resources:
   # Lambda関数
   ProcessingFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ProcessingFunctionLogGroup
     Properties:
+      FunctionName: !Sub '${AWS::StackName}-ProcessingFunction'
       PackageType: Image
       ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/thf-motion-scan:latest'
       Architectures:
