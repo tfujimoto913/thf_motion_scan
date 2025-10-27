@@ -1184,7 +1184,96 @@
     - 旧呼び出し: `process_video(video_path, test_type)` → 自動ID生成
     - 新呼び出し: `process_video(video_path, test_type, athlete_id, session_id)` → ID指定
 
-## ADR-018: 統一評価器インターフェース
+## ADR-018: チーム一括受付システム
+- 日付: 2025-10-27
+- 決定者: Human + Claude Code
+- 決定: チーム単位での選手一括スキャン受付と権限別結果閲覧システム
+- 理由:
+  - **スケーラビリティ**: 個別登録からチーム単位登録へ移行
+  - **権限管理**: 選手(JWT)/コーチ(Wix Members)/管理者の3階層実装
+  - **UX改善**: QRコードによるチーム専用URL配布で登録簡略化
+  - **統計機能**: コーチ向けチーム統計・レーダーチャート・CSV出力
+- 影響範囲:
+  - DynamoDB: GSI2追加、Team/CoachRoleエンティティ追加、Athlete拡張
+  - Lambda: 6つの新規エンドポイント (createTeam, register, login, getUploadUrl, coach/results, coach/export-csv)
+  - Wix: 3つの動態ページ (team-intake, team-upload, coach/:teamSlug)
+  - セキュリティ: JWT認証、Lambda内強制フィルタ、hCaptcha統合
+- 技術詳細:
+  - **DynamoDB GSI2**: TeamIndex (GSI2PK: TEAM#{teamId}, GSI2SK: JERSEY#{jerseyNumber})
+  - **JWT仕様**: HS256、60分有効、シークレットはSecrets Manager管理
+  - **権限レベル**:
+    - 選手: playerId + password → JWT → 自分のみ閲覧
+    - コーチ: Wix Members → 担当チーム全選手閲覧
+    - THF管理者: Wix Members (admin) → 全チーム閲覧
+  - **エンティティ構造**:
+    ```json
+    // Team (新規)
+    {
+      "PK": "TEAM#tm_sakae",
+      "SK": "METADATA",
+      "teamId": "tm_sakae",
+      "teamCode": "SAKAE-25FA",
+      "teamSlug": "sakae",
+      "registrationUrl": "/team-intake/sakae",
+      "qrCodeS3Key": "qrcodes/tm_sakae.png"
+    }
+
+    // Athlete (拡張)
+    {
+      "PK": "ATHLETE#plr_sakae_19",
+      "SK": "METADATA",
+      "playerId": "plr_sakae_19",
+      "teamInfo": {
+        "teamId": "tm_sakae",
+        "jerseyNumber": 19,
+        "isTeamPlayer": true
+      },
+      "GSI2PK": "TEAM#tm_sakae",
+      "GSI2SK": "JERSEY#19"
+    }
+
+    // CoachRole (新規)
+    {
+      "PK": "COACH#coach_wix_001",
+      "SK": "TEAM#tm_sakae",
+      "coachId": "coach_wix_001",
+      "teamId": "tm_sakae",
+      "role": "head_coach"
+    }
+    ```
+  - **API仕様**:
+    1. `POST /admin/createTeam`: チーム作成 + QRコード生成
+    2. `POST /player/register`: 選手登録 (背番号重複チェック)
+    3. `POST /player/login`: JWT発行
+    4. `POST /getUploadUrl`: S3 Pre-signed URL生成 (15分有効)
+    5. `GET /coach/results`: チーム統計・レーダーチャート
+    6. `GET /coach/export-csv`: CSV出力
+  - **セキュリティ実装**:
+    ```python
+    # Lambda内での強制フィルタ (必須)
+    def get_coach_results(coach_id, requested_team_id):
+        coach_roles = dynamodb.query(
+            KeyConditionExpression=Key('PK').eq(f'COACH#{coach_id}')
+        )
+        allowed_team_ids = [role['teamId'] for role in coach_roles['Items']]
+        if requested_team_id not in allowed_team_ids:
+            raise PermissionError('権限なし')
+        return get_team_results(requested_team_id)
+    ```
+- 実装ステップ (3週間):
+  - Week 1: DynamoDB GSI2、Lambda (createTeam/register/login)、QRコード生成
+  - Week 2: Wix Pages (team-intake/team-upload/coach統計)
+  - Week 3: セキュリティ強化 (hCaptcha、権限チェック)、E2Eテスト
+- コスト試算: 月間75名想定で $0.82/月
+- 参照:
+  - 既存: processing/worker.py (解析パイプライン)
+  - 既存: DynamoDBテーブル thf-motion-scan-results
+  - Notion設計書: チーム一括受付システム詳細仕様
+- 破壊的変更:
+  - AthleteエンティティにteamInfo/GSI2PK/GSI2SK追加 (既存選手データはmigration必要)
+  - 新規選手登録フローが /player/register に変更 (旧 /register は非推奨)
+
+## ADR-019: 統一評価器インターフェース
 - 日付: 2025-10-27
 - 決定者: Human + Claude Code
 - 決定: 全7評価器が統一された引数シグネチャを持つ
