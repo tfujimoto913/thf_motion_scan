@@ -1359,3 +1359,272 @@
     - 影響: 既存の評価器呼び出しコードは修正必須
     - 緩和策: worker.pyが主な呼び出し元のため影響範囲は限定的
     - テスト: test_all_evaluators.pyで全評価器の動作検証済み
+
+## ADR-020: 選手登録フィールド拡張とDynamoDBキー構造修正
+- 日付: 2025-10-27
+- 決定者: Human + Claude Code
+- 状態: ✅ Accepted
+- 関連ADR: ADR-018（チーム一括受付システム）
+- コンテキスト:
+  - **Week 1デプロイ後の問題発覚**:
+    1. **DynamoDBキー構造エラー**: "The provided key element does not match the schema"
+       - Lambda関数が`PK/SK`を期待、実際のテーブルは`video_id/processed_at`
+       - 原因: ADR-018の初期設計でGSI1（PK/SK）を先行実装と仮定、実際はメインテーブルがvideo_id/processed_at
+    2. **選手情報フィールド不足**: Kana名と身体特性（利き手・利き足・シュートハンド）が未実装
+       - 要求: firstNameKana, lastNameKana, dominantHand, dominantFoot, shootingHand
+- 決定内容:
+  - **Part 1: DynamoDBキー構造修正（緊急対応）**:
+    - Lambda関数の内部実装を修正し、`PK/SK`抽象化レイヤーを`video_id/processed_at`にマッピング
+    - メインテーブル使用時: `video_id/processed_at`
+    - GSI2（TeamIndex）使用時: `GSI2PK/GSI2SK`
+    - Team/Athleteエンティティのキー構造を`video_id/processed_at`に変更
+  - **Part 2: 選手登録フィールド拡張**:
+    - Kana名バリデーター追加: ひらがな・カタカナのみ（1-20文字）
+    - 身体特性バリデーター追加: "right"/"left"のみ（大文字自動正規化）
+    - player_auth/handler.py拡張: personalInfo + bodyCharacteristics追加
+    - テストケース追加: 8つの新規バリデーションテスト
+- 技術詳細:
+  - **1. dynamodb_utils.py修正**（lambda/common/dynamodb_utils.py:39-176）:
+    ```python
+    def query_items(pk: str, sk_prefix: Optional[str] = None,
+                    index_name: Optional[str] = None) -> List[Dict]:
+        """
+        内部的にvideo_id/processed_atにマッピング
+        GSI2使用時はGSI2PK/GSI2SK使用
+        """
+        if index_name == 'GSI2-index':
+            # GSI2: TeamIndex
+            if sk_prefix:
+                key_condition = Key('GSI2PK').eq(pk) & Key('GSI2SK').begins_with(sk_prefix)
+            else:
+                key_condition = Key('GSI2PK').eq(pk)
+        else:
+            # メインテーブル: video_id/processed_at
+            if sk_prefix:
+                key_condition = Key('video_id').eq(pk) & Key('processed_at').begins_with(sk_prefix)
+            else:
+                key_condition = Key('video_id').eq(pk)
+
+    def get_item(pk: str, sk: str) -> Optional[Dict]:
+        response = table.get_item(Key={'video_id': pk, 'processed_at': sk})
+        return response.get('Item')
+
+    def update_item(pk: str, sk: str, update_expression: str, ...) -> bool:
+        update_kwargs = {
+            'Key': {'video_id': pk, 'processed_at': sk},
+            'UpdateExpression': update_expression,
+            ...
+        }
+    ```
+  - **2. Team/Athleteエンティティ構造変更**:
+    ```python
+    # team_management/handler.py
+    team_item = {
+        'video_id': f"TEAM#{team_id}",      # メインテーブルのHASHキー
+        'processed_at': 'METADATA',          # メインテーブルのRANGEキー
+        'teamId': team_id,
+        'teamSlug': team_slug,
+        'teamName': team_name,
+        'registrationUrl': registration_url,
+        'qrCodeS3Key': qr_code_s3_key,
+        'createdAt': created_at
+    }
+
+    # player_auth/handler.py（拡張前）
+    athlete_item = {
+        'video_id': f"ATHLETE#{player_id}",   # メインテーブルのHASHキー
+        'processed_at': 'METADATA',            # メインテーブルのRANGEキー
+        'playerId': player_id,
+        'teamInfo': {...},
+        'personalInfo': {
+            'firstName': first_name,
+            'lastName': last_name,
+            'birthDate': birth_date
+        },
+        'auth': {'passwordHash': hashed_password},
+        'GSI2PK': f"TEAM#{team_id}",
+        'GSI2SK': f"JERSEY#{jersey_number:02d}",
+        'createdAt': created_at
+    }
+    ```
+  - **3. 選手登録フィールド拡張**（player_auth/handler.py:107-282）:
+    ```python
+    # 追加フィールド
+    athlete_item = {
+        'video_id': f"ATHLETE#{player_id}",
+        'processed_at': 'METADATA',
+        'playerId': player_id,
+        'teamInfo': {...},
+        'personalInfo': {
+            'firstName': first_name,
+            'lastName': last_name,
+            'firstNameKana': first_name_kana,      # 新規
+            'lastNameKana': last_name_kana,        # 新規
+            'birthDate': birth_date
+        },
+        'bodyCharacteristics': {                    # 新規セクション
+            'dominantHand': dominant_hand,          # "right" or "left"
+            'dominantFoot': dominant_foot,          # "right" or "left"
+            'shootingHand': shooting_hand           # "right" or "left"
+        },
+        'auth': {...},
+        'GSI2PK': f"TEAM#{team_id}",
+        'GSI2SK': f"JERSEY#{jersey_number:02d}",
+        'createdAt': created_at
+    }
+    ```
+  - **4. バリデーター追加**（lambda/common/validators.py:179-237）:
+    ```python
+    def validate_kana_name(kana_name: str, field_name: str) -> Tuple[bool, Optional[str]]:
+        """
+        ひらがな（ぁ-んー）またはカタカナ（ァ-ヴー）のみ許可
+        1-20文字、全角のみ
+        """
+        kana_pattern = r'^[ぁ-んァ-ヴー]+$'
+        if not re.match(kana_pattern, kana_name):
+            return False, f"{field_name} must contain only hiragana or katakana characters"
+        return True, None
+
+    def validate_lateral_characteristic(value: str, field_name: str) -> Tuple[bool, Optional[str]]:
+        """
+        "right" or "left" のみ許可
+        大文字・小文字は正規化（自動lower()）
+        """
+        normalized_value = value.lower().strip()
+        if normalized_value not in ['right', 'left']:
+            return False, f"{field_name} must be either 'right' or 'left'"
+        return True, None
+    ```
+- 影響範囲:
+  - **lambda/common/dynamodb_utils.py**: 3関数修正（query_items, get_item, update_item）
+  - **lambda/common/validators.py**: 2関数追加（validate_kana_name, validate_lateral_characteristic）
+  - **lambda/team_management/handler.py**: team_itemキー構造変更
+  - **lambda/player_auth/handler.py**: athlete_itemキー構造変更 + フィールド拡張
+  - **tests/lambda/test_common.py**: 8テストケース追加（30テスト → 全合格）
+  - **template.yaml**: GSI1コメントアウト（DynamoDB 1 GSI制限対応）
+- DynamoDB構造の共存:
+  - **動画処理データ**: `video_id = S3パス`, `processed_at = タイムスタンプ`
+  - **Team/Athleteデータ**: `video_id = TEAM#/ATHLETE#`, `processed_at = METADATA`
+  - プレフィックスで識別可能（衝突なし）
+- テスト結果:
+  - ✅ test_common.py: 30/30 passed
+    - Kana検証: 4テスト（hiragana, katakana, 漢字検出, 英字検出）
+    - 身体特性検証: 4テスト（right, left, 大文字正規化, 不正値検出）
+  - ✅ sam build: Build Succeeded
+  - ✅ DynamoDBキー構造: メインテーブル・GSI2両対応
+- API変更:
+  - **POST /player/register** リクエスト:
+    ```json
+    {
+      "teamId": "tm_sakae",
+      "jerseyNumber": 19,
+      "firstName": "太郎",
+      "lastName": "山田",
+      "firstNameKana": "たろう",        // 新規必須
+      "lastNameKana": "やまだ",          // 新規必須
+      "birthDate": "2010-03-15",
+      "dominantHand": "right",          // 新規必須
+      "dominantFoot": "left",           // 新規必須
+      "shootingHand": "right",          // 新規必須
+      "password": "secure123"
+    }
+    ```
+  - **POST /player/register** レスポンス:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "playerId": "plr_sakae_19",
+        "teamId": "tm_sakae",
+        "jerseyNumber": 19,
+        "firstName": "太郎",
+        "lastName": "山田",
+        "firstNameKana": "たろう",
+        "lastNameKana": "やまだ",
+        "birthDate": "2010-03-15",
+        "bodyCharacteristics": {
+          "dominantHand": "right",
+          "dominantFoot": "left",
+          "shootingHand": "right"
+        },
+        "createdAt": "2025-10-27T12:00:00Z"
+      },
+      "message": "Player registered successfully"
+    }
+    ```
+- エラーハンドリング例:
+  - **Kana名に漢字を含む**:
+    ```json
+    {
+      "success": false,
+      "error": "First name kana must contain only hiragana or katakana characters",
+      "errorCode": "VALIDATION_ERROR"
+    }
+    ```
+  - **身体特性が不正**:
+    ```json
+    {
+      "success": false,
+      "error": "Dominant hand must be either 'right' or 'left'",
+      "errorCode": "VALIDATION_ERROR"
+    }
+    ```
+- 将来的な改善点:
+  - **GSI1追加予定**:
+    - DynamoDB制限: 一度に1つのGSIしか追加不可
+    - Week 1: GSI2（TeamIndex）のみ実装
+    - Week 2以降: GSI1（PK/SK）追加予定
+    - 追加方法: template.yamlのコメント解除 + `sam deploy`、または`aws dynamodb update-table`
+    - 追加時の対応: Team/AthleteエンティティにPK/SK属性追加
+      ```python
+      team_item = {
+          'video_id': f"TEAM#{team_id}",
+          'processed_at': 'METADATA',
+          'PK': f"TEAM#{team_id}",      # GSI1用（追加）
+          'SK': 'METADATA',              # GSI1用（追加）
+          ...
+      }
+      ```
+  - **動画処理エンティティとの統合**:
+    - 現在: メインテーブルに動画処理データ + Team/Athleteデータを共存
+    - 将来: GSI1追加により、動画処理データもGSI1経由でクエリ可能
+    - 利点: 統一的なアクセスパターン（メインテーブルはS3パスベース、GSI1はエンティティタイプベース）
+- Lessons Learned:
+  - **DynamoDBキー設計の重要性**:
+    - 問題: 設計書とインフラ実装の不一致（PK/SK vs video_id/processed_at）
+    - 教訓: template.yaml作成時にメインテーブルのキー名を確認必須
+    - 対策: ADR記録時にキースキーマを明記
+  - **抽象化レイヤーの利点**:
+    - dynamodb_utils.pyが抽象化レイヤーとして機能
+    - 内部実装変更でも呼び出し側（handler.py）は無変更
+    - 推奨: 全DynamoDB操作をユーティリティ関数経由にする
+  - **段階的デプロイの重要性**:
+    - Week 1でGSI2のみ実装、GSI1は後日追加
+    - 理由: DynamoDB制限（1 GSI/デプロイ）
+    - 利点: 問題発生時の影響範囲を最小化
+- セキュリティ:
+  - パスワードハッシュ: bcrypt（rounds=12）継続使用
+  - JWT: HS256、60分有効、Secrets Manager管理（継続）
+  - 個人情報保護: firstNameKana/lastNameKanaはログ出力禁止
+  - 身体特性: dominantHand等はログ出力可能（個人識別不可）
+- パフォーマンス:
+  - バリデーション追加: +0.001秒/リクエスト（正規表現マッチング）
+  - DynamoDB読み込み: 変化なし（キー構造のみ変更、クエリ効率同等）
+- 参照:
+  - ADR-018（チーム一括受付システム）
+  - template.yaml:285-320（DynamoDB GSI定義）
+  - lambda/common/dynamodb_utils.py:39-176（キー構造マッピング）
+  - lambda/common/validators.py:179-237（新規バリデーター）
+  - lambda/player_auth/handler.py:107-282（選手登録エンドポイント）
+  - tests/lambda/test_common.py:244-329（新規テスト）
+  - /tmp/dynamodb_key_fix_report.txt（修正レポート）
+  - /tmp/gsi_modification_report.txt（GSI1コメントアウトレポート）
+- 破壊的変更:
+  - **player_auth/handler.py POST /player/register**:
+    - 新規必須フィールド: firstNameKana, lastNameKana, dominantHand, dominantFoot, shootingHand
+    - 影響: 既存フロントエンドは登録フォーム更新必須
+    - 緩和策: Week 1で初回デプロイのため実ユーザー影響なし
+  - **DynamoDBキー構造**:
+    - Team/Athleteエンティティが`video_id/processed_at`を使用
+    - 影響: 既存データがある場合はmigration必要
+    - 緩和策: Week 1で初回デプロイのため既存データなし

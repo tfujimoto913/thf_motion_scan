@@ -25,6 +25,13 @@ Globals:
         RESULTS_BUCKET: !Ref ResultsBucket
         TABLE_NAME: !Ref ResultsTable
 
+  # API Gateway設定（Week 1 Lambda用）
+  Api:
+    Cors:
+      AllowOrigin: "'*'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+
 Resources:
   # CloudWatch Logs: Lambda関数ログ保持期間設定（ADR-013）
   ProcessingFunctionLogGroup:
@@ -115,7 +122,7 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
 
-  # Lambda関数
+  # Lambda関数: 動画処理（既存）
   ProcessingFunction:
     Type: AWS::Serverless::Function
     DependsOn: ProcessingFunctionLogGroup
@@ -139,6 +146,131 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref ResultsTable
 
+  # ==============================================================================
+  # Week 1 Lambda Functions（チーム一括受付システム、ADR-018）
+  # ==============================================================================
+
+  # S3バケット: QRコード保存用
+  QRCodeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'thf-motion-scan-qrcodes-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Secrets Manager: JWT署名キー
+  JWTSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: thf-jwt-secret
+      Description: JWT signing secret for THF Motion Scan player authentication
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: secret
+        PasswordLength: 64
+        ExcludeCharacters: '"@\\'
+
+  # Lambda関数: チーム管理
+  TeamManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-TeamManagement'
+      Runtime: python3.11
+      Handler: team_management/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ResultsTable
+          QRCODE_BUCKET: !Ref QRCodeBucket
+          JWT_SECRET_NAME: thf-jwt-secret
+      Events:
+        CreateTeam:
+          Type: Api
+          Properties:
+            Path: /admin/createTeam
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - S3CrudPolicy:
+            BucketName: !Ref QRCodeBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref JWTSecret
+
+  # Lambda関数: 選手認証
+  PlayerAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-PlayerAuth'
+      Runtime: python3.11
+      Handler: player_auth/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ResultsTable
+          JWT_SECRET_NAME: thf-jwt-secret
+      Events:
+        Register:
+          Type: Api
+          Properties:
+            Path: /player/register
+            Method: POST
+        Login:
+          Type: Api
+          Properties:
+            Path: /player/login
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref JWTSecret
+
+  # Lambda関数: アップロードURL生成
+  UploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-UploadUrl'
+      Runtime: python3.11
+      Handler: upload_url/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ResultsTable
+          VIDEOS_BUCKET: !Ref VideosBucket
+          JWT_SECRET_NAME: thf-jwt-secret
+      Events:
+        GetUploadUrl:
+          Type: Api
+          Properties:
+            Path: /getUploadUrl
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - S3CrudPolicy:
+            BucketName: !Ref VideosBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref JWTSecret
+
   # DynamoDBテーブル
   ResultsTable:
     Type: AWS::DynamoDB::Table
@@ -150,16 +282,47 @@ Resources:
           AttributeType: S
         - AttributeName: processed_at
           AttributeType: S
+        # GSI1属性定義（後日追加予定）
+        # - AttributeName: PK
+        #   AttributeType: S
+        # - AttributeName: SK
+        #   AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
       KeySchema:
         - AttributeName: video_id
           KeyType: HASH
         - AttributeName: processed_at
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # GSI1: 汎用PK/SK（既存エンティティ用）
+        # 後日追加予定（DynamoDBは一度に1つのGSIしか追加できない制約のため）
+        # - IndexName: GSI1-index
+        #   KeySchema:
+        #     - AttributeName: PK
+        #       KeyType: HASH
+        #     - AttributeName: SK
+        #       KeyType: RANGE
+        #   Projection:
+        #     ProjectionType: ALL
+
+        # GSI2: TeamIndex（背番号検索用、ADR-018）
+        - IndexName: GSI2-index
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
 
 Outputs:
+  # 既存リソース
   VideosBucketName:
     Description: "S3バケット名（動画アップロード用）"
     Value: !Ref VideosBucket
@@ -189,3 +352,40 @@ Outputs:
     Value: !Ref ResultsTable
     Export:
       Name: !Sub '${AWS::StackName}-TableName'
+
+  # Week 1リソース
+  QRCodeBucketName:
+    Description: "S3バケット名（QRコード保存用）"
+    Value: !Ref QRCodeBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-QRCodeBucket'
+
+  JWTSecretArn:
+    Description: "JWT Secret ARN（Secrets Manager）"
+    Value: !Ref JWTSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-JWTSecret'
+
+  ApiGatewayUrl:
+    Description: "API Gateway エンドポイント"
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  TeamManagementFunctionArn:
+    Description: "チーム管理Lambda関数ARN"
+    Value: !GetAtt TeamManagementFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TeamManagementArn'
+
+  PlayerAuthFunctionArn:
+    Description: "選手認証Lambda関数ARN"
+    Value: !GetAtt PlayerAuthFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PlayerAuthArn'
+
+  UploadUrlFunctionArn:
+    Description: "アップロードURL生成Lambda関数ARN"
+    Value: !GetAtt UploadUrlFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-UploadUrlArn'
