@@ -137,7 +137,7 @@ class TestAllEvaluators:
         empty_data = []
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            # ADR-018: 統一インターフェース（全評価器で3つの正規化値を渡す）
             result = evaluator.evaluate(
                 empty_data,
                 base_width=1.0,
@@ -166,7 +166,7 @@ class TestAllEvaluators:
         test_data = sample_landmarks[:50]
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            # ADR-018: 統一インターフェース（全評価器で3つの正規化値を渡す）
             result = evaluator.evaluate(
                 test_data,
                 base_width=0.2,
@@ -196,7 +196,7 @@ class TestAllEvaluators:
         test_data = sample_landmarks[:30]
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            # ADR-018: 統一インターフェース（全評価器で3つの正規化値を渡す）
             result = evaluator.evaluate(
                 test_data,
                 base_width=0.2,
@@ -229,7 +229,7 @@ class TestAllEvaluators:
         # 1回目の評価
         results_1 = {}
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            # ADR-018: 統一インターフェース（全評価器で3つの正規化値を渡す）
             results_1[evaluator_name] = evaluator.evaluate(
                 test_data,
                 base_width=0.2,
@@ -240,7 +240,7 @@ class TestAllEvaluators:
         # 2回目の評価（同じデータ）
         results_2 = {}
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            # ADR-018: 統一インターフェース（全評価器で3つの正規化値を渡す）
             results_2[evaluator_name] = evaluator.evaluate(
                 test_data,
                 base_width=0.2,

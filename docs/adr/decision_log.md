@@ -1183,3 +1183,90 @@
     - 影響: デフォルト値ありで後方互換性維持
     - 旧呼び出し: `process_video(video_path, test_type)` → 自動ID生成
     - 新呼び出し: `process_video(video_path, test_type, athlete_id, session_id)` → ID指定
+
+## ADR-018: 統一評価器インターフェース
+- 日付: 2025-10-27
+- 決定者: Human + Claude Code
+- 決定: 全7評価器が統一された引数シグネチャを持つ
+- 理由:
+  - **worker.py呼び出し統一**: 評価器ごとの条件分岐を排除
+  - **テストコード簡素化**: test_all_evaluators.pyで条件分岐不要
+  - **保守性向上**: 新規評価器追加時も同じインターフェース使用
+  - **拡張性確保**: 将来的な正規化パラメータ追加に対応
+- 問題の背景:
+  - 従来、評価器ごとに異なる引数シグネチャ:
+    - `single_leg_squat.evaluate(landmarks_data, base_width)`
+    - `skater_lunge.evaluate(landmarks_data, base_width, leg_length)`
+    - `upper_body_swing.evaluate(landmarks_data, base_width, shoulder_width, ...)`
+  - worker.pyでの呼び出しが複雑化
+  - テストで`if evaluator_name == 'upper_body_swing':`のような条件分岐が必須
+  - TypeError発生リスク（引数不足エラー）
+- 決定内容:
+  - **統一シグネチャ**:
+    ```python
+    def evaluate(self, landmarks_data: List[Dict], base_width: float,
+                 shoulder_width: float, leg_length: float,
+                 **kwargs) -> Dict:
+    ```
+  - **必須パラメータ**: `landmarks_data`, `base_width`, `shoulder_width`, `leg_length`
+  - **オプション**: `fps`, `body_height` 等は`**kwargs`で受け取り
+  - **未使用パラメータ**: 各評価器で使用しないパラメータは無視（docstringで明記）
+- 影響範囲:
+  - **全7評価器の修正**:
+    - `single_leg_squat.py`: `shoulder_width`, `leg_length` 追加
+    - `skater_lunge.py`: `shoulder_width` 追加
+    - `upper_body_swing.py`: `leg_length` 追加
+    - `cross_step.py`: `leg_length` 追加
+    - `stride_mimic.py`: `leg_length` 追加
+    - `push_pull.py`: `leg_length` 追加
+    - `jump_landing.py`: `leg_length` 追加
+  - **worker.py修正**:
+    - 全評価器に3つの正規化値を渡すように統一:
+      ```python
+      evaluation_result = evaluator.evaluate(
+          extraction_result['landmarks'],
+          base_width=base_width,
+          shoulder_width=representative_values.get('shoulder_width', 0.4),
+          leg_length=representative_values.get('leg_length', 1.0)
+      )
+      ```
+  - **tests/test_all_evaluators.py修正**:
+    - 条件分岐を削除（4箇所）
+    - 全評価器に統一パラメータで呼び出し
+- 技術詳細:
+  - **BodyNormalizer統合**: worker.pyで3つの正規化値を一括計算
+  - **デフォルト値**: worker.pyでデフォルト値を提供（shoulder_width=0.4, leg_length=1.0）
+  - **Docstring更新**: 各評価器で使用しないパラメータについて明記
+    - 例: single_leg_squat.pyでは`shoulder_width`はP1評価で使用、`leg_length`は将来拡張用
+- テスト結果:
+  - ✅ tests/test_all_evaluators.py: 9/9 passed
+  - ✅ 条件分岐削除完了
+  - ✅ 全評価器で統一インターフェース動作確認
+- 使用パターン例:
+  ```python
+  # Before (条件分岐必須)
+  if evaluator_name == 'upper_body_swing':
+      result = evaluator.evaluate(data, base_width=0.2, shoulder_width=0.4)
+  elif evaluator_name == 'skater_lunge':
+      result = evaluator.evaluate(data, base_width=0.2, leg_length=1.0)
+  else:
+      result = evaluator.evaluate(data, base_width=0.2)
+
+  # After (統一呼び出し)
+  result = evaluator.evaluate(
+      data,
+      base_width=0.2,
+      shoulder_width=0.4,
+      leg_length=1.0
+  )
+  ```
+- 参照:
+  - ADR-003（身体スケール正規化）
+  - ADR-016（12点満点システム）
+  - processing/worker.py:157-165（評価器呼び出し部分）
+  - tests/test_all_evaluators.py（統合テスト）
+- 破壊的変更:
+  - 全7評価器のシグネチャ変更
+    - 影響: 既存の評価器呼び出しコードは修正必須
+    - 緩和策: worker.pyが主な呼び出し元のため影響範囲は限定的
+    - テスト: test_all_evaluators.pyで全評価器の動作検証済み
