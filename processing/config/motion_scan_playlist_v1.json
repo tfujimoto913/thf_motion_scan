@@ -1,0 +1,167 @@
+{
+  "version": "v1.0.0",
+  "created_at": "2025-10-27",
+  "session_rules": {
+    "fps_min": 30,
+    "resolution_min": "720p",
+    "duration_per_test": 10,
+    "capture_format": "mp4",
+    "total_tests": 7
+  },
+  "tests": [
+    {
+      "code": "single_leg_squat",
+      "test_id": "T01_single_leg_squat",
+      "order": 1,
+      "label": "片脚スタンススクワット",
+      "label_en": "Single Leg Squat",
+      "evaluation_principle": "pelvic_stability",
+      "capture_view": "front",
+      "duration_seconds": 10,
+      "target_reps": 3,
+      "instructions": [
+        "全身が画面に収まるように立つ",
+        "片脚で3回スクワット",
+        "膝の動きが見えるように",
+        "骨盤を水平に保つ"
+      ],
+      "tips": [
+        "膝が足先より内側に入らないように注意",
+        "上半身の側屈を避ける",
+        "反対側の脚は軽く曲げて浮かせる"
+      ]
+    },
+    {
+      "code": "skater_lunge",
+      "test_id": "T02_skater_lunge",
+      "order": 2,
+      "label": "スケーターランジ",
+      "label_en": "Skater Lunge",
+      "evaluation_principle": "lateral_weight_shift",
+      "capture_view": "front",
+      "duration_seconds": 15,
+      "target_reps": 5,
+      "instructions": [
+        "全身が画面に収まるように立つ",
+        "左右各5回ランジを実施",
+        "骨盤を荷重脚の真上まで移動",
+        "非荷重脚は完全に浮かせる"
+      ],
+      "tips": [
+        "ステップ幅は肩幅の1.5倍以上",
+        "着地時の骨盤の水平を保つ",
+        "中央位置に戻ってから次の動作へ"
+      ]
+    },
+    {
+      "code": "stride_mimic",
+      "test_id": "T03_stride_mimic",
+      "order": 3,
+      "label": "ストライドミミック",
+      "label_en": "Stride Mimic",
+      "evaluation_principle": "dynamic_balance",
+      "capture_view": "front",
+      "duration_seconds": 15,
+      "target_reps": 10,
+      "instructions": [
+        "全身が画面に収まるように立つ",
+        "スケーティングのような動作を繰り返す",
+        "支持脚の膝を60-90度に曲げる",
+        "蹴り脚は横に大きく開く"
+      ],
+      "tips": [
+        "重心を支持脚の真上に保つ",
+        "体幹の前傾角度は10-25度",
+        "左右のバランスを均等に"
+      ]
+    },
+    {
+      "code": "jump_landing",
+      "test_id": "T04_jump_landing",
+      "order": 4,
+      "label": "ジャンプランディング",
+      "label_en": "Jump Landing",
+      "evaluation_principle": "landing_control",
+      "capture_view": "front",
+      "duration_seconds": 10,
+      "target_reps": 3,
+      "instructions": [
+        "全身が画面に収まるように立つ",
+        "軽くジャンプして両足で着地",
+        "着地後2秒間静止する",
+        "3回繰り返す"
+      ],
+      "tips": [
+        "着地時の膝の角度は70-100度",
+        "両足は同時に着地するように",
+        "着地後のブレを最小限に"
+      ]
+    },
+    {
+      "code": "upper_body_swing",
+      "test_id": "T05_upper_body_swing",
+      "order": 5,
+      "label": "上半身スイング",
+      "label_en": "Upper Body Swing",
+      "evaluation_principle": "kinetic_chain_upper",
+      "capture_view": "front",
+      "duration_seconds": 10,
+      "target_reps": 10,
+      "instructions": [
+        "上半身が画面に収まるように立つ",
+        "腕を大きく左右に振る",
+        "体幹の回旋を伴わせる",
+        "10回繰り返す"
+      ],
+      "tips": [
+        "体幹の回旋範囲は左右合計90度以上",
+        "腕の振り幅は身長の1.5倍以上",
+        "左右対称に動かす"
+      ]
+    },
+    {
+      "code": "push_pull",
+      "test_id": "T06_push_pull",
+      "order": 6,
+      "label": "プッシュプル",
+      "label_en": "Push Pull",
+      "evaluation_principle": "upper_body_control",
+      "capture_view": "side",
+      "duration_seconds": 10,
+      "target_reps": 10,
+      "instructions": [
+        "上半身が画面に収まるように立つ",
+        "前方にプッシュする動作",
+        "後方にプルする動作",
+        "10回繰り返す"
+      ],
+      "tips": [
+        "プッシュ距離は肩幅の0.8倍以上",
+        "プル距離は肩幅の0.6倍以上",
+        "体幹の前後傾斜は10度以内"
+      ]
+    },
+    {
+      "code": "cross_step",
+      "test_id": "T07_cross_step",
+      "order": 7,
+      "label": "クロスステップ",
+      "label_en": "Cross Step",
+      "evaluation_principle": "rotational_control",
+      "capture_view": "front",
+      "duration_seconds": 15,
+      "target_reps": 5,
+      "instructions": [
+        "全身が画面に収まるように立つ",
+        "左右にクロスステップを実施",
+        "体幹の回旋を伴わせる",
+        "各方向5回ずつ"
+      ],
+      "tips": [
+        "クロス距離は肩幅の1.2倍以上",
+        "体幹の回旋角度は45度以上",
+        "骨盤の高さを一定に保つ"
+      ]
+    }
+  ]
+}
