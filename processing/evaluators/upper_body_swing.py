@@ -51,8 +51,8 @@ class UpperBodySwingEvaluator:
         self.thresholds = self.config['thresholds']['T05_upper_body_swing']
 
     def evaluate(self, landmarks_data: List[Dict], base_width: float,
-                 shoulder_width: float, body_height: float = None,
-                 fps: float = 30.0) -> Dict:
+                 shoulder_width: float, leg_length: float,
+                 body_height: float = None, fps: float = 30.0) -> Dict:
         """
         What: Main evaluation entry point returning 12-point structure
         Why: Orchestrate A + B evaluation and return complete results

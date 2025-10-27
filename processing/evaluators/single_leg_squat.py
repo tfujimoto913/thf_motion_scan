@@ -70,7 +70,8 @@ class SingleLegSquatEvaluator:
         # CRITICAL: T01_single_leg_squat閾値取得
         self.thresholds = self.config['thresholds']['T01_single_leg_squat']
 
-    def evaluate(self, landmarks_data: List[Dict], base_width: float) -> Dict:
+    def evaluate(self, landmarks_data: List[Dict], base_width: float,
+                 shoulder_width: float, leg_length: float) -> Dict:
         """
         What: 片脚スタンススクワット総合評価（2軸システム）
         Why: A評価(3点) + B評価(9点) = 計12点満点
@@ -79,6 +80,8 @@ class SingleLegSquatEvaluator:
         Args:
             landmarks_data: フレームごとのランドマークデータ
             base_width: 正規化用基準幅（normalizer.pyから取得）
+            shoulder_width: 正規化用肩幅（統一インターフェース、P1評価で使用）
+            leg_length: 正規化用下肢長（統一インターフェース、将来の拡張用）
 
         Returns:
             Dict: {

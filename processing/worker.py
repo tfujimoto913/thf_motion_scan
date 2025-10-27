@@ -159,7 +159,9 @@ class VideoProcessingWorker:
         evaluator = self.evaluators[test_type]
         evaluation_result = evaluator.evaluate(
             extraction_result['landmarks'],
-            base_width=base_width
+            base_width=base_width,
+            shoulder_width=representative_values.get('shoulder_width', 0.4),
+            leg_length=representative_values.get('leg_length', 1.0)
         )
 
         print(f"✅ 評価完了: スコア {evaluation_result['total']}/12")

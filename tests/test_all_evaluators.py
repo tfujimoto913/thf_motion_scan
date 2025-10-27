@@ -137,11 +137,13 @@ class TestAllEvaluators:
         empty_data = []
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 評価器ごとに必要なパラメータを渡す
-            if evaluator_name == 'upper_body_swing':
-                result = evaluator.evaluate(empty_data, base_width=1.0, shoulder_width=0.4)
-            else:
-                result = evaluator.evaluate(empty_data, base_width=1.0)
+            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            result = evaluator.evaluate(
+                empty_data,
+                base_width=1.0,
+                shoulder_width=0.4,
+                leg_length=1.0
+            )
 
             # 検証: total = 0（ADR-016: 12点満点システム）
             assert 'total' in result, \
@@ -164,11 +166,13 @@ class TestAllEvaluators:
         test_data = sample_landmarks[:50]
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 評価器ごとに必要なパラメータを渡す
-            if evaluator_name == 'upper_body_swing':
-                result = evaluator.evaluate(test_data, base_width=0.2, shoulder_width=0.4)
-            else:
-                result = evaluator.evaluate(test_data, base_width=0.2)
+            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            result = evaluator.evaluate(
+                test_data,
+                base_width=0.2,
+                shoulder_width=0.4,
+                leg_length=1.0
+            )
 
             # 検証: total範囲（0-12）（ADR-016: 12点満点システム）
             assert 'total' in result, \
@@ -192,11 +196,13 @@ class TestAllEvaluators:
         test_data = sample_landmarks[:30]
 
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 評価器ごとに必要なパラメータを渡す
-            if evaluator_name == 'upper_body_swing':
-                result = evaluator.evaluate(test_data, base_width=0.2, shoulder_width=0.4)
-            else:
-                result = evaluator.evaluate(test_data, base_width=0.2)
+            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            result = evaluator.evaluate(
+                test_data,
+                base_width=0.2,
+                shoulder_width=0.4,
+                leg_length=1.0
+            )
 
             # 検証: 必須キー存在（ADR-016: 12点満点システム）
             assert 'total' in result, \
@@ -223,20 +229,24 @@ class TestAllEvaluators:
         # 1回目の評価
         results_1 = {}
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 評価器ごとに必要なパラメータを渡す
-            if evaluator_name == 'upper_body_swing':
-                results_1[evaluator_name] = evaluator.evaluate(test_data, base_width=0.2, shoulder_width=0.4)
-            else:
-                results_1[evaluator_name] = evaluator.evaluate(test_data, base_width=0.2)
+            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            results_1[evaluator_name] = evaluator.evaluate(
+                test_data,
+                base_width=0.2,
+                shoulder_width=0.4,
+                leg_length=1.0
+            )
 
         # 2回目の評価（同じデータ）
         results_2 = {}
         for evaluator_name, evaluator in all_evaluators.items():
-            # ADR-016: 評価器ごとに必要なパラメータを渡す
-            if evaluator_name == 'upper_body_swing':
-                results_2[evaluator_name] = evaluator.evaluate(test_data, base_width=0.2, shoulder_width=0.4)
-            else:
-                results_2[evaluator_name] = evaluator.evaluate(test_data, base_width=0.2)
+            # ADR-016: 統一インターフェース（全評価器で3つの正規化値を渡す）
+            results_2[evaluator_name] = evaluator.evaluate(
+                test_data,
+                base_width=0.2,
+                shoulder_width=0.4,
+                leg_length=1.0
+            )
 
         # 検証: 2回の評価で同一結果（再現性確認）（ADR-016: 12点満点システム）
         for evaluator_name in all_evaluators.keys():

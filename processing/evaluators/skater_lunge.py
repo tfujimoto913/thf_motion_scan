@@ -66,7 +66,8 @@ class SkaterLungeEvaluator:
         # CRITICAL: T02_skater_lunge閾値取得
         self.thresholds = self.config['thresholds']['T02_skater_lunge']
 
-    def evaluate(self, landmarks_data: List[Dict], base_width: float, leg_length: float) -> Dict:
+    def evaluate(self, landmarks_data: List[Dict], base_width: float,
+                 shoulder_width: float, leg_length: float) -> Dict:
         """
         What: スケーターランジ総合評価（2軸システム）
         Why: A評価(3点) + B評価(9点) = 計12点満点
@@ -75,7 +76,8 @@ class SkaterLungeEvaluator:
         Args:
             landmarks_data: フレームごとのランドマークデータ
             base_width: 正規化用基準幅（normalizer.pyから取得）
-            leg_length: 正規化用下肢長（normalizer.pyから取得）
+            shoulder_width: 正規化用肩幅（統一インターフェース、将来P5評価で使用予定）
+            leg_length: 正規化用下肢長（normalizer.pyから取得、A評価で使用）
 
         Returns:
             Dict: {

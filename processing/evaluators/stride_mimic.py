@@ -59,7 +59,7 @@ class StrideMinicryEvaluator:
         self.config = config
 
     def evaluate(self, landmarks_data: List[Dict], base_width: float,
-                 shoulder_width: float) -> Dict:
+                 shoulder_width: float, leg_length: float) -> Dict:
         """
         What: Main evaluation entry point - returns 12-point structure
         Why: Combines execution (A: 3pts) and principles (B: 9pts) scores
