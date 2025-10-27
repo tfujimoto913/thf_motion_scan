@@ -439,7 +439,7 @@ class TestRuleValidatorWithActualFile:
             pytest.skip(f"{rules_path} not found")
 
         rules = load_test_rules(rules_path)
-        test_types = rules['test_types']
+        tests = rules.get('tests', rules.get('test_types', {}))
 
         expected_types = [
             'single_leg_squat',
@@ -452,12 +452,12 @@ class TestRuleValidatorWithActualFile:
         ]
 
         for test_type in expected_types:
-            assert test_type in test_types, f"Missing test type: {test_type}"
+            assert test_type in tests, f"Missing test type: {test_type}"
 
     def test_actual_test_rules_all_weights_sum_to_one(self):
         """
-        What: 全テストタイプの重み合計検証
-        Why: すべての種目で重み合計 = 1.0 を確認
+        What: 全テストタイプの重み合計検証（12点満点システム対応）
+        Why: すべての種目で execution = 3点、principles = 9点 を確認
         """
         rules_path = 'processing/config/test_rules.json'
 
@@ -465,11 +465,39 @@ class TestRuleValidatorWithActualFile:
             pytest.skip(f"{rules_path} not found")
 
         rules = load_test_rules(rules_path)
-        tolerance = rules['global_settings']['weight_validation']['tolerance']
 
-        for test_name, test_config in rules['test_types'].items():
-            metrics = test_config['metrics']
-            total_weight = sum(metric['weight'] for metric in metrics)
+        # 新スキーマと旧スキーマの両方に対応
+        if 'score_system' in rules:
+            # 新スキーマ（12点満点システム）
+            tolerance = 0.001
+            tests = rules['tests']
 
-            assert abs(total_weight - 1.0) <= tolerance, \
-                f"Test '{test_name}' weight sum {total_weight} != 1.0"
+            for test_name, test_config in tests.items():
+                # Execution メトリックの重み合計検証
+                execution = test_config.get('execution', {})
+                metrics = execution.get('metrics', {})
+
+                if isinstance(metrics, dict):
+                    exec_total = sum(m.get('weight', 0) for m in metrics.values())
+                    expected_exec = execution.get('total_points', 3)
+
+                    assert abs(exec_total - expected_exec) <= tolerance, \
+                        f"Test '{test_name}' execution weight sum {exec_total} != {expected_exec}"
+
+                # Principles の重み合計検証
+                principles = test_config.get('principles', {})
+                prin_total = sum(p.get('weight', 0) for k, p in principles.items() if k != 'total_points')
+                expected_prin = principles.get('total_points', 9)
+
+                assert abs(prin_total - expected_prin) <= tolerance, \
+                    f"Test '{test_name}' principles weight sum {prin_total} != {expected_prin}"
+        else:
+            # 旧スキーマ（0-3点システム）
+            tolerance = rules['global_settings']['weight_validation']['tolerance']
+
+            for test_name, test_config in rules['test_types'].items():
+                metrics = test_config['metrics']
+                total_weight = sum(metric['weight'] for metric in metrics)
+
+                assert abs(total_weight - 1.0) <= tolerance, \
+                    f"Test '{test_name}' weight sum {total_weight} != 1.0"

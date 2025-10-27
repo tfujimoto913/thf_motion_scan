@@ -1,11 +1,12 @@
 """
-Purpose: テストルール定義ファイルの検証とロード
+Purpose: テストルール定義ファイルの検証とロード（12点満点システム対応）
 Responsibility: test_rules.json の整合性検証、ルール読み込み
 Dependencies: json, pathlib, typing
 Created: 2025-10-25 by Claude
-Decision Log: ADR-012（Phase 3: ルール定義ファイル充実）
+Updated: 2025-10-27 - 12点満点システム（A: 3点 + B: 9点）対応
+Decision Log: ADR-012, ADR-016
 
-CRITICAL: 重み合計、閾値範囲、スキーマ構造の厳格な検証必須
+CRITICAL: 12点満点システム（execution 3点 + principles 9点）の厳格な検証必須
 """
 import json
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Dict, List, Tuple, Any, Optional
 
 class RuleValidator:
     """
-    What: ルール定義ファイルの検証クラス
+    What: ルール定義ファイルの検証クラス（12点満点システム対応）
     Why: test_rules.json の整合性と妥当性を保証
     Design Decision: 多層検証（スキーマ→重み→閾値）で堅牢性確保
 
@@ -36,9 +37,9 @@ class RuleValidator:
 
     def validate_schema(self, rules: Dict) -> Tuple[bool, List[str]]:
         """
-        What: スキーマ構造の検証
+        What: スキーマ構造の検証（12点満点システム）
         Why: 必須フィールドの存在確認
-        Design Decision: global_settings, test_types の必須キー検証
+        Design Decision: version, score_system, tests の必須キー検証
 
         Args:
             rules: ルール定義辞書
@@ -46,12 +47,12 @@ class RuleValidator:
         Returns:
             Tuple[bool, List[str]]: (検証結果, エラーメッセージリスト)
 
-        CRITICAL: schema_version, global_settings, test_types は必須
+        CRITICAL: version, score_system, tests は必須
         """
         errors = []
 
         # PHASE CORE LOGIC: トップレベルキー検証
-        required_top_keys = ['schema_version', 'global_settings', 'test_types']
+        required_top_keys = ['version', 'updated_at', 'score_system', 'tests']
         for key in required_top_keys:
             if key not in rules:
                 errors.append(f"Missing required top-level key: {key}")
@@ -59,58 +60,66 @@ class RuleValidator:
         if errors:
             return False, errors
 
-        # PHASE CORE LOGIC: global_settings 検証
-        required_global_keys = ['score_range', 'frame_detection', 'scoring_method', 'weight_validation']
-        for key in required_global_keys:
-            if key not in rules['global_settings']:
-                errors.append(f"Missing required global_settings key: {key}")
+        # PHASE CORE LOGIC: score_system 検証
+        score_system = rules.get('score_system', {})
+        required_score_keys = ['total_points', 'per_test_max', 'execution_score_max', 'principles_score_max']
+        for key in required_score_keys:
+            if key not in score_system:
+                errors.append(f"Missing required score_system key: {key}")
 
-        # PHASE CORE LOGIC: test_types 検証
-        test_types = rules['test_types']
-        if not isinstance(test_types, dict) or len(test_types) == 0:
-            errors.append("test_types must be a non-empty dictionary")
+        # CRITICAL: スコアシステムの整合性チェック
+        if 'execution_score_max' in score_system and 'principles_score_max' in score_system and 'per_test_max' in score_system:
+            exec_max = score_system['execution_score_max']
+            prin_max = score_system['principles_score_max']
+            per_test = score_system['per_test_max']
+            if exec_max + prin_max != per_test:
+                errors.append(
+                    f"score_system inconsistent: execution_score_max ({exec_max}) + "
+                    f"principles_score_max ({prin_max}) != per_test_max ({per_test})"
+                )
+
+        # PHASE CORE LOGIC: tests 検証
+        tests = rules.get('tests', {})
+        if not isinstance(tests, dict) or len(tests) == 0:
+            errors.append("tests must be a non-empty dictionary")
             return False, errors
 
-        # PHASE CORE LOGIC: 各テストタイプの構造検証
-        for test_name, test_config in test_types.items():
-            required_test_keys = ['display_name', 'description', 'metrics', 'overall_scoring']
+        # PHASE CORE LOGIC: 各テストの構造検証
+        for test_code, test_config in tests.items():
+            required_test_keys = ['test_id', 'name', 'name_en', 'evaluation_principle', 'execution', 'principles']
             for key in required_test_keys:
                 if key not in test_config:
-                    errors.append(f"Test '{test_name}' missing required key: {key}")
+                    errors.append(f"Test '{test_code}' missing required key: {key}")
 
-            # CRITICAL: metrics は配列であること
-            if 'metrics' in test_config:
-                if not isinstance(test_config['metrics'], list):
-                    errors.append(f"Test '{test_name}' metrics must be a list")
-                elif len(test_config['metrics']) == 0:
-                    errors.append(f"Test '{test_name}' must have at least one metric")
-                else:
-                    # PHASE CORE LOGIC: 各メトリックの構造検証
-                    for idx, metric in enumerate(test_config['metrics']):
-                        required_metric_keys = ['name', 'weight', 'unit', 'description', 'thresholds']
-                        for key in required_metric_keys:
-                            if key not in metric:
-                                errors.append(
-                                    f"Test '{test_name}' metric[{idx}] missing required key: {key}"
-                                )
+            # CRITICAL: execution 検証
+            if 'execution' in test_config:
+                execution = test_config['execution']
+                if 'total_points' not in execution or 'metrics' not in execution:
+                    errors.append(f"Test '{test_code}' execution missing 'total_points' or 'metrics'")
+                elif execution['total_points'] != score_system.get('execution_score_max', 3):
+                    errors.append(
+                        f"Test '{test_code}' execution.total_points ({execution['total_points']}) != "
+                        f"execution_score_max ({score_system.get('execution_score_max', 3)})"
+                    )
 
-                        # CRITICAL: thresholds 検証
-                        if 'thresholds' in metric:
-                            thresholds = metric['thresholds']
-                            required_scores = ['score_3', 'score_2', 'score_1', 'score_0']
-                            for score in required_scores:
-                                if score not in thresholds:
-                                    errors.append(
-                                        f"Test '{test_name}' metric[{idx}] missing threshold: {score}"
-                                    )
+            # CRITICAL: principles 検証
+            if 'principles' in test_config:
+                principles = test_config['principles']
+                if 'total_points' not in principles:
+                    errors.append(f"Test '{test_code}' principles missing 'total_points'")
+                elif principles['total_points'] != score_system.get('principles_score_max', 9):
+                    errors.append(
+                        f"Test '{test_code}' principles.total_points ({principles['total_points']}) != "
+                        f"principles_score_max ({score_system.get('principles_score_max', 9)})"
+                    )
 
         return len(errors) == 0, errors
 
     def validate_weights(self, rules: Dict) -> Tuple[bool, List[str]]:
         """
-        What: メトリック重みの合計検証
-        Why: 重み合計 = 1.0 の保証
-        Design Decision: global_settings.weight_validation.tolerance を使用
+        What: メトリック重みの合計検証（12点満点システム）
+        Why: execution と principles の重み合計検証
+        Design Decision: execution 合計 = 3点、各principle = 3点
 
         Args:
             rules: ルール定義辞書
@@ -118,35 +127,60 @@ class RuleValidator:
         Returns:
             Tuple[bool, List[str]]: (検証結果, エラーメッセージリスト)
 
-        CRITICAL: 各テストタイプの重み合計が 1.0 ± tolerance であること
+        CRITICAL: execution メトリックの重み合計 = 3.0、各principle = 3.0
         """
         errors = []
-        tolerance = rules['global_settings']['weight_validation'].get('tolerance', 0.001)
-        expected_sum = rules['global_settings']['weight_validation'].get('sum_must_equal', 1.0)
+        tolerance = 0.001
 
-        # PHASE CORE LOGIC: 各テストタイプの重み合計チェック
-        for test_name, test_config in rules['test_types'].items():
-            metrics = test_config.get('metrics', [])
-            if not metrics:
-                continue
+        tests = rules.get('tests', {})
 
-            # CRITICAL: 重み合計計算
-            total_weight = sum(metric.get('weight', 0) for metric in metrics)
+        # PHASE CORE LOGIC: 各テストの重み合計チェック
+        for test_code, test_config in tests.items():
+            # Execution メトリックの重み合計チェック
+            execution = test_config.get('execution', {})
+            metrics = execution.get('metrics', {})
 
-            # CRITICAL: 許容範囲チェック
-            if abs(total_weight - expected_sum) > tolerance:
+            if isinstance(metrics, dict):
+                exec_weights = []
+                for metric_name, metric_config in metrics.items():
+                    weight = metric_config.get('weight', 0)
+                    exec_weights.append(weight)
+
+                exec_total = sum(exec_weights)
+                expected_exec = execution.get('total_points', 3)
+
+                if abs(exec_total - expected_exec) > tolerance:
+                    errors.append(
+                        f"Test '{test_code}' execution weights sum {exec_total:.4f} != {expected_exec} "
+                        f"(tolerance: {tolerance})"
+                    )
+
+            # Principles の重み合計チェック
+            principles = test_config.get('principles', {})
+            principle_total_weight = 0
+
+            for prin_key, prin_config in principles.items():
+                if prin_key == 'total_points':
+                    continue
+
+                weight = prin_config.get('weight', 0)
+                principle_total_weight += weight
+
+            expected_prin = principles.get('total_points', 9)
+
+            if abs(principle_total_weight - expected_prin) > tolerance:
                 errors.append(
-                    f"Test '{test_name}' weight sum {total_weight:.4f} != {expected_sum} "
+                    f"Test '{test_code}' principles weights sum {principle_total_weight:.4f} != {expected_prin} "
                     f"(tolerance: {tolerance})"
                 )
 
         return len(errors) == 0, errors
 
-    def validate_thresholds(self, rules: Dict) -> Tuple[bool, List[str]]:
+    def validate_test_codes(self, rules: Dict) -> Tuple[bool, List[str]]:
         """
-        What: 閾値範囲の妥当性検証
-        Why: スコア範囲の整合性保証
-        Design Decision: min/max の論理的順序チェック
+        What: テストコードの実装整合性検証
+        Why: test_rules.json のテストコードが実装コードと一致することを確認
+        Design Decision: 7種目全てが定義されていることを確認
 
         Args:
             rules: ルール定義辞書
@@ -154,41 +188,42 @@ class RuleValidator:
         Returns:
             Tuple[bool, List[str]]: (検証結果, エラーメッセージリスト)
 
-        CRITICAL: score_3 > score_2 > score_1 の順序保証（単位による）
+        CRITICAL: 実装コード（single_leg_squat等）が全て定義されていること
         """
         errors = []
-        score_range = rules['global_settings']['score_range']
-        min_score = score_range.get('min', 0)
-        max_score = score_range.get('max', 3)
 
-        # PHASE CORE LOGIC: 各テストタイプの閾値検証
-        for test_name, test_config in rules['test_types'].items():
-            metrics = test_config.get('metrics', [])
+        # CRITICAL: 実装済み7種目の実装コード
+        expected_codes = {
+            'single_leg_squat',
+            'skater_lunge',
+            'stride_mimic',
+            'jump_landing',
+            'upper_body_swing',
+            'push_pull',
+            'cross_step'
+        }
 
-            for metric in metrics:
-                metric_name = metric.get('name', 'unknown')
-                thresholds = metric.get('thresholds', {})
+        tests = rules.get('tests', {})
+        defined_codes = set(tests.keys())
 
-                # CRITICAL: 各スコアレベルの閾値存在確認
-                for score_level in ['score_3', 'score_2', 'score_1', 'score_0']:
-                    if score_level not in thresholds:
-                        continue
+        # 不足しているコード
+        missing = expected_codes - defined_codes
+        if missing:
+            errors.append(f"Missing required test codes: {', '.join(sorted(missing))}")
 
-                    threshold = thresholds[score_level]
+        # 余分なコード（警告のみ）
+        extra = defined_codes - expected_codes
+        if extra:
+            errors.append(f"Warning: Extra test codes not in implementation: {', '.join(sorted(extra))}")
 
-                    # CRITICAL: min/max の両方指定は不可
-                    if 'min' in threshold and 'max' in threshold:
-                        errors.append(
-                            f"Test '{test_name}' metric '{metric_name}' {score_level}: "
-                            f"Cannot specify both 'min' and 'max'"
-                        )
+        # test_id の整合性チェック
+        for code, test_config in tests.items():
+            test_id = test_config.get('test_id', '')
+            expected_prefix = code.upper().replace('_', '')[:3]  # 例: single_leg_squat -> SIN
 
-                    # CRITICAL: min または max のいずれかは必須
-                    if 'min' not in threshold and 'max' not in threshold:
-                        errors.append(
-                            f"Test '{test_name}' metric '{metric_name}' {score_level}: "
-                            f"Must specify either 'min' or 'max'"
-                        )
+            # test_id が T01-T07 の形式であることを確認
+            if not test_id.startswith('T0') or not test_id[2].isdigit():
+                errors.append(f"Test '{code}' has invalid test_id format: {test_id} (expected: T01-T07)")
 
         return len(errors) == 0, errors
 
@@ -196,7 +231,7 @@ class RuleValidator:
         """
         What: 統合検証（ファイル読み込み→全検証実行）
         Why: ワンストップで完全な検証実施
-        Design Decision: スキーマ→重み→閾値の順で検証
+        Design Decision: スキーマ→重み→テストコードの順で検証
 
         Returns:
             Tuple[bool, List[str]]: (検証結果, 全エラーメッセージリスト)
@@ -230,19 +265,19 @@ class RuleValidator:
         weight_ok, weight_errors = self.validate_weights(self.rules)
         all_errors.extend(weight_errors)
 
-        # 3. 閾値範囲検証
-        threshold_ok, threshold_errors = self.validate_thresholds(self.rules)
-        all_errors.extend(threshold_errors)
+        # 3. テストコード整合性検証
+        code_ok, code_errors = self.validate_test_codes(self.rules)
+        all_errors.extend(code_errors)
 
         return len(all_errors) == 0, all_errors
 
-    def get_test_rule(self, test_type: str) -> Optional[Dict]:
+    def get_test_rule(self, test_code: str) -> Optional[Dict]:
         """
-        What: 特定テストタイプのルール取得
+        What: 特定テストコードのルール取得
         Why: Evaluator での閾値参照用
 
         Args:
-            test_type: テストタイプ名
+            test_code: テストコード（例: 'single_leg_squat'）
 
         Returns:
             Optional[Dict]: テストルール（存在しない場合は None）
@@ -252,27 +287,27 @@ class RuleValidator:
         if self.rules is None:
             return None
 
-        return self.rules.get('test_types', {}).get(test_type)
+        return self.rules.get('tests', {}).get(test_code)
 
-    def get_global_settings(self) -> Optional[Dict]:
+    def get_score_system(self) -> Optional[Dict]:
         """
-        What: グローバル設定取得
+        What: スコアシステム設定取得
         Why: 共通設定の参照用
 
         Returns:
-            Optional[Dict]: グローバル設定（読み込み前は None）
+            Optional[Dict]: スコアシステム設定（読み込み前は None）
 
         CRITICAL: validate() 実行済み前提
         """
         if self.rules is None:
             return None
 
-        return self.rules.get('global_settings')
+        return self.rules.get('score_system')
 
 
 def load_test_rules(rules_path: str = 'processing/config/test_rules.json') -> Dict:
     """
-    What: ルール定義ファイルのロードと検証
+    What: ルール定義ファイルのロードと検証（12点満点システム対応）
     Why: Evaluator での簡易ルール読み込み用
     Design Decision: 検証失敗時は例外発生
 
