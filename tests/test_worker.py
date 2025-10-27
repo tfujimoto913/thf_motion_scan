@@ -97,7 +97,7 @@ class TestVideoProcessingWorker:
         assert 'evaluation' in result
         assert 'video_info' in result
         assert 'processed_at' in result
-        assert result['score'] >= 0 and result['score'] <= 3
+        assert result['score'] >= 0 and result['score'] <= 12  # 12点満点システム（ADR-016）
 
     @patch('processing.worker.PoseExtractor')
     def test_process_video_with_output(self, mock_pose_extractor_class,
@@ -117,15 +117,18 @@ class TestVideoProcessingWorker:
         # 実行
         result = worker.process_video(str(dummy_video), output_dir=str(output_dir))
 
-        # 検証
-        assert 'output_file' in result
-        assert Path(result['output_file']).exists()
+        # 検証（ADR-017: score.json出力）
+        assert 'score_file' in result
+        assert Path(result['score_file']).exists()
+        assert 'manifest_file' in result
+        assert Path(result['manifest_file']).exists()
 
         # 保存されたファイルの内容を確認
-        with open(result['output_file'], 'r', encoding='utf-8') as f:
+        with open(result['score_file'], 'r', encoding='utf-8') as f:
             saved_data = json.load(f)
             assert saved_data['score'] == result['score']
-            assert saved_data['test_type'] == 'single_leg_squat'
+            assert saved_data['test_code'] == 'single_leg_squat'
+            assert saved_data['version'] == 'scan-v1.0.0'
 
     def test_get_summary(self, worker, mock_extraction_result, tmp_path):
         """サマリーが正しく生成されることを確認"""
@@ -173,7 +176,7 @@ class TestVideoProcessingWorker:
         # 検証
         assert result == mock_result
         mock_worker.process_video.assert_called_once_with(
-            str(dummy_video), 'single_leg_squat', None
+            str(dummy_video), 'single_leg_squat', None, None, None, None
         )
 
 
@@ -187,15 +190,18 @@ class TestSingleLegSquatEvaluator:
 
     def test_evaluator_initialization(self, evaluator):
         """Evaluatorが正しく初期化されることを確認"""
-        # CRITICAL: config.json閾値参照に変更（ADR-002）
+        # CRITICAL: config.json閾値参照に変更（ADR-002, ADR-016: 12点満点システム）
         assert evaluator.config is not None
         assert evaluator.thresholds is not None
-        assert 'knee_flexion_min' in evaluator.thresholds
+        # 12点満点システム（execution + principles構造）
+        assert 'execution' in evaluator.thresholds
+        assert 'principles' in evaluator.thresholds
 
     def test_evaluate_empty_data(self, evaluator):
         """空のデータで評価した場合"""
-        result = evaluator.evaluate([])
-        assert result['score'] == 0
+        # ADR-016: base_widthパラメータ必須
+        result = evaluator.evaluate([], base_width=1.0)
+        assert result['total'] == 0
         assert '姿勢が検出できませんでした' in result['details']
 
     def test_evaluate_with_perfect_form(self, evaluator):
@@ -230,12 +236,13 @@ class TestSingleLegSquatEvaluator:
             for i in range(10)
         ]
 
-        result = evaluator.evaluate(landmarks_data)
+        # ADR-016: base_widthパラメータ必須
+        result = evaluator.evaluate(landmarks_data, base_width=0.2)
 
-        # スコアが0-3の範囲内であることを確認
-        assert 0 <= result['score'] <= 3
-        assert 'pelvic_stability' in result
-        assert 'knee_angle_ratio' in result
+        # スコアが0-12の範囲内であることを確認（ADR-016: 12点満点システム）
+        assert 0 <= result['total'] <= 12
+        assert 'execution' in result
+        assert 'principles' in result
 
 
 if __name__ == '__main__':

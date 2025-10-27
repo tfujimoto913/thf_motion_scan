@@ -13,11 +13,12 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from .pose_extractor import PoseExtractor
+from .normalizer import BodyNormalizer
 from .evaluators.single_leg_squat import SingleLegSquatEvaluator
 from .evaluators.upper_body_swing import UpperBodySwingEvaluator
 from .evaluators.skater_lunge import SkaterLungeEvaluator
 from .evaluators.cross_step import CrossStepEvaluator
-from .evaluators.stride_mimic import StrideMimicEvaluator
+from .evaluators.stride_mimic import StrideMinicryEvaluator
 from .evaluators.push_pull import PushPullEvaluator
 from .evaluators.jump_landing import JumpLandingEvaluator
 from .health_check import HealthChecker, apply_random_seed
@@ -49,12 +50,13 @@ class VideoProcessingWorker:
 
         # PHASE CORE LOGIC: コンポーネント初期化
         self.pose_extractor = PoseExtractor()
+        self.normalizer = BodyNormalizer()
         self.evaluators = {
             'single_leg_squat': SingleLegSquatEvaluator(config_path),
             'upper_body_swing': UpperBodySwingEvaluator(config_path),
             'skater_lunge': SkaterLungeEvaluator(config_path),
             'cross_step': CrossStepEvaluator(config_path),
-            'stride_mimic': StrideMimicEvaluator(config_path),
+            'stride_mimic': StrideMinicryEvaluator(config_path),
             'push_pull': PushPullEvaluator(config_path),
             'jump_landing': JumpLandingEvaluator(config_path)
         }
@@ -64,16 +66,20 @@ class VideoProcessingWorker:
     def process_video(self,
                       video_path: str,
                       test_type: str = 'single_leg_squat',
+                      athlete_id: Optional[str] = None,
+                      session_id: Optional[str] = None,
                       output_dir: Optional[str] = None,
                       output_formats: Optional[list] = None) -> Dict:
         """
         What: 動画処理メイン処理（抽出→品質チェック→評価→保存）
         Why: 統合ワークフロー実行
-        Design Decision: Health Check統合、warnings.json自動出力（ADR-004）
+        Design Decision: Health Check統合、warnings.json自動出力（ADR-004）、標準出力形式（ADR-017）
 
         Args:
             video_path: 動画ファイルのパス
             test_type: テストタイプ（現在は'single_leg_squat'のみ）
+            athlete_id: アスリートID（例: TaroYamada-100315）、Noneの場合は自動生成
+            session_id: セッションID（例: 20251012-0915-A）、Noneの場合は自動生成
             output_dir: 結果を保存するディレクトリ（Noneの場合は保存しない）
             output_formats: 出力形式リスト (['csv', 'png', 'pdf'] から選択、デフォルト None）
 
@@ -81,6 +87,8 @@ class VideoProcessingWorker:
             Dict: {
                 'video_path': str,
                 'test_type': str,
+                'athlete_id': str,
+                'session_id': str,
                 'score': int,
                 'evaluation': Dict,
                 'video_info': Dict,
@@ -105,6 +113,13 @@ class VideoProcessingWorker:
                 f"サポートされていないテストタイプ: {test_type}. "
                 f"利用可能なタイプ: {list(self.evaluators.keys())}"
             )
+
+        # CRITICAL: athlete_id/session_idのデフォルト値生成（ADR-017）
+        if athlete_id is None:
+            athlete_id = f"Unknown-{datetime.now().strftime('%y%m%d')}"
+
+        if session_id is None:
+            session_id = datetime.now().strftime('%Y%m%d-%H%M-X')
 
         # PHASE CORE LOGIC: ワークフロー実行
         # 1. ランドマーク抽出
@@ -131,18 +146,31 @@ class VideoProcessingWorker:
         else:
             print(f"⚠️  品質チェック: 低品質データ検出 (検出率 {quality_result['detection_rate']:.1%})")
 
-        # 3. 評価
+        # 3. 正規化（base_width計算）
+        print(f"📏 ランドマーク正規化中...")
+        representative_values, _frame_values = self.normalizer.normalize_landmarks_sequence(
+            extraction_result['landmarks']
+        )
+        base_width = representative_values.get('base_width', 1.0)
+        print(f"✅ 正規化完了: base_width={base_width:.3f}")
+
+        # 4. 評価
         print(f"📈 評価を実行中...")
         evaluator = self.evaluators[test_type]
-        evaluation_result = evaluator.evaluate(extraction_result['landmarks'])
+        evaluation_result = evaluator.evaluate(
+            extraction_result['landmarks'],
+            base_width=base_width
+        )
 
-        print(f"✅ 評価完了: スコア {evaluation_result['score']}/3")
+        print(f"✅ 評価完了: スコア {evaluation_result['total']}/12")
 
-        # 4. 結果をまとめる
+        # 5. 結果をまとめる
         result = {
             'video_path': str(video_path),
             'test_type': test_type,
-            'score': evaluation_result['score'],
+            'athlete_id': athlete_id,
+            'session_id': session_id,
+            'score': evaluation_result.get('total', evaluation_result.get('score', 0)),
             'evaluation': evaluation_result,
             'video_info': {
                 'fps': extraction_result['fps'],
@@ -154,17 +182,28 @@ class VideoProcessingWorker:
             'processed_at': datetime.now().isoformat()
         }
 
-        # 5. 結果を保存（オプション）
+        # 6. 結果を保存（オプション）
         if output_dir:
-            output_path = self._save_results(result, output_dir)
-            result['output_file'] = str(output_path)
-            print(f"💾 結果を保存: {output_path}")
-
-            # CRITICAL: warnings.json出力（ADR-004）
-            warnings_path = self.health_checker.save_warnings(
-                str(Path(output_dir) / 'warnings.json')
+            # CRITICAL: score.json保存（ADR-017）
+            score_path = self._save_results(
+                result, output_dir, athlete_id, session_id, test_type
             )
-            print(f"📋 警告ログ保存: {warnings_path}")
+            result['score_file'] = str(score_path)
+            print(f"💾 score.json保存: {score_path}")
+
+            # CRITICAL: manifest.json更新（ADR-017）
+            manifest_path = self._update_manifest(
+                output_dir, athlete_id, session_id, test_type, result['score']
+            )
+            result['manifest_file'] = str(manifest_path)
+            print(f"📋 manifest.json更新: {manifest_path}")
+
+            # CRITICAL: warnings.json出力（ADR-004, ADR-017）
+            warnings_dir = Path(output_dir) / 'processed' / athlete_id / session_id
+            warnings_path = self.health_checker.save_warnings(
+                str(warnings_dir / 'warnings.json')
+            )
+            print(f"⚠️  warnings.json保存: {warnings_path}")
 
             # PHASE CORE LOGIC: 出力形式エクスポート（ADR-011）
             if output_formats:
@@ -222,32 +261,158 @@ class VideoProcessingWorker:
 
         return exported
 
-    def _save_results(self, result: Dict, output_dir: str) -> Path:
+    def _update_manifest(self, output_dir: str, athlete_id: str,
+                         session_id: str, test_code: str, score: int) -> Path:
         """
-        What: 評価結果JSON保存
-        Why: 結果永続化と後続処理での参照
-        Design Decision: タイムスタンプ付きファイル名（ADR-002）
+        What: manifest.json更新（セッションサマリー）
+        Why: セッション全体の結果集約
+        Design Decision: テスト実行ごとに更新（ADR-017）
 
         Args:
-            result: 結果データ
-            output_dir: 出力ディレクトリ
+            output_dir: ベース出力ディレクトリ
+            athlete_id: アスリートID
+            session_id: セッションID
+            test_code: テストコード
+            score: テストスコア
 
         Returns:
-            Path: 保存したファイルのパス
+            Path: manifest.jsonのパス
 
-        CRITICAL: 個人情報含む場合は匿名化処理後に保存
+        CRITICAL: 既存manifest.jsonがあれば読み込んで更新
         """
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        # PHASE CORE LOGIC: パス構造 /processed/{athlete_id}/{session_id}/
+        manifest_dir = Path(output_dir) / 'processed' / athlete_id / session_id
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = manifest_dir / 'manifest.json'
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{result['test_type']}_{timestamp}.json"
-        filepath = output_path / filename
+        # 既存manifest読み込み
+        if manifest_path.exists():
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+        else:
+            # CRITICAL: 新規manifest作成（ADR-017仕様準拠）
+            manifest = {
+                'athlete_id': athlete_id,
+                'session_id': session_id,
+                'summary': {
+                    'stability': 0.0,
+                    'dissociation': 0.0,
+                    'coordination': 0.0,
+                    'synergy': 0.0
+                },
+                'tests': [],
+                'weakness_tags': [],
+                'version': 'scan-v1.0.0',
+                'created_at': datetime.now().isoformat() + 'Z'
+            }
 
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
+        # PHASE CORE LOGIC: テスト結果追加/更新
+        test_entry = {'test_code': test_code, 'score': score}
 
-        return filepath
+        # 既存テスト結果を更新
+        updated = False
+        for i, t in enumerate(manifest['tests']):
+            if t['test_code'] == test_code:
+                manifest['tests'][i] = test_entry
+                updated = True
+                break
+
+        if not updated:
+            manifest['tests'].append(test_entry)
+
+        # TODO: summaryとweakness_tagsの計算ロジック実装
+        # 現在はプレースホルダー値を保持
+
+        # 保存
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+        return manifest_path
+
+    def _extract_metrics(self, evaluation: Dict) -> Dict:
+        """
+        What: evaluation結果からmetricsを抽出
+        Why: score.jsonのmetricsフィールド生成用
+        Design Decision: 各evaluatorの出力形式に応じて変換（ADR-017）
+
+        Args:
+            evaluation: evaluatorの出力結果
+
+        Returns:
+            Dict: metrics辞書
+
+        CRITICAL: 単位付きキー名使用（例: pelvic_tilt_std_deg）
+        """
+        # PHASE CORE LOGIC: evaluationから主要なメトリックを抽出
+        # TODO: 各evaluatorの出力形式に応じて実装を拡張
+        metrics = {}
+
+        # デバッグ用：evaluation全体を含める（将来的に詳細化）
+        if 'details' in evaluation:
+            metrics['evaluation_details'] = evaluation['details']
+
+        return metrics
+
+    def _extract_flags(self, evaluation: Dict) -> list:
+        """
+        What: evaluation結果からflagsを抽出
+        Why: score.jsonのflagsフィールド生成用
+        Design Decision: 閾値超過項目を自動検出（ADR-017）
+
+        Args:
+            evaluation: evaluatorの出力結果
+
+        Returns:
+            list: フラグリスト
+
+        CRITICAL: 標準フラグ名使用（pelvic_instability等）
+        """
+        # PHASE CORE LOGIC: 閾値超過検出ロジック
+        # TODO: 将来的に各evaluatorの閾値情報を使用して自動検出
+        flags = []
+
+        return flags
+
+    def _save_results(self, result: Dict, output_dir: str,
+                      athlete_id: str, session_id: str, test_code: str) -> Path:
+        """
+        What: score.json保存（標準パス構造）
+        Why: Notion仕様書準拠の出力形式統一
+        Design Decision: /processed/{athlete_id}/{session_id}/{test_code}/score.json（ADR-017）
+
+        Args:
+            result: 評価結果
+            output_dir: ベース出力ディレクトリ
+            athlete_id: アスリートID
+            session_id: セッションID
+            test_code: テストコード
+
+        Returns:
+            Path: 保存したscore.jsonのパス
+
+        CRITICAL: test_code は実装コード使用（single_leg_squat等）
+        """
+        # PHASE CORE LOGIC: パス構造 /processed/{athlete_id}/{session_id}/{test_code}/
+        score_dir = Path(output_dir) / 'processed' / athlete_id / session_id / test_code
+        score_dir.mkdir(parents=True, exist_ok=True)
+
+        # CRITICAL: score.json作成（ADR-017仕様準拠）
+        score_data = {
+            'athlete_id': athlete_id,
+            'session_id': session_id,
+            'test_code': test_code,
+            'score': result['score'],
+            'metrics': self._extract_metrics(result['evaluation']),
+            'flags': self._extract_flags(result['evaluation']),
+            'version': 'scan-v1.0.0',
+            'created_at': datetime.now().isoformat() + 'Z'
+        }
+
+        score_path = score_dir / 'score.json'
+        with open(score_path, 'w', encoding='utf-8') as f:
+            json.dump(score_data, f, indent=2, ensure_ascii=False)
+
+        return score_path
 
     def get_summary(self, result: Dict) -> str:
         """
@@ -267,7 +432,7 @@ class VideoProcessingWorker:
         summary += "📊 評価結果サマリー\n"
         summary += "=" * 60 + "\n"
         summary += f"テストタイプ: {result['test_type']}\n"
-        summary += f"スコア: {result['score']}/3\n"
+        summary += f"スコア: {result['score']}/12\n"  # ADR-016: 12点満点システム
 
         # PHASE CORE LOGIC: Health Check結果追加（ADR-004）
         if 'health_check' in result:
@@ -276,7 +441,15 @@ class VideoProcessingWorker:
             summary += f"  検出率: {hc['detection_rate']:.1%}\n"
             summary += f"  品質: {'OK' if hc['is_quality_ok'] else '低品質'}\n"
 
-        summary += f"\n{result['evaluation']['details']}\n"
+        # ADR-016: 12点満点システム（execution + principles構造）
+        evaluation = result['evaluation']
+        if 'details' in evaluation:
+            summary += f"\n{evaluation['details']}\n"
+        else:
+            # 12点満点システムのサマリー
+            summary += f"\nExecution: {evaluation.get('execution', {}).get('total', 0):.1f}/3\n"
+            summary += f"Principles: {evaluation.get('principles', {}).get('total', 0):.1f}/9\n"
+
         summary += "=" * 60 + "\n"
 
         return summary
@@ -284,6 +457,8 @@ class VideoProcessingWorker:
 
 def process_video(video_path: str,
                   test_type: str = 'single_leg_squat',
+                  athlete_id: Optional[str] = None,
+                  session_id: Optional[str] = None,
                   output_dir: Optional[str] = None,
                   output_formats: Optional[list] = None) -> Dict:
     """
@@ -292,6 +467,8 @@ def process_video(video_path: str,
     Args:
         video_path: 動画ファイルのパス
         test_type: テストタイプ
+        athlete_id: アスリートID（例: TaroYamada-100315）、Noneの場合は自動生成
+        session_id: セッションID（例: 20251012-0915-A）、Noneの場合は自動生成
         output_dir: 結果を保存するディレクトリ
         output_formats: 出力形式リスト (['csv', 'png', 'pdf'])
 
@@ -299,4 +476,6 @@ def process_video(video_path: str,
         Dict: 処理結果
     """
     worker = VideoProcessingWorker()
-    return worker.process_video(video_path, test_type, output_dir, output_formats)
+    return worker.process_video(
+        video_path, test_type, athlete_id, session_id, output_dir, output_formats
+    )

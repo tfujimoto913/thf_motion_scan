@@ -15,7 +15,7 @@ from .single_leg_squat import SingleLegSquatEvaluator
 from .cross_step import CrossStepEvaluator
 from .jump_landing import JumpLandingEvaluator
 from .skater_lunge import SkaterLungeEvaluator
-from .stride_mimic import StrideMimicEvaluator
+from .stride_mimic import StrideMinicryEvaluator
 from .push_pull import PushPullEvaluator
 from .upper_body_swing import UpperBodySwingEvaluator
 
@@ -26,7 +26,7 @@ __all__ = [
     'CrossStepEvaluator',
     'JumpLandingEvaluator',
     'SkaterLungeEvaluator',
-    'StrideMimicEvaluator',
+    'StrideMinicryEvaluator',
     'PushPullEvaluator',
     'UpperBodySwingEvaluator',
 ]
