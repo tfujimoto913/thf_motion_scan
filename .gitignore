@@ -27,7 +27,11 @@ tests/test_videos/*.mov
 
 # Test outputs
 tests/output/
+output_test/
 warnings.json
+.coverage
+htmlcov/
+.pytest_cache/
 
 # AWS SAM
 .aws-sam/
