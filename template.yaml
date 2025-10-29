@@ -271,6 +271,34 @@ Resources:
                 - secretsmanager:GetSecretValue
               Resource: !Ref JWTSecret
 
+  # Lambda関数: 管理者用編集（Phase 2.5 - Stage 1）
+  AdminEditFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-AdminEdit'
+      Runtime: python3.11
+      Handler: admin_edit/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ResultsTable
+      Events:
+        UpdateTeam:
+          Type: Api
+          Properties:
+            Path: /admin/teams/{teamId}
+            Method: PATCH
+        UpdatePlayer:
+          Type: Api
+          Properties:
+            Path: /admin/players/{playerId}
+            Method: PATCH
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+
   # DynamoDBテーブル
   ResultsTable:
     Type: AWS::DynamoDB::Table
@@ -389,3 +417,9 @@ Outputs:
     Value: !GetAtt UploadUrlFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-UploadUrlArn'
+
+  AdminEditFunctionArn:
+    Description: "管理者用編集Lambda関数ARN（Phase 2.5 - Stage 1）"
+    Value: !GetAtt AdminEditFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AdminEditArn'

@@ -400,18 +400,11 @@ def test_validate_height_invalid_type():
 # jwt_utils tests
 # ========================================
 
-@pytest.fixture
-def setup_jwt_secret():
-    """
-    What: JWT_SECRET_KEY環境変数のセットアップ
-    Why: JWT生成/検証テストの前提条件
-    """
-    os.environ['JWT_SECRET_KEY'] = 'test-secret-key-for-unit-testing'
-    yield
-    del os.environ['JWT_SECRET_KEY']
+# NOTE: JWT_SECRET_KEY はconftest.pyで設定されるため、個別のfixtureは不要
+# （Phase 2.5 - Stage 1で削除）
 
 
-def test_generate_jwt(setup_jwt_secret):
+def test_generate_jwt():
     """
     What: JWT生成テスト
     Why: 正しいペイロード構造の保証
@@ -422,7 +415,7 @@ def test_generate_jwt(setup_jwt_secret):
     assert len(token) > 0
 
 
-def test_verify_jwt_valid(setup_jwt_secret):
+def test_verify_jwt_valid():
     """
     What: JWT検証テスト（有効トークン）
     Why: 正常トークンの検証成功保証
@@ -437,7 +430,7 @@ def test_verify_jwt_valid(setup_jwt_secret):
     assert error_msg is None
 
 
-def test_verify_jwt_invalid_signature(setup_jwt_secret):
+def test_verify_jwt_invalid_signature():
     """
     What: JWT検証テスト（無効シグネチャ）
     Why: 改ざんトークンの検出保証
