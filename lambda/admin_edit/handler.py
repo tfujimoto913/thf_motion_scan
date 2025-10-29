@@ -25,6 +25,9 @@ from common.dynamodb_utils import get_item, update_item
 FORBIDDEN_TEAM_FIELDS = ['teamId', 'teamSlug', 'teamCode', 'registrationUrl', 'qrCodeS3Key']
 ALLOWED_TEAM_FIELDS = ['teamName']
 
+FORBIDDEN_PLAYER_FIELDS = ['playerId', 'teamInfo', 'auth']
+ALLOWED_PLAYER_FIELDS = ['personalInfo', 'bodyCharacteristics']
+
 
 def update_team(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -144,6 +147,144 @@ def update_team(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
 
+def update_player(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    What: 選手編集エンドポイント
+    Why: 管理者による選手情報の編集
+    Design Decision: PATCH /admin/players/{playerId}（Phase 2.5 - Stage 1）
+
+    Request:
+        pathParameters: {'playerId': 'plr_sakae_19'}
+        body: {
+            'personalInfo': {
+                'firstName': '太郎Updated',
+                'birthDate': '2010-03-16'
+            },
+            'bodyCharacteristics': {
+                'height': 175
+            }
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "playerId": "plr_sakae_19",
+                "personalInfo": {...},
+                "bodyCharacteristics": {...},
+                "updatedAt": "2025-10-29T12:00:00Z"
+            }
+        }
+
+    CRITICAL: personalInfo・bodyCharacteristics のみ編集可能
+    PHASE CORE LOGIC: ネストされたフィールドの部分更新
+    """
+    try:
+        # パスパラメータ取得
+        player_id = event.get('pathParameters', {}).get('playerId')
+        if not player_id:
+            return error_response('playerId is required', 400, 'VALIDATION_ERROR')
+
+        # リクエストボディ解析
+        body = json.loads(event.get('body', '{}'))
+
+        if not body:
+            return error_response('Request body is required', 400, 'VALIDATION_ERROR')
+
+        # CRITICAL: 編集不可フィールドのチェック
+        forbidden_fields = [field for field in body.keys() if field in FORBIDDEN_PLAYER_FIELDS]
+        if forbidden_fields:
+            return error_response(
+                f"Fields not allowed to update: {', '.join(forbidden_fields)}",
+                400,
+                'FORBIDDEN_FIELD'
+            )
+
+        # CRITICAL: 許可されていないフィールドのチェック
+        unknown_fields = [field for field in body.keys() if field not in ALLOWED_PLAYER_FIELDS]
+        if unknown_fields:
+            return error_response(
+                f"Unknown fields: {', '.join(unknown_fields)}",
+                400,
+                'UNKNOWN_FIELD'
+            )
+
+        # 選手存在確認
+        player = get_item(f"ATHLETE#{player_id}", "METADATA")
+        if not player:
+            return error_response(
+                f"Player not found: {player_id}",
+                404,
+                'PLAYER_NOT_FOUND'
+            )
+
+        # PHASE CORE LOGIC: DynamoDB更新式構築（ネストされたフィールド対応）
+        update_expression_parts = []
+        expression_attribute_values = {}
+        expression_attribute_names = {}
+
+        # personalInfo更新
+        if 'personalInfo' in body:
+            for key, value in body['personalInfo'].items():
+                placeholder_key = f'#pi_{key}'
+                placeholder_value = f':pi_{key}'
+                update_expression_parts.append(f'personalInfo.{placeholder_key} = {placeholder_value}')
+                expression_attribute_names[placeholder_key] = key
+                expression_attribute_values[placeholder_value] = value
+
+        # bodyCharacteristics更新
+        if 'bodyCharacteristics' in body:
+            for key, value in body['bodyCharacteristics'].items():
+                placeholder_key = f'#bc_{key}'
+                placeholder_value = f':bc_{key}'
+                update_expression_parts.append(f'bodyCharacteristics.{placeholder_key} = {placeholder_value}')
+                expression_attribute_names[placeholder_key] = key
+                expression_attribute_values[placeholder_value] = value
+
+        # updatedAt追加
+        update_expression_parts.append('#updatedAt = :updatedAt')
+        expression_attribute_names['#updatedAt'] = 'updatedAt'
+        expression_attribute_values[':updatedAt'] = datetime.utcnow().isoformat() + 'Z'
+
+        update_expression = 'SET ' + ', '.join(update_expression_parts)
+
+        # DynamoDB更新
+        update_item(
+            pk=f"ATHLETE#{player_id}",
+            sk="METADATA",
+            update_expression=update_expression,
+            expression_attribute_values=expression_attribute_values,
+            expression_attribute_names=expression_attribute_names
+        )
+
+        # 更新後のデータ取得
+        updated_player = get_item(f"ATHLETE#{player_id}", "METADATA")
+
+        # レスポンス
+        return success_response(
+            data={
+                'playerId': updated_player['playerId'],
+                'personalInfo': updated_player.get('personalInfo', {}),
+                'bodyCharacteristics': updated_player.get('bodyCharacteristics', {}),
+                'updatedAt': updated_player['updatedAt']
+            },
+            status_code=200,
+            message='Player updated successfully'
+        )
+
+    except ValueError as e:
+        return error_response(str(e), 400, 'VALIDATION_ERROR')
+
+    except Exception as e:
+        # CRITICAL: エラーログに個人情報を含めない
+        print(f"Error updating player: {str(e)}")
+        return error_response(
+            'Internal server error',
+            500,
+            'INTERNAL_ERROR'
+        )
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     What: Lambda統合ハンドラー
@@ -157,7 +298,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if '/admin/teams/' in path:
         return update_team(event, context)
     elif '/admin/players/' in path:
-        # TODO: update_player実装（次のコミット）
-        return error_response('Not implemented yet', 501, 'NOT_IMPLEMENTED')
+        return update_player(event, context)
     else:
         return error_response('Invalid path', 404, 'INVALID_PATH')

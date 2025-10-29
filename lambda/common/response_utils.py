@@ -9,7 +9,23 @@ CRITICAL: CORS対応とエラーハンドリングの一元管理
 """
 
 import json
+from decimal import Decimal
 from typing import Dict, Any, Optional
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """
+    What: DynamoDB Decimal型のJSON変換エンコーダー
+    Why: DynamoDBから取得した数値データ（Decimal型）をJSON化
+    Design Decision: 整数はint、小数はfloatに変換（Phase 2.5 - Stage 1）
+
+    CRITICAL: DynamoDBはすべての数値をDecimalで保存
+    """
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            # 整数の場合はint、小数の場合はfloatに変換
+            return int(obj) if obj % 1 == 0 else float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 
 def cors_headers() -> Dict[str, str]:
@@ -59,7 +75,7 @@ def success_response(
     return {
         'statusCode': status_code,
         'headers': cors_headers(),
-        'body': json.dumps(body, ensure_ascii=False)
+        'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
     }
 
 
@@ -99,5 +115,5 @@ def error_response(
     return {
         'statusCode': status_code,
         'headers': cors_headers(),
-        'body': json.dumps(body, ensure_ascii=False)
+        'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
     }
