@@ -26,7 +26,8 @@ from common.validators import (
     validate_jersey_number,
     validate_password,
     validate_kana_name,
-    validate_lateral_characteristic
+    validate_lateral_characteristic,
+    validate_height
 )
 from common.jwt_utils import generate_jwt, verify_jwt, extract_bearer_token
 
@@ -327,6 +328,72 @@ def test_validate_lateral_characteristic_invalid():
 
     assert is_valid is False
     assert "'right' or 'left'" in error_msg
+
+
+def test_validate_height_valid():
+    """
+    What: 身長検証（正常ケース）
+    Why: 標準的な身長値の受け入れ保証
+    """
+    is_valid, error_msg = validate_height(170)
+
+    assert is_valid is True
+    assert error_msg is None
+
+
+def test_validate_height_boundary_min():
+    """
+    What: 身長検証（最小境界値）
+    Why: 100cmが受け入れられることを保証
+    """
+    is_valid, error_msg = validate_height(100)
+
+    assert is_valid is True
+    assert error_msg is None
+
+
+def test_validate_height_boundary_max():
+    """
+    What: 身長検証（最大境界値）
+    Why: 250cmが受け入れられることを保証
+    """
+    is_valid, error_msg = validate_height(250)
+
+    assert is_valid is True
+    assert error_msg is None
+
+
+def test_validate_height_too_small():
+    """
+    What: 身長検証（範囲外・小）
+    Why: 99cm以下が拒否されることを保証
+    """
+    is_valid, error_msg = validate_height(99)
+
+    assert is_valid is False
+    assert "100 and 250" in error_msg
+
+
+def test_validate_height_too_large():
+    """
+    What: 身長検証（範囲外・大）
+    Why: 251cm以上が拒否されることを保証
+    """
+    is_valid, error_msg = validate_height(251)
+
+    assert is_valid is False
+    assert "100 and 250" in error_msg
+
+
+def test_validate_height_invalid_type():
+    """
+    What: 身長検証（型エラー）
+    Why: 非整数値が拒否されることを保証
+    """
+    is_valid, error_msg = validate_height("170")
+
+    assert is_valid is False
+    assert "must be an integer" in error_msg
 
 
 # ========================================

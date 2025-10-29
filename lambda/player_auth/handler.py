@@ -25,7 +25,8 @@ from common.validators import (
     validate_password,
     validate_player_id,
     validate_kana_name,
-    validate_lateral_characteristic
+    validate_lateral_characteristic,
+    validate_height
 )
 from common.jwt_utils import generate_jwt
 from common.dynamodb_utils import put_item, get_item, query_items
@@ -163,6 +164,7 @@ def register_player(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         dominant_foot = body['dominantFoot'].lower()
         shooting_hand = body['shootingHand'].lower()
         password = body['password']
+        height = body.get('height')  # オプショナル（ADR-020: 既存データとの互換性）
 
         # 背番号検証
         is_valid, error_msg = validate_jersey_number(jersey_number)
@@ -195,6 +197,12 @@ def register_player(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         is_valid, error_msg = validate_lateral_characteristic(shooting_hand, "Shooting hand")
         if not is_valid:
             return error_response(error_msg, 400, 'VALIDATION_ERROR')
+
+        # 身長検証（オプショナル）
+        if height is not None:
+            is_valid, error_msg = validate_height(height)
+            if not is_valid:
+                return error_response(error_msg, 400, 'VALIDATION_ERROR')
 
         # チーム存在確認
         team = get_item(f"TEAM#{team_id}", "METADATA")
@@ -247,7 +255,8 @@ def register_player(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'bodyCharacteristics': {
                 'dominantHand': dominant_hand,
                 'dominantFoot': dominant_foot,
-                'shootingHand': shooting_hand
+                'shootingHand': shooting_hand,
+                'height': height  # オプショナル（ADR-020）
             },
             'auth': {
                 'passwordHash': hashed_password
@@ -273,7 +282,8 @@ def register_player(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'bodyCharacteristics': {
                     'dominantHand': dominant_hand,
                     'dominantFoot': dominant_foot,
-                    'shootingHand': shooting_hand
+                    'shootingHand': shooting_hand,
+                    'height': height
                 },
                 'createdAt': created_at
             },

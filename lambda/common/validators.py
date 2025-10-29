@@ -235,3 +235,28 @@ def validate_lateral_characteristic(
         return False, f"{field_name} must be either 'right' or 'left'"
 
     return True, None
+
+
+def validate_height(height: int) -> Tuple[bool, Optional[str]]:
+    """
+    What: 身長の検証
+    Why: 身体特性データの品質保証
+    Design Decision: 100-250cmの範囲チェック、オプショナル（ADR-020）
+
+    Args:
+        height: 検証対象の身長（cm、int型）
+
+    Returns:
+        (is_valid, error_message) のタプル
+
+    Expected range: 100-250cm（ジュニア〜成人アスリート）
+
+    CRITICAL: heightはオプショナルフィールド（既存データとの互換性）
+    """
+    if not isinstance(height, int):
+        return False, "Height must be an integer"
+
+    if height < 100 or height > 250:
+        return False, "Height must be between 100 and 250 cm"
+
+    return True, None

@@ -92,17 +92,17 @@ def test_register_player_success():
     What: 選手登録エンドポイントのテスト（成功ケース）
     Why: 選手登録機能の動作保証
     """
-    # DynamoDBテーブル作成
+    # DynamoDBテーブル作成（ADR-020: video_id/processed_atキー構造）
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.create_table(
         TableName='test-table',
         KeySchema=[
-            {'AttributeName': 'PK', 'KeyType': 'HASH'},
-            {'AttributeName': 'SK', 'KeyType': 'RANGE'}
+            {'AttributeName': 'video_id', 'KeyType': 'HASH'},
+            {'AttributeName': 'processed_at', 'KeyType': 'RANGE'}
         ],
         AttributeDefinitions=[
-            {'AttributeName': 'PK', 'AttributeType': 'S'},
-            {'AttributeName': 'SK', 'AttributeType': 'S'},
+            {'AttributeName': 'video_id', 'AttributeType': 'S'},
+            {'AttributeName': 'processed_at', 'AttributeType': 'S'},
             {'AttributeName': 'GSI2PK', 'AttributeType': 'S'},
             {'AttributeName': 'GSI2SK', 'AttributeType': 'S'}
         ],
@@ -121,8 +121,8 @@ def test_register_player_success():
 
     # チームエンティティを作成
     table.put_item(Item={
-        'PK': 'TEAM#tm_sakae',
-        'SK': 'METADATA',
+        'video_id': 'TEAM#tm_sakae',
+        'processed_at': 'METADATA',
         'teamId': 'tm_sakae',
         'teamSlug': 'sakae',
         'teamName': '栄フレッシュ'
@@ -140,7 +140,12 @@ def test_register_player_success():
             'jerseyNumber': 19,
             'firstName': '太郎',
             'lastName': '山田',
+            'firstNameKana': 'たろう',
+            'lastNameKana': 'やまだ',
             'birthDate': '2010-03-15',
+            'dominantHand': 'right',
+            'dominantFoot': 'left',
+            'shootingHand': 'right',
             'password': 'secure123'
         })
     }
@@ -154,6 +159,84 @@ def test_register_player_success():
     assert body['success'] is True
     assert body['data']['playerId'] == 'plr_sakae_19'
     assert body['data']['teamId'] == 'tm_sakae'
+    # heightはオプショナルなので、含まれていてもNoneでもOK
+    assert body['data']['bodyCharacteristics']['height'] is None
+
+
+@mock_dynamodb
+def test_register_player_with_height():
+    """
+    What: 選手登録エンドポイントのテスト（身長付き）
+    Why: 身長フィールドの動作保証（Phase 2.5 - Stage 1）
+    """
+    # DynamoDBテーブル作成（ADR-020: video_id/processed_atキー構造）
+    dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+    table = dynamodb.create_table(
+        TableName='test-table',
+        KeySchema=[
+            {'AttributeName': 'video_id', 'KeyType': 'HASH'},
+            {'AttributeName': 'processed_at', 'KeyType': 'RANGE'}
+        ],
+        AttributeDefinitions=[
+            {'AttributeName': 'video_id', 'AttributeType': 'S'},
+            {'AttributeName': 'processed_at', 'AttributeType': 'S'},
+            {'AttributeName': 'GSI2PK', 'AttributeType': 'S'},
+            {'AttributeName': 'GSI2SK', 'AttributeType': 'S'}
+        ],
+        GlobalSecondaryIndexes=[
+            {
+                'IndexName': 'GSI2-index',
+                'KeySchema': [
+                    {'AttributeName': 'GSI2PK', 'KeyType': 'HASH'},
+                    {'AttributeName': 'GSI2SK', 'KeyType': 'RANGE'}
+                ],
+                'Projection': {'ProjectionType': 'ALL'}
+            }
+        ],
+        BillingMode='PAY_PER_REQUEST'
+    )
+
+    # チームエンティティを作成
+    table.put_item(Item={
+        'video_id': 'TEAM#tm_sakae',
+        'processed_at': 'METADATA',
+        'teamId': 'tm_sakae',
+        'teamSlug': 'sakae',
+        'teamName': '栄フレッシュ'
+    })
+
+    # player_authハンドラーをインポート
+    from player_auth.handler import lambda_handler
+
+    # リクエストイベント（身長付き）
+    event = {
+        'httpMethod': 'POST',
+        'path': '/player/register',
+        'body': json.dumps({
+            'teamId': 'tm_sakae',
+            'jerseyNumber': 20,
+            'firstName': '花子',
+            'lastName': '佐藤',
+            'firstNameKana': 'はなこ',
+            'lastNameKana': 'さとう',
+            'birthDate': '2011-05-20',
+            'dominantHand': 'left',
+            'dominantFoot': 'right',
+            'shootingHand': 'left',
+            'height': 165,
+            'password': 'secure456'
+        })
+    }
+
+    # Lambda実行
+    response = lambda_handler(event, None)
+
+    # 検証
+    assert response['statusCode'] == 201
+    body = json.loads(response['body'])
+    assert body['success'] is True
+    assert body['data']['playerId'] == 'plr_sakae_20'
+    assert body['data']['bodyCharacteristics']['height'] == 165
 
 
 @mock_dynamodb
