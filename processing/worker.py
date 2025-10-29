@@ -22,6 +22,7 @@ from .evaluators.stride_mimic import StrideMinicryEvaluator
 from .evaluators.push_pull import PushPullEvaluator
 from .evaluators.jump_landing import JumpLandingEvaluator
 from .health_check import HealthChecker, apply_random_seed
+from .quality_monitor import QualityMonitor
 from .exporters import CSVExporter, PNGPlotter, PDFReporter
 
 
@@ -61,6 +62,7 @@ class VideoProcessingWorker:
             'jump_landing': JumpLandingEvaluator(config_path)
         }
         self.health_checker = HealthChecker(config_path)
+        self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
         self.config_path = config_path
 
     def process_video(self,
@@ -146,6 +148,16 @@ class VideoProcessingWorker:
         else:
             print(f"⚠️  品質チェック: 低品質データ検出 (検出率 {quality_result['detection_rate']:.1%})")
 
+        # PHASE 1: 品質モニタリング実行
+        print(f"📊 品質モニタリング実行中...")
+        quality_metrics = self.quality_monitor.calculate_quality_metrics(
+            extraction_result['landmarks'],
+            total_frames=extraction_result['frame_count']
+        )
+        print(f"✅ 品質スコア: {quality_metrics['quality_score']}/100")
+        if quality_metrics['recommend_retake']:
+            print(f"⚠️  再撮影推奨: 品質スコアが{self.quality_monitor.quality_score_threshold}点未満です")
+
         # 3. 正規化（base_width計算）
         print(f"📏 ランドマーク正規化中...")
         representative_values, _frame_values = self.normalizer.normalize_landmarks_sequence(
@@ -181,6 +193,7 @@ class VideoProcessingWorker:
                 'detected_frames': extraction_result['detected_frames']
             },
             'health_check': quality_result,
+            'quality_metrics': quality_metrics,  # Phase 1: 品質メトリクス追加
             'processed_at': datetime.now().isoformat()
         }
 
@@ -206,6 +219,17 @@ class VideoProcessingWorker:
                 str(warnings_dir / 'warnings.json')
             )
             print(f"⚠️  warnings.json保存: {warnings_path}")
+
+            # PHASE 1: quality_log.json保存
+            measurement_id = f"{athlete_id}_{session_id}_{test_type}"
+            quality_log_path = self.quality_monitor.save_quality_log(
+                extraction_result['landmarks'],
+                output_path=str(warnings_dir / 'quality_log.json'),
+                measurement_id=measurement_id,
+                total_frames=extraction_result['frame_count']
+            )
+            result['quality_log_file'] = str(quality_log_path)
+            print(f"📊 quality_log.json保存: {quality_log_path}")
 
             # PHASE CORE LOGIC: 出力形式エクスポート（ADR-011）
             if output_formats:
