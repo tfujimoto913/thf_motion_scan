@@ -38,17 +38,17 @@ def test_create_team_success():
     What: チーム作成エンドポイントのテスト（成功ケース）
     Why: チーム作成機能の動作保証
     """
-    # DynamoDBテーブル作成
+    # DynamoDBテーブル作成（ADR-020: video_id/processed_atキー構造）
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.create_table(
         TableName='test-table',
         KeySchema=[
-            {'AttributeName': 'PK', 'KeyType': 'HASH'},
-            {'AttributeName': 'SK', 'KeyType': 'RANGE'}
+            {'AttributeName': 'video_id', 'KeyType': 'HASH'},
+            {'AttributeName': 'processed_at', 'KeyType': 'RANGE'}
         ],
         AttributeDefinitions=[
-            {'AttributeName': 'PK', 'AttributeType': 'S'},
-            {'AttributeName': 'SK', 'AttributeType': 'S'}
+            {'AttributeName': 'video_id', 'AttributeType': 'S'},
+            {'AttributeName': 'processed_at', 'AttributeType': 'S'}
         ],
         BillingMode='PAY_PER_REQUEST'
     )
@@ -245,17 +245,17 @@ def test_login_player_success():
     What: 選手ログインエンドポイントのテスト（成功ケース）
     Why: JWT発行機能の動作保証
     """
-    # DynamoDBテーブル作成
+    # DynamoDBテーブル作成（ADR-020: video_id/processed_atキー構造）
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.create_table(
         TableName='test-table',
         KeySchema=[
-            {'AttributeName': 'PK', 'KeyType': 'HASH'},
-            {'AttributeName': 'SK', 'KeyType': 'RANGE'}
+            {'AttributeName': 'video_id', 'KeyType': 'HASH'},
+            {'AttributeName': 'processed_at', 'KeyType': 'RANGE'}
         ],
         AttributeDefinitions=[
-            {'AttributeName': 'PK', 'AttributeType': 'S'},
-            {'AttributeName': 'SK', 'AttributeType': 'S'}
+            {'AttributeName': 'video_id', 'AttributeType': 'S'},
+            {'AttributeName': 'processed_at', 'AttributeType': 'S'}
         ],
         BillingMode='PAY_PER_REQUEST'
     )
@@ -266,8 +266,8 @@ def test_login_player_success():
 
     # 選手エンティティを作成
     table.put_item(Item={
-        'PK': 'ATHLETE#plr_sakae_19',
-        'SK': 'METADATA',
+        'video_id': 'ATHLETE#plr_sakae_19',
+        'processed_at': 'METADATA',
         'playerId': 'plr_sakae_19',
         'teamInfo': {
             'teamId': 'tm_sakae',
