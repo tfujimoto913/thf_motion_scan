@@ -75,7 +75,11 @@ class BodyNormalizer:
             x1, y1, z1 = point1['x'], point1['y'], point1['z']
             x2, y2, z2 = point2['x'], point2['y'], point2['z']
 
-            # NaNチェック
+            # CRITICAL: まずNoneチェック（np.isnan()はNone値を受け付けない）
+            if any(val is None for val in [x1, y1, z1, x2, y2, z2]):
+                return None
+
+            # その後でNaNチェック
             if any(np.isnan([x1, y1, z1, x2, y2, z2])):
                 return None
 
@@ -294,11 +298,15 @@ def normalize_value(
 
     CRITICAL: reference=0またはNoneの場合はNoneを返す（ゼロ除算回避）
     """
-    # CRITICAL: NaN/None/ゼロチェック
-    if reference is None or np.isnan(reference) or reference == 0:
+    # CRITICAL: まずNoneチェック（np.isnan()はNone値を受け付けない）
+    if reference is None:
+        return None
+    if np.isnan(reference) or reference == 0:
         return None
 
-    if value is None or np.isnan(value):
+    if value is None:
+        return None
+    if np.isnan(value):
         return None
 
     try:
