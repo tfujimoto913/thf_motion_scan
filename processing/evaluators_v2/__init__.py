@@ -11,9 +11,15 @@ CRITICAL: 既存のevaluators/には一切影響を与えない
 from .base_evaluator_v2 import BaseEvaluatorV2
 from .single_leg_squat_v2 import SingleLegSquatEvaluatorV2
 from .skater_lunge_v2 import SkaterLungeEvaluatorV2
+from .stride_mimic_v2 import StrideMimicEvaluatorV2
+from .upper_body_swing_v2 import UpperBodySwingEvaluatorV2
+from .cross_step_v2 import CrossStepEvaluatorV2
 
 __all__ = [
     'BaseEvaluatorV2',
     'SingleLegSquatEvaluatorV2',
-    'SkaterLungeEvaluatorV2'
+    'SkaterLungeEvaluatorV2',
+    'StrideMimicEvaluatorV2',
+    'UpperBodySwingEvaluatorV2',
+    'CrossStepEvaluatorV2'
 ]
