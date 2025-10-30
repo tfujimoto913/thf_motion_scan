@@ -469,6 +469,149 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # ==============================================================================
+  # Phase 5: CloudWatch Dashboard（運用監視基盤）
+  # ==============================================================================
+  OperationalDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${AWS::StackName}-Operations'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Invocations & Errors",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", {"stat": "Sum", "label": "Total Invocations"}],
+                  [".", "Errors", {"stat": "Sum", "label": "Errors", "yAxis": "right"}],
+                  [".", "Throttles", {"stat": "Sum", "label": "Throttles", "yAxis": "right"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {"label": "Invocations"},
+                  "right": {"label": "Errors/Throttles"}
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Duration & Memory",
+                "metrics": [
+                  ["AWS/Lambda", "Duration", {"stat": "Average", "label": "Avg Duration (ms)"}],
+                  ["...", {"stat": "Maximum", "label": "Max Duration (ms)"}],
+                  [".", "ConcurrentExecutions", {"stat": "Maximum", "label": "Concurrent Executions", "yAxis": "right"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {"label": "Duration (ms)"},
+                  "right": {"label": "Concurrent Executions"}
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "SQS Queue Metrics",
+                "metrics": [
+                  ["AWS/SQS", "NumberOfMessagesSent", {"label": "Messages Sent"}],
+                  [".", "NumberOfMessagesReceived", {"label": "Messages Received"}],
+                  [".", "ApproximateNumberOfMessagesVisible", {"label": "Messages in Queue", "yAxis": "right"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {"label": "Message Count"},
+                  "right": {"label": "Queue Depth"}
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Dead Letter Queue",
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", {"label": "DLQ Messages"}],
+                  [".", "ApproximateAgeOfOldestMessage", {"label": "Oldest Message Age (sec)", "yAxis": "right"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {"label": "Message Count"},
+                  "right": {"label": "Age (seconds)"}
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "title": "Error Rate (%)",
+                "metrics": [
+                  [{"expression": "m1/m2*100", "label": "Error Rate (%)", "id": "e1"}],
+                  ["AWS/Lambda", "Errors", {"id": "m1", "visible": false}],
+                  [".", "Invocations", {"id": "m2", "visible": false}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {"label": "Error Rate (%)"}
+                },
+                "annotations": {
+                  "horizontal": [
+                    {"value": 5, "label": "Warning Threshold (5%)", "color": "#ff9900"}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 18,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "title": "Recent Errors (Last 20)",
+                "query": "SOURCE '${ProcessingFunctionLogGroup}' | fields @timestamp, @message | filter @message like /ERROR/ or @message like /Exception/ or @message like /失敗/ | sort @timestamp desc | limit 20",
+                "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
 Outputs:
   # 既存リソース
   VideosBucketName:
@@ -550,3 +693,9 @@ Outputs:
     Value: !Ref AlarmTopic
     Export:
       Name: !Sub '${AWS::StackName}-AlarmTopic'
+
+  DashboardUrl:
+    Description: "CloudWatch Dashboard URL（運用監視）"
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-Operations'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardUrl'
