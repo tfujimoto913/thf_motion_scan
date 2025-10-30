@@ -1,27 +1,36 @@
 {
-  "_comment": "8原則・237点満点評価システム（v2.0）- Phase A雛形",
+  "_comment": "8原則・560点満点評価システム（v2.1）- 全7種目統一配点",
   "_created": "2025-10-30",
-  "_status": "Phase A: 構造定義のみ、Phase Bで詳細実装",
+  "_updated": "2025-10-30",
+  "_status": "Phase B完了: 560点満点（80点×7種目）統一配点",
 
-  "version": "v2.0",
+  "version": "v2.1",
   "scoring_system": {
-    "total_max_score": 237,
+    "total_max_score": 560,
+    "per_test_max_score": 80,
     "section_a": {
       "description": "SECTION A: テスト実施の可否",
-      "max_score": 21,
+      "max_score": 20,
       "weight": 1.0,
-      "criteria": ["setup", "execution_completion", "safety"]
+      "criteria": {
+        "A1": {"name": "可動域", "max_score": 5},
+        "A2a": {"name": "エキセン制御", "max_score": 5},
+        "A2b": {"name": "コンセン制御", "max_score": 5},
+        "A3": {"name": "再現性", "max_score": 5}
+      }
     },
     "section_b": {
       "description": "SECTION B: 8原則評価",
-      "max_score": 216,
+      "max_score": 60,
       "weight": 1.0,
+      "eccentric_max": 30,
+      "concentric_max": 30,
       "principles": 8
     }
   },
 
   "principles": {
-    "_comment": "8原則（B1-B8）定義 - Phase B実装",
+    "_comment": "8原則（B1-B8）定義",
     "B1": {
       "name": "B1: 体幹安定性 (Core Stability)",
       "description": "体幹の安定性、胴体の揺れ抑制",
@@ -73,244 +82,251 @@
   },
 
   "test_types": {
-    "_comment": "7種目定義 - Phase B実装",
+    "_comment": "全7種目統一配点（80点×7 = 560点）",
     "single_leg_squat": {
       "display_name": "Single Leg Squat",
       "test_id": "T01",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["setup_balance", "depth_requirement", "no_fall"]
+        "max_score": 20,
+        "criteria": ["setup_balance", "depth_requirement", "no_fall", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B2", "B4"],
         "secondary_principles": ["B1", "B3"],
         "eccentric": {
           "description": "下降局面",
-          "B1": 2.5,
-          "B2": 5.0,
-          "B3": 2.5,
-          "B4": 5.0,
-          "total": 15
+          "B1": 5.0,
+          "B2": 10.0,
+          "B3": 5.0,
+          "B4": 10.0,
+          "total": 30
         },
         "concentric": {
           "description": "上昇局面",
-          "B1": 2.5,
-          "B2": 5.0,
-          "B3": 2.5,
-          "B4": 5.0,
-          "total": 15
+          "B1": 5.0,
+          "B2": 10.0,
+          "B3": 5.0,
+          "B4": 10.0,
+          "total": 30
         }
       },
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     },
     "skater_lunge": {
       "display_name": "Skater Lunge",
       "test_id": "T02",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["step_width", "landing_stability", "no_fall"]
+        "max_score": 20,
+        "criteria": ["step_width", "landing_stability", "no_fall", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B4", "B7"],
         "secondary_principles": ["B1", "B2", "B3"],
         "eccentric": {
           "description": "着地・下降局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 2.0,
-          "B4": 4.5,
-          "B7": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 4.0,
+          "B4": 9.0,
+          "B7": 9.0,
+          "total": 30.0
         },
         "concentric": {
           "description": "蹴り出し局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 2.0,
-          "B4": 4.5,
-          "B7": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 4.0,
+          "B4": 9.0,
+          "B7": 9.0,
+          "total": 30.0
         }
       },
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     },
     "stride_mimic": {
       "display_name": "Stride Mimic",
       "test_id": "T03",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["stride_length", "hip_extension", "completion"]
+        "max_score": 20,
+        "criteria": ["stride_length", "hip_extension", "completion", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B3", "B7"],
         "secondary_principles": ["B1", "B2", "B6"],
         "eccentric": {
           "description": "準備・引き込み局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 4.5,
-          "B6": 2.0,
-          "B7": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 9.0,
+          "B6": 4.0,
+          "B7": 9.0,
+          "total": 30.0
         },
         "concentric": {
           "description": "蹴り出し・前進局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 4.5,
-          "B6": 2.0,
-          "B7": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 9.0,
+          "B6": 4.0,
+          "B7": 9.0,
+          "total": 30.0
         }
       },
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     },
     "jump_landing": {
       "display_name": "Jump & Landing",
       "test_id": "T04",
-      "max_score": 36,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["jump_height", "landing_balance", "no_fall"]
+        "max_score": 20,
+        "criteria": ["jump_height", "landing_balance", "no_fall", "reproduction"]
       },
       "section_b": {
-        "max_score": 33,
+        "max_score": 60,
         "primary_principles": ["B2", "B6"],
         "secondary_principles": ["B1", "B3", "B4"],
         "eccentric": {
-          "description": "着地・衝撃吸収局面のみ",
-          "B1": 4.0,
-          "B2": 9.0,
-          "B3": 4.0,
-          "B4": 4.0,
-          "B6": 12.0,
-          "total": 33.0
+          "description": "着地・衝撃吸収局面",
+          "B1": 8.0,
+          "B2": 18.0,
+          "B3": 8.0,
+          "B4": 8.0,
+          "B6": 18.0,
+          "total": 60.0
         },
-        "concentric": null
+        "concentric": {
+          "description": "ジャンプ上昇局面（評価対象外）",
+          "total": 0
+        }
       },
-      "special_structure": "eccentric_only",
-      "status": "Phase B実装中"
+      "special_structure": "eccentric_focus",
+      "status": "Phase B完了"
     },
     "upper_body_swing": {
       "display_name": "Upper Body Swing",
       "test_id": "T05",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["arm_swing_amplitude", "balance", "completion"]
+        "max_score": 20,
+        "criteria": ["arm_swing_amplitude", "balance", "completion", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B7", "B8"],
         "secondary_principles": ["B1", "B2"],
         "eccentric": {
           "description": "後方スイング局面",
-          "B1": 3.0,
-          "B2": 3.0,
-          "B7": 4.5,
-          "B8": 4.5,
-          "total": 15.0
+          "B1": 6.0,
+          "B2": 6.0,
+          "B7": 9.0,
+          "B8": 9.0,
+          "total": 30.0
         },
         "concentric": {
           "description": "前方スイング局面",
-          "B1": 3.0,
-          "B2": 3.0,
-          "B7": 4.5,
-          "B8": 4.5,
-          "total": 15.0
+          "B1": 6.0,
+          "B2": 6.0,
+          "B7": 9.0,
+          "B8": 9.0,
+          "total": 30.0
         }
       },
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     },
     "push_pull": {
       "display_name": "Push-Pull",
       "test_id": "T06",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["pull_distance", "push_angle", "completion"]
+        "max_score": 20,
+        "criteria": ["pull_distance", "push_angle", "completion", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B7", "B8"],
         "secondary_principles": ["B1", "B2"],
         "pull_phase": {
           "description": "プル局面",
-          "B1": 3.0,
-          "B2": 3.0,
-          "B7": 4.5,
-          "B8": 4.5,
-          "total": 15.0
+          "B1": 6.0,
+          "B2": 6.0,
+          "B7": 9.0,
+          "B8": 9.0,
+          "total": 30.0
         },
         "push_phase": {
           "description": "プッシュ局面",
-          "B1": 3.0,
-          "B2": 3.0,
-          "B7": 4.5,
-          "B8": 4.5,
-          "total": 15.0
+          "B1": 6.0,
+          "B2": 6.0,
+          "B7": 9.0,
+          "B8": 9.0,
+          "total": 30.0
         }
       },
       "special_structure": "pull_push_separate",
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     },
     "cross_step": {
       "display_name": "Cross Step",
       "test_id": "T07",
-      "max_score": 33,
+      "max_score": 80,
       "section_a": {
-        "max_score": 3,
-        "criteria": ["step_width", "knee_flexion", "completion"]
+        "max_score": 20,
+        "criteria": ["step_width", "knee_flexion", "completion", "reproduction"]
       },
       "section_b": {
-        "max_score": 30,
+        "max_score": 60,
         "primary_principles": ["B3", "B5"],
         "secondary_principles": ["B1", "B2", "B4"],
         "eccentric": {
           "description": "クロス・下降局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 4.5,
-          "B4": 2.0,
-          "B5": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 9.0,
+          "B4": 4.0,
+          "B5": 9.0,
+          "total": 30.0
         },
         "concentric": {
           "description": "蹴り出し・復帰局面",
-          "B1": 2.0,
-          "B2": 2.0,
-          "B3": 4.5,
-          "B4": 2.0,
-          "B5": 4.5,
-          "total": 15.0
+          "B1": 4.0,
+          "B2": 4.0,
+          "B3": 9.0,
+          "B4": 4.0,
+          "B5": 9.0,
+          "total": 30.0
         }
       },
-      "status": "Phase B実装中"
+      "status": "Phase B完了"
     }
   },
 
   "output_format": {
-    "_comment": "出力形式定義",
-    "version": "v2",
+    "_comment": "出力形式定義 - 560点満点",
+    "version": "v2.1",
     "structure": {
-      "total_score": "int (0-237)",
+      "total_score": "int (0-560)",
       "section_a": {
-        "score": "int (0-21)",
+        "score": "int (0-140)",
         "details": "str"
       },
       "section_b": {
-        "score": "int (0-216)",
+        "score": "int (0-420)",
         "principles": {
           "B1": {"eccentric": "int", "concentric": "int"},
           "B2": {"eccentric": "int", "concentric": "int"},
           "B3": {"eccentric": "int", "concentric": "int"},
-          "B4": {"eccentric": "int", "concentric": "int"}
+          "B4": {"eccentric": "int", "concentric": "int"},
+          "B5": {"eccentric": "int", "concentric": "int"},
+          "B6": {"eccentric": "int", "concentric": "int"},
+          "B7": {"eccentric": "int", "concentric": "int"},
+          "B8": {"eccentric": "int", "concentric": "int"}
         }
       },
       "phase_scores": {

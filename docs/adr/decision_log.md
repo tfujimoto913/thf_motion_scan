@@ -1931,3 +1931,277 @@
     - DecimalEncoder適用: 全レスポンスで自動Decimal変換
     - 影響: なし（既存JSONレスポンス互換）
     - 利点: DynamoDB数値フィールドが正しくJSON化される
+
+## ADR-022: 8原則・Eccentric/Concentric評価システム（evaluators_v2導入）
+- 日付: 2025-10-30
+- 決定者: Human + Claude Code
+- 状態: ✅ Accepted (Phase B完了)
+- 関連ADR: ADR-002（config.json管理）, ADR-003（正規化処理）
+- コンテキスト:
+  - **既存システム（v1）の限界**:
+    - 7原則評価のみ（B1-B7）
+    - 12点満点の単純加算
+    - 局面（Eccentric/Concentric）の区別なし
+    - 動作の質的評価が不十分
+  - **新評価要求**:
+    - 8原則評価（B8: 肩周り独立制御 追加）
+    - 動作局面別評価（下降局面 vs 上昇局面）
+    - より詳細な点数システム
+    - 既存システムを壊さない並行開発
+- 決定内容:
+  - **並行動作環境構築（Phase A）**:
+    - evaluators_v2/ ディレクトリ新設（既存evaluators/と完全分離）
+    - Feature Flag実装（config.json: scoring_system.version = v1/v2）
+    - worker.py非侵襲的拡張（v1は既存通り動作継続）
+  - **8原則・局面別評価システム（Phase B）**:
+    - 234点満点システム（7種目: 33×5 + 36×1 + 33×1）
+    - A評価（3点）: テスト実施の可否
+    - B評価（30点）: 8原則評価（Eccentric 15点 + Concentric 15点）
+    - 主評価 vs 副評価の重み付け
+    - 特殊構造対応（Jump Landing: Eccentric only, Push-Pull: Pull/Push別）
+- 技術詳細:
+  - **1. 基底クラス**（processing/evaluators_v2/base_evaluator_v2.py: 559行）:
+    ```python
+    class BaseEvaluatorV2(ABC):
+        """
+        8原則評価の抽象基底クラス
+        - _detect_phases(): 局面自動検出
+        - _evaluate_b1_core_stability(): B1体幹安定性
+        - _evaluate_b2_support_foundation(): B2支持基盤
+        - _evaluate_b3_3joint_coordination(): B3関節連動性
+        - _evaluate_b4_pelvis_horizontal(): B4骨盤水平
+        - _evaluate_b5_weight_shift(): B5重心移動
+        - _evaluate_b6_posterior_chain(): B6後方筋群
+        - _evaluate_b7_upper_lower_separation(): B7上下身分離
+        - _evaluate_b8_shoulder_independent_control(): B8肩周り独立制御
+        """
+    ```
+  - **2. 局面検出ロジック**:
+    ```python
+    def _detect_phases(self, landmarks_data, angles):
+        """
+        角度変化から動作局面を自動検出
+        - Eccentric: 下降・着地・引き込み局面
+        - Concentric: 上昇・蹴り出し・前進局面
+        
+        Method: 角度の変化率（1階微分）でピーク検出
+        """
+        # 角度減少期 → Eccentric
+        # 角度増加期 → Concentric
+    ```
+  - **3. 評価ルール定義**（test_rules_v2.json: 322行）:
+    ```json
+    {
+      "version": "v2",
+      "scoring_system": {
+        "total_max_score": 234,
+        "section_a": {"max_score": 3},
+        "section_b": {
+          "eccentric_max": 15,
+          "concentric_max": 15,
+          "principles": 8
+        }
+      },
+      "test_types": {
+        "single_leg_squat": {
+          "primary_principles": ["B2", "B4"],
+          "secondary_principles": ["B1", "B3"],
+          "eccentric": {
+            "B1": 2.5, "B2": 5.0, "B3": 2.5, "B4": 5.0
+          },
+          "concentric": {
+            "B1": 2.5, "B2": 5.0, "B3": 2.5, "B4": 5.0
+          }
+        }
+      }
+    }
+    ```
+  - **4. 7種目実装**:
+    - single_leg_squat_v2.py (457行): B2支持基盤・B4骨盤水平が主評価
+    - skater_lunge_v2.py (524行): B4骨盤水平・B7上下身分離が主評価
+    - stride_mimic_v2.py (333行): B3関節連動・B7上下身分離が主評価
+    - jump_landing_v2.py (395行): **特殊構造** Eccentric局面のみ36点（着地衝撃吸収）
+    - upper_body_swing_v2.py (323行): B7上下身分離・B8肩周り独立制御が主評価
+    - push_pull_v2.py (386行): **特殊構造** Pull/Push局面別評価
+    - cross_step_v2.py (342行): B3関節連動・B5重心移動が主評価
+  - **5. 統合テスト**（test_evaluators_v2_integration.py: 362行）:
+    ```python
+    def test_all_evaluators_total_points():
+        """全7種目合計が234点満点であることを検証"""
+        # 33×5 + 36×1 + 33×1 = 234点
+        assert total_max_score == 234
+    ```
+- 影響範囲:
+  - **新規作成**: 4547行追加
+    - evaluators_v2/ ディレクトリ全体
+    - CLI評価ツール（cli/evaluate.py）
+    - 統合テスト
+  - **修正**: processing/worker.py（Feature Flag追加）
+  - **破壊的変更**: なし（v1システム完全保持）
+- 検証結果:
+  - ✅ 全10テストパス（234点満点システム）
+  - ✅ v1システム動作継続確認
+  - ✅ Feature Flag切り替え動作確認
+- 制約事項:
+  - MediaPipe座標精度依存（visibility < 0.7で品質低下）
+  - 局面検出の精度は角度変化に依存（急激な動作で誤検出リスク）
+  - 特殊構造（Jump Landing, Push-Pull）は汎用化困難
+- 今後の展開:
+  - Phase C: v1 vs v2並行検証
+  - Phase D: 段階的切り替え（Canary Deployment）
+  - v2.1: 統一配点への移行（→ ADR-023）
+- 参照:
+  - Commit: 229e8d0 (Phase A), 05f6842 (Phase B完了)
+  - Notion: 「8原則評価システム設計」
+  - test_rules_v2.json: 評価ルール完全定義
+
+## ADR-023: v2.1移行 - 560点満点統一配点システム
+- 日付: 2025-10-30
+- 決定者: Human + Claude Code
+- 状態: ✅ Accepted
+- 関連ADR: ADR-022（evaluators_v2導入）
+- コンテキスト:
+  - **v2.0システムの課題**:
+    - 種目間で点数が不統一（33点 or 36点）
+    - A評価3点では細かい評価が困難
+    - 総合234点が中途半端（7で割り切れない）
+    - 比較・分析が煩雑
+  - **統一配点の必要性**:
+    - 全7種目を同一配点（80点満点）に統一
+    - A評価を20点に拡充（より詳細な実施可否評価）
+    - 総合560点（80×7）で明快な点数体系
+    - 種目間比較の容易化
+- 決定内容:
+  - **統一配点システム（v2.1）**:
+    ```diff
+    - version: v2 (234点満点)
+    + version: v2.1 (560点満点)
+    
+    - 各テスト: 33点 or 36点（不統一）
+    + 各テスト: 80点（統一配点）
+    
+    - A評価: 3点満点
+      - A1: 1.5点, A2: 1.5点
+    + A評価: 20点満点
+      + A1: 10点, A2a: 5点, A2b: 5点, A3: 5点
+    
+    - B評価: 30点満点（Ecc: 15, Con: 15）
+    + B評価: 60点満点（Ecc: 30, Con: 30）
+    
+    - 総合: 234点満点
+    + 総合: 560点満点（80×7）
+    ```
+  - **A評価の拡充**:
+    - A1: 可動域（10点）
+    - A2a: エキセン制御（5点）
+    - A2b: コンセン制御（5点）
+    - A3: 再現性（5点）
+  - **B評価のスケーリング**:
+    - 全スコアを2倍（主評価: 5→10点, 副評価: 2.5→5点）
+    - 局面別配点: Eccentric 30点 + Concentric 30点
+    - Jump Landingのみ例外: Eccentric 60点（着地衝撃吸収のみ評価）
+- 技術詳細:
+  - **1. test_rules_v2.json更新**:
+    ```json
+    {
+      "version": "v2.1",
+      "scoring_system": {
+        "total_max_score": 560,
+        "per_test_max_score": 80,
+        "section_a": {
+          "max_score": 20,
+          "criteria": {
+            "A1": {"max_score": 5},
+            "A2a": {"max_score": 5},
+            "A2b": {"max_score": 5},
+            "A3": {"max_score": 5}
+          }
+        },
+        "section_b": {
+          "max_score": 60,
+          "eccentric_max": 30,
+          "concentric_max": 30
+        }
+      }
+    }
+    ```
+  - **2. 全7種evaluator更新**:
+    ```python
+    # 例: single_leg_squat_v2.py
+    def evaluate():
+        """
+        v2.1: 80点満点（A: 20, B: 60）
+        """
+        return {
+            'version': 'v2.1',
+            'max_possible': 80,
+            'A_execution_score': 0-20,
+            'B_total': 0-60,
+            'total_score': 0-80
+        }
+    
+    def _score_knee_flexion_depth():
+        """A1: 10点満点"""
+        if min_angle < 90: return 10.0
+        elif min_angle < 120: return 6.7
+        elif min_angle < 150: return 3.3
+        else: return 0.0
+    
+    def _evaluate_principles():
+        """B評価: 各局面30点"""
+        b1_score = self._evaluate_b1_core_stability(max_score=5.0)
+        b2_score = self._evaluate_b2_support_foundation(max_score=10.0)
+        b3_score = self._evaluate_b3_3joint_coordination(max_score=5.0)
+        b4_score = self._evaluate_b4_pelvis_horizontal(max_score=10.0)
+    ```
+  - **3. テストコード更新**:
+    ```python
+    def test_all_evaluators_total_points():
+        """全7種目合計が560点満点であることを検証"""
+        evaluators = [
+            ('single_leg_squat', SingleLegSquatEvaluatorV2(), 80),
+            ('skater_lunge', SkaterLungeEvaluatorV2(), 80),
+            # ...全7種目×80点
+        ]
+        assert total_max_score == 560
+    ```
+  - **4. 一括更新スクリプト**:
+    ```python
+    # 効率化のため、残り5種を自動更新
+    SCORE_MAPPINGS = {
+        "stride_mimic_v2.py": {
+            "old_max": 33, "new_max": 80,
+            "principles": {2.0: 4.0, 4.5: 9.0}
+        },
+        # ...
+    }
+    # 正規表現で一括置換（1.5→10, 2.5→5, 5.0→10等）
+    ```
+- 影響範囲:
+  - **修正**: 9ファイル
+    - test_rules_v2.json
+    - 全7種evaluator（*_v2.py）
+    - test_evaluators_v2_integration.py
+  - **変更規模**: 約200箇所の数値更新
+  - **破壊的変更**: なし（v1システム影響なし、v2→v2.1は互換性維持）
+- 検証結果:
+  - ✅ 全10テストパス（560点満点システム）
+  - ✅ 実データテスト: 365.0/560点（正常動作確認）
+  - ✅ JSON出力一貫性確認
+  - ✅ 空データ処理確認
+- マイグレーション戦略:
+  - **後方互換性**: なし（v2.0データは再計算必要）
+  - **移行コスト**: 低（v2.0は未本番デプロイのため既存データなし）
+  - **切り替え方法**: config.json `scoring_system.version = "v2.1"` 設定
+- 制約事項:
+  - v2.0で記録されたスコアは直接比較不可（変換係数: ×2.39が必要）
+  - 実データでの長期検証未実施（Phase C以降で実施予定）
+- 今後の展開:
+  - Phase C: 実データでの並行検証
+  - Phase D: v2.1への完全移行
+  - ダッシュボード対応（560点満点表示）
+- 参照:
+  - Commit: （本コミット）
+  - 関連Issue: v2システム統一配点化
+  - test_rules_v2.json: v2.1設定完全定義
+

@@ -1,9 +1,9 @@
 """
-Purpose: スケーターランジ評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Eccentric 15点 + Concentric 15点) = 計33点満点
+Purpose: スケーターランジ評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(20点) + B評価(60点: Eccentric 30点 + Concentric 30点) = 計80点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一
 
 CRITICAL: 8原則・局面別評価、既存v1システムとは完全分離
 """
@@ -15,18 +15,18 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
     """
-    What: スケーターランジ評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Eccentric/Concentric局面別評価
+    What: スケーターランジ評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Eccentric/Concentric局面別評価
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用
 
     評価構造:
-    - A. テスト実施の可否（3点）
-      - ステップ幅・着地安定性・転倒なし
-    - B. 8原則評価（30点）
-      - Eccentric（15点）: B1(2.0) + B2(2.0) + B3(2.0) + B4(4.5) + B7(4.5)
-      - Concentric（15点）: B1(2.0) + B2(2.0) + B3(2.0) + B4(4.5) + B7(4.5)
+    - A. テスト実施の可否（20点）
+      - A1: ステップ幅（10点）、A2: 着地安定性（10点）
+    - B. 8原則評価（60点）
+      - Eccentric（30点）: B1(4.0) + B2(4.0) + B3(4.0) + B4(9.0) + B7(9.0)
+      - Concentric（30点）: B1(4.0) + B2(4.0) + B3(4.0) + B4(9.0) + B7(9.0)
 
-    CRITICAL: 主評価（B4, B7: 各4.5点）、副評価（B1, B2, B3: 各2.0点）
+    CRITICAL: 主評価（B4, B7: 各9.0点）、副評価（B1, B2, B3: 各4.0点）
     """
 
     def __init__(self, config_path: str = 'processing/evaluators_v2/config_v2/test_rules_v2.json'):
@@ -43,19 +43,19 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         if 'test_types' in self.rules and 'skater_lunge' in self.rules['test_types']:
             self.test_config = self.rules['test_types']['skater_lunge']
         else:
-            # フォールバック
+            # フォールバック（v2.1: 560点満点システム）
             self.test_config = {
                 'test_id': 'T02',
-                'max_score': 33,
-                'section_a': {'max_score': 3},
-                'section_b': {'max_score': 30}
+                'max_score': 80,
+                'section_a': {'max_score': 20},
+                'section_b': {'max_score': 60}
             }
 
     def evaluate(self, landmarks_data: List[Dict], base_width: float,
                  shoulder_width: float = None, leg_length: float = None, **kwargs) -> Dict:
         """
-        What: スケーターランジ総合評価（v2システム）
-        Why: A評価(3点) + B評価(30点) = 33点満点
+        What: スケーターランジ総合評価（v2.1システム - 560点満点）
+        Why: A評価(20点) + B評価(60点) = 80点満点
         Design Decision: Eccentric/Concentric局面別評価
 
         Args:
@@ -67,33 +67,33 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
 
         Returns:
             Dict: {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T02_skater_lunge',
                 'timestamp': str,
-                'A_execution_score': float (0-3),
+                'A_execution_score': float (0-20),
                 'A_breakdown': Dict,
                 'B_principles': {
                     'eccentric': Dict,  # B1-B4, B7のスコア
                     'concentric': Dict  # B1-B4, B7のスコア
                 },
-                'B_total': float (0-30),
-                'total_score': float (0-33),
+                'B_total': float (0-60),
+                'total_score': float (0-80),
                 'total_percentage': int (0-100),
-                'max_possible': 33
+                'max_possible': 80
             }
 
         CRITICAL: landmarks_data空の場合はスコア0を返す
         """
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T02_skater_lunge',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -109,10 +109,10 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
 
         # 総合スコア
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T02_skater_lunge',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -121,29 +121,29 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33
+            'max_possible': 80
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
         """
-        What: A評価（テスト実施の可否、3点満点）
+        What: A評価（テスト実施の可否、20点満点）
         Why: ステップ幅・着地安定性・転倒なしを評価
         Design Decision: 横方向ステップ幅と着地時の膝安定性
 
         Returns:
             Dict: {'score': float, 'breakdown': Dict}
 
-        CRITICAL: 3点満点
+        CRITICAL: v2.1 - 20点満点
         """
         score = 0.0
         breakdown = {}
 
-        # A1: ステップ幅（1.5点）
+        # A1: ステップ幅（10点）
         step_width_score = self._score_step_width(landmarks_data, base_width)
         score += step_width_score
         breakdown['step_width'] = step_width_score
 
-        # A2: 着地安定性（1.5点）
+        # A2: 着地安定性（10点）
         landing_score = self._score_landing_stability(landmarks_data)
         score += landing_score
         breakdown['landing_stability'] = landing_score
@@ -155,7 +155,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
         """
-        What: B評価（8原則評価、30点満点）
+        What: B評価（8原則評価、60点満点）
         Why: Eccentric/Concentric局面別評価
         Design Decision: B1-B4, B7の5原則を局面別に評価
 
@@ -171,7 +171,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
                 'total': float
             }
 
-        CRITICAL: Eccentric 15点 + Concentric 15点 = 30点
+        CRITICAL: v2.1 - Eccentric 30点 + Concentric 30点 = 60点
         """
         # Eccentric局面評価
         ecc_frames = phases['eccentric']['frames']
@@ -206,7 +206,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Returns:
             Dict: {'B1_core_stability': float, 'B2_support_foundation': float, ...}
 
-        CRITICAL: Eccentric/Concentric各15点
+        CRITICAL: v2.1 - Eccentric/Concentric各30点（主評価9点×2 + 副評価4点×3）
         """
         if not landmarks_data:
             return {
@@ -217,20 +217,20 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
                 'B7_upper_lower_separation': 0.0
             }
 
-        # B1: 体幹安定性（副評価: 2.0点）
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=2.0)
+        # B1: 体幹安定性（副評価: 4.0点）
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=4.0)
 
-        # B2: 支持基盤（副評価: 2.0点）
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=2.0)
+        # B2: 支持基盤（副評価: 4.0点）
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=4.0)
 
-        # B3: 3関節連動性（副評価: 2.0点）
-        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=2.0)
+        # B3: 3関節連動性（副評価: 4.0点）
+        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=4.0)
 
-        # B4: 骨盤水平維持（主評価: 4.5点）
-        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=4.5)
+        # B4: 骨盤水平維持（主評価: 9.0点）
+        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=9.0)
 
-        # B7: 上下身分離性（主評価: 4.5点）
-        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=4.5)
+        # B7: 上下身分離性（主評価: 9.0点）
+        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=9.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -244,11 +244,11 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
 
     def _score_step_width(self, landmarks_data: List[Dict], base_width: float) -> float:
         """
-        What: ステップ幅スコア（1.5点）
+        What: ステップ幅スコア（10点）
         Why: 横方向ステップ幅を評価
         Design Decision: 左右足首の横方向移動距離
 
-        CRITICAL: 1.5点満点
+        CRITICAL: v2.1 - 10点満点（A1評価）
         """
         step_widths = []
 
@@ -269,28 +269,28 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
                 step_widths.append(step_width)
 
         if not step_widths:
-            return 0.5  # デフォルト
+            return 3.3  # デフォルト
 
         avg_step_width = np.mean(step_widths)
         normalized_width = avg_step_width / base_width if base_width > 0 else 0
 
-        # スコアリング
+        # スコアリング（v2.1: 10点満点）
         if normalized_width > 0.8:
-            return 1.5
+            return 10.0
         elif normalized_width > 0.6:
-            return 1.0
+            return 6.7
         elif normalized_width > 0.4:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_landing_stability(self, landmarks_data: List[Dict]) -> float:
         """
-        What: 着地安定性スコア（1.5点）
+        What: 着地安定性スコア（10点）
         Why: 着地時の膝・足首の安定性を評価
         Design Decision: 膝角度の変動を評価
 
-        CRITICAL: 1.5点満点
+        CRITICAL: v2.1 - 10点満点（A2評価）
         """
         knee_angles = []
 
@@ -301,18 +301,18 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
                 knee_angles.append(angle)
 
         if not knee_angles:
-            return 0.5  # デフォルト
+            return 3.3  # デフォルト
 
         # 膝角度の標準偏差（安定性指標）
         std_dev = np.std(knee_angles)
 
-        # スコアリング
+        # スコアリング（v2.1: 10点満点）
         if std_dev < 10:
-            return 1.5
+            return 10.0
         elif std_dev < 20:
-            return 1.0
+            return 6.7
         elif std_dev < 30:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
@@ -324,7 +324,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Why: 体幹の揺れ・回旋を評価
         Design Decision: 体幹回旋角度と肩の高低差
 
-        CRITICAL: max_score点満点（副評価: 2.0点）
+        CRITICAL: v2.1 - max_score点満点（副評価: 4.0点）
         """
         trunk_rotations = []
         shoulder_diffs = []
@@ -365,7 +365,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Why: 支持脚の安定性を評価
         Design Decision: 膝角度の安定性（標準偏差）
 
-        CRITICAL: max_score点満点（副評価: 2.0点）
+        CRITICAL: v2.1 - max_score点満点（副評価: 4.0点）
         """
         knee_angles = []
 
@@ -395,7 +395,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Why: 股・膝・足関節の協調動作を評価
         Design Decision: 股関節と膝関節の角度変化パターン
 
-        CRITICAL: max_score点満点（副評価: 2.0点）
+        CRITICAL: v2.1 - max_score点満点（副評価: 4.0点）
         """
         hip_angles = []
         knee_angles = []
@@ -436,7 +436,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Why: 骨盤の左右高低差を評価
         Design Decision: 左右腰の高低差
 
-        CRITICAL: max_score点満点（主評価: 4.5点）
+        CRITICAL: v2.1 - max_score点満点（主評価: 9.0点）
         """
         hip_diffs = []
 
@@ -468,7 +468,7 @@ class SkaterLungeEvaluatorV2(BaseEvaluatorV2):
         Why: 上半身と下半身の独立動作を評価
         Design Decision: 体幹回旋と骨盤回旋の差
 
-        CRITICAL: max_score点満点（主評価: 4.5点）
+        CRITICAL: v2.1 - max_score点満点（主評価: 9.0点）
         """
         separation_angles = []
 

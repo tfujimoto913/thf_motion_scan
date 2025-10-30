@@ -1,9 +1,9 @@
 """
-Purpose: ストライド模倣評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Eccentric 15点 + Concentric 15点) = 計33点満点
+Purpose: Stride Mimic評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(20点) + B評価(60点: Eccentric 30点 + Concentric 30点) = 計80点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一
 
 CRITICAL: 8原則・局面別評価、既存v1システムとは完全分離
 """
@@ -15,16 +15,16 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class StrideMimicEvaluatorV2(BaseEvaluatorV2):
     """
-    What: ストライド模倣評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Eccentric/Concentric局面別評価
+    What: Stride Mimic評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Eccentric/Concentric局面別評価
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用
 
     評価構造:
     - A. テスト実施の可否（3点）
       - ストライド長・股関節伸展・完遂回数
     - B. 8原則評価（30点）
-      - Eccentric（15点）: B1(2.0) + B2(2.0) + B3(4.5) + B6(2.0) + B7(4.5)
-      - Concentric（15点）: B1(2.0) + B2(2.0) + B3(4.5) + B6(2.0) + B7(4.5)
+      - Eccentric（30点）: B1(2.0) + B2(2.0) + B3(4.5) + B6(2.0) + B7(4.5)
+      - Concentric（30点）: B1(2.0) + B2(2.0) + B3(4.5) + B6(2.0) + B7(4.5)
 
     CRITICAL: 主評価（B3, B7: 各4.5点）、副評価（B1, B2, B6: 各2.0点）
     """
@@ -42,14 +42,14 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
         """総合評価"""
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T03_stride_mimic',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -59,10 +59,10 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
         section_b_result = self._evaluate_section_b(landmarks_data, phases, base_width)
 
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T03_stride_mimic',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -71,11 +71,11 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33
+            'max_possible': 80
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
-        """A評価（3点満点）"""
+        """A評価（20点満点）"""
         score = 0.0
         breakdown = {}
 
@@ -90,7 +90,7 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
         return {'score': round(score, 1), 'breakdown': breakdown}
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
-        """B評価（30点満点）"""
+        """B評価（60点満点）"""
         ecc_frames = phases['eccentric']['frames']
         ecc_data = [landmarks_data[i] for i in ecc_frames if i < len(landmarks_data)]
         ecc_scores = self._evaluate_principles(ecc_data, 'eccentric', base_width)
@@ -113,11 +113,11 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
                 'B7_upper_lower_separation': 0.0
             }
 
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=2.0)
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=2.0)
-        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=4.5)
-        b6_score = self._evaluate_b6_posterior_chain(landmarks_data, max_score=2.0)
-        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=4.5)
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=4.0)
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=4.0)
+        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=9.0)
+        b6_score = self._evaluate_b6_posterior_chain(landmarks_data, max_score=4.0)
+        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=9.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -130,7 +130,7 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
     # ==================== A評価ヘルパーメソッド ====================
 
     def _score_stride_length(self, landmarks_data: List[Dict], base_width: float) -> float:
-        """ストライド長スコア（1.5点）"""
+        """ストライド長スコア（10点）"""
         stride_lengths = []
         for i in range(1, len(landmarks_data)):
             prev = landmarks_data[i-1]
@@ -148,22 +148,22 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
                 stride_lengths.append(stride_length)
 
         if not stride_lengths:
-            return 0.5
+            return 3.3
 
         avg_stride = np.mean(stride_lengths)
         normalized_stride = avg_stride / base_width if base_width > 0 else 0
 
         if normalized_stride > 1.0:
-            return 1.5
+            return 10.0
         elif normalized_stride > 0.7:
-            return 1.0
+            return 6.7
         elif normalized_stride > 0.5:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_hip_extension(self, landmarks_data: List[Dict]) -> float:
-        """股関節伸展スコア（1.5点）"""
+        """股関節伸展スコア（10点）"""
         hip_angles = []
         for frame_data in landmarks_data:
             angle = self._calculate_hip_angle(frame_data, side='right')
@@ -171,15 +171,15 @@ class StrideMimicEvaluatorV2(BaseEvaluatorV2):
                 hip_angles.append(angle)
 
         if not hip_angles:
-            return 0.5
+            return 3.3
 
         max_hip_angle = max(hip_angles)
         if max_hip_angle > 170:
-            return 1.5
+            return 10.0
         elif max_hip_angle > 160:
-            return 1.0
+            return 6.7
         elif max_hip_angle > 150:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 

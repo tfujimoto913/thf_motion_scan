@@ -1,9 +1,9 @@
 """
-Purpose: 片脚スタンススクワット評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Eccentric 15点 + Concentric 15点) = 計33点満点
+Purpose: 片脚スタンススクワット評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(20点) + B評価(60点: Eccentric 30点 + Concentric 30点) = 計80点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一
 
 CRITICAL: 8原則・局面別評価、既存v1システムとは完全分離
 """
@@ -15,18 +15,18 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
     """
-    What: 片脚スタンススクワット評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Eccentric/Concentric局面別評価
+    What: 片脚スタンススクワット評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Eccentric/Concentric局面別評価
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用
 
     評価構造:
-    - A. テスト実施の可否（3点）
-      - セットアップ・深さ・安全性
-    - B. 8原則評価（30点）
-      - Eccentric（15点）: B1(2.5) + B2(5.0) + B3(2.5) + B4(5.0)
-      - Concentric（15点）: B1(2.5) + B2(5.0) + B3(2.5) + B4(5.0)
+    - A. テスト実施の可否（20点）
+      - A1: 可動域（10点）、A2: 完遂（10点）
+    - B. 8原則評価（60点）
+      - Eccentric（30点）: B1(5.0) + B2(10.0) + B3(5.0) + B4(10.0)
+      - Concentric（30点）: B1(5.0) + B2(10.0) + B3(5.0) + B4(10.0)
 
-    CRITICAL: 主評価（B2, B4: 各5点）、副評価（B1, B3: 各2.5点）
+    CRITICAL: 主評価（B2, B4: 各10点）、副評価（B1, B3: 各5点）
     """
 
     def __init__(self, config_path: str = 'processing/evaluators_v2/config_v2/test_rules_v2.json'):
@@ -43,19 +43,19 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         if 'test_types' in self.rules and 'single_leg_squat' in self.rules['test_types']:
             self.test_config = self.rules['test_types']['single_leg_squat']
         else:
-            # フォールバック
+            # フォールバック（v2.1: 560点満点システム）
             self.test_config = {
                 'test_id': 'T01',
-                'max_score': 33,
-                'section_a': {'max_score': 3},
-                'section_b': {'max_score': 30}
+                'max_score': 80,
+                'section_a': {'max_score': 20},
+                'section_b': {'max_score': 60}
             }
 
     def evaluate(self, landmarks_data: List[Dict], base_width: float,
                  shoulder_width: float = None, leg_length: float = None, **kwargs) -> Dict:
         """
-        What: 片脚スタンススクワット総合評価（v2システム）
-        Why: A評価(3点) + B評価(30点) = 33点満点
+        What: 片脚スタンススクワット総合評価（v2.1システム - 560点満点）
+        Why: A評価(20点) + B評価(60点) = 80点満点
         Design Decision: Eccentric/Concentric局面別評価
 
         Args:
@@ -67,33 +67,33 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
         Returns:
             Dict: {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T01_single_leg_squat',
                 'timestamp': str,
-                'A_execution_score': float (0-3),
+                'A_execution_score': float (0-20),
                 'A_breakdown': Dict,
                 'B_principles': {
                     'eccentric': Dict,  # B1-B4のスコア
                     'concentric': Dict  # B1-B4のスコア
                 },
-                'B_total': float (0-30),
-                'total_score': float (0-33),
+                'B_total': float (0-60),
+                'total_score': float (0-80),
                 'total_percentage': int (0-100),
-                'max_possible': 33
+                'max_possible': 80
             }
 
         CRITICAL: landmarks_data空の場合はスコア0を返す
         """
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T01_single_leg_squat',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -109,10 +109,10 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
         # 総合スコア
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T01_single_leg_squat',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -121,29 +121,29 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33
+            'max_possible': 80
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
         """
-        What: A評価（テスト実施の可否、3点満点）
+        What: A評価（テスト実施の可否、20点満点）
         Why: セットアップ・深さ・安全性を評価
-        Design Decision: 既存v1の評価ロジックを参考
+        Design Decision: v2.1で20点満点に統一
 
         Returns:
             Dict: {'score': float, 'breakdown': Dict}
 
-        CRITICAL: 3点満点
+        CRITICAL: 20点満点（各項目10点×2）
         """
         score = 0.0
         breakdown = {}
 
-        # A1: 膝屈曲深さ（1.5点）
+        # A1: 膝屈曲深さ（10点）
         knee_flexion_score = self._score_knee_flexion_depth(landmarks_data)
         score += knee_flexion_score
         breakdown['knee_flexion_angle'] = knee_flexion_score
 
-        # A2: 完遂回数（1.5点）
+        # A2: 完遂回数（10点）
         completion_score = self._score_completion(landmarks_data)
         score += completion_score
         breakdown['completion_reps'] = completion_score
@@ -155,7 +155,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
         """
-        What: B評価（8原則評価、30点満点）
+        What: B評価（8原則評価、60点満点）
         Why: Eccentric/Concentric局面別評価
         Design Decision: B1-B4の4原則を局面別に評価
 
@@ -171,7 +171,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
                 'total': float
             }
 
-        CRITICAL: Eccentric 15点 + Concentric 15点 = 30点
+        CRITICAL: v2.1 - Eccentric 30点 + Concentric 30点 = 60点
         """
         # Eccentric局面評価
         ecc_frames = phases['eccentric']['frames']
@@ -206,7 +206,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         Returns:
             Dict: {'B1_core_stability': float, 'B2_support_foundation': float, ...}
 
-        CRITICAL: Eccentric/Concentric各15点
+        CRITICAL: v2.1 - Eccentric/Concentric各30点（主評価10点×2 + 副評価5点×2）
         """
         if not landmarks_data:
             return {
@@ -216,17 +216,17 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
                 'B4_pelvis_horizontal': 0.0
             }
 
-        # B1: 体幹安定性（副評価: 2.5点）
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=2.5)
+        # B1: 体幹安定性（副評価: 5.0点）
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=5.0)
 
-        # B2: 支持基盤（主評価: 5.0点）
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=5.0)
+        # B2: 支持基盤（主評価: 10.0点）
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=10.0)
 
-        # B3: 3関節連動性（副評価: 2.5点）
-        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=2.5)
+        # B3: 3関節連動性（副評価: 5.0点）
+        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=5.0)
 
-        # B4: 骨盤水平維持（主評価: 5.0点）
-        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=5.0)
+        # B4: 骨盤水平維持（主評価: 10.0点）
+        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=10.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -239,11 +239,11 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
     def _score_knee_flexion_depth(self, landmarks_data: List[Dict]) -> float:
         """
-        What: 膝屈曲深さスコア（1.5点）
+        What: 膝屈曲深さスコア（10点）
         Why: テスト実施の完全性を評価
         Design Decision: 最小膝角度で評価
 
-        CRITICAL: 1.5点満点
+        CRITICAL: v2.1 - 10点満点（A1評価）
         """
         knee_angles = []
         for frame_data in landmarks_data:
@@ -256,34 +256,34 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
         min_angle = min(knee_angles)
 
-        # スコアリング（v1と同様のロジック）
+        # スコアリング（v2.1: 10点満点）
         if min_angle < 90:
-            return 1.5
+            return 10.0
         elif min_angle < 120:
-            return 1.0
+            return 6.7
         elif min_angle < 150:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_completion(self, landmarks_data: List[Dict]) -> float:
         """
-        What: 完遂回数スコア（1.5点）
+        What: 完遂回数スコア（10点）
         Why: テスト実施の完全性を評価
         Design Decision: フレーム数から完遂回数を推定
 
-        CRITICAL: 1.5点満点
+        CRITICAL: v2.1 - 10点満点（A2評価）
         """
         # 簡易実装: フレーム数から完遂回数を推定
         # 通常1回のスクワット = 約3秒 = 180フレーム（60fps想定）
         estimated_reps = len(landmarks_data) / 180
 
         if estimated_reps >= 3:
-            return 1.5
+            return 10.0
         elif estimated_reps >= 2:
-            return 1.0
+            return 6.7
         elif estimated_reps >= 1:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
@@ -295,7 +295,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         Why: 体幹の揺れ・回旋を評価
         Design Decision: 体幹回旋角度と肩の高低差
 
-        CRITICAL: max_score点満点（副評価: 2.5点）
+        CRITICAL: v2.1 - max_score点満点（副評価: 5.0点）
         """
         trunk_rotations = []
         shoulder_diffs = []
@@ -338,7 +338,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         Why: 支持脚の安定性を評価
         Design Decision: 膝角度の安定性（標準偏差）
 
-        CRITICAL: max_score点満点（主評価: 5.0点）
+        CRITICAL: v2.1 - max_score点満点（主評価: 10.0点）
         """
         knee_angles = []
 
@@ -371,7 +371,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         Why: 股・膝・足関節の協調動作を評価
         Design Decision: 股関節と膝関節の角度変化パターン
 
-        CRITICAL: max_score点満点（副評価: 2.5点）
+        CRITICAL: v2.1 - max_score点満点（副評価: 5.0点）
         """
         hip_angles = []
         knee_angles = []
@@ -414,7 +414,7 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         Why: 骨盤の左右高低差を評価
         Design Decision: 左右腰の高低差
 
-        CRITICAL: max_score点満点（主評価: 5.0点）
+        CRITICAL: v2.1 - max_score点満点（主評価: 10.0点）
         """
         hip_diffs = []
 

@@ -1,9 +1,9 @@
 """
-Purpose: ジャンプ着地評価ロジック（v2: 8原則・237点満点システム）
+Purpose: Jump Landing評価ロジック（v2.1: 8原則・560点満点システム）
 Responsibility: A評価(3点) + B評価(33点: Eccentricのみ) = 計36点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装、Eccentricのみ評価（特殊構造）
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一、Eccentricのみ評価（特殊構造）
 
 CRITICAL: 8原則・Eccentricのみ評価、B2支持基盤・B6後方筋群が主評価
 """
@@ -35,21 +35,21 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
         if 'test_types' in self.rules and 'jump_landing' in self.rules['test_types']:
             self.test_config = self.rules['test_types']['jump_landing']
         else:
-            self.test_config = {'test_id': 'T04', 'max_score': 36}
+            self.test_config = {'test_id': 'T04', 'max_score': 80}
 
     def evaluate(self, landmarks_data: List[Dict], base_width: float,
                  shoulder_width: float = None, leg_length: float = None, **kwargs) -> Dict:
         """総合評価"""
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T04_jump_landing',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 36,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -59,10 +59,10 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
         section_b_result = self._evaluate_section_b(landmarks_data, phases, base_width)
 
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 36) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T04_jump_landing',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -71,12 +71,12 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 36,
-            'special_structure': 'eccentric_only'
+            'max_possible': 80,
+            'special_structure': 'eccentric_focus'
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
-        """A評価（3点満点）"""
+        """A評価（60点満点）"""
         score = 0.0
         breakdown = {}
 
@@ -91,7 +91,7 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
         return {'score': round(score, 1), 'breakdown': breakdown}
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
-        """B評価（33点満点: Eccentricのみ）"""
+        """B評価（360点満点: Eccentricのみ）"""
         ecc_frames = phases['eccentric']['frames']
         ecc_data = [landmarks_data[i] for i in ecc_frames if i < len(landmarks_data)]
         ecc_scores = self._evaluate_principles(ecc_data, 'eccentric', base_width)
@@ -127,7 +127,7 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
     # ==================== A評価ヘルパーメソッド ====================
 
     def _score_jump_height(self, landmarks_data: List[Dict], base_width: float) -> float:
-        """ジャンプ高スコア（1.5点）"""
+        """ジャンプ高スコア（10点）"""
         hip_heights = []
         for frame_data in landmarks_data:
             left_hip = self._get_landmark(frame_data, self.LEFT_HIP)
@@ -137,7 +137,7 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
                 hip_heights.append(avg_hip_y)
 
         if not hip_heights:
-            return 0.5
+            return 3.3
 
         # ジャンプ高 = 最低点と最高点の差
         min_hip_height = min(hip_heights)
@@ -148,23 +148,23 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
         normalized_height = jump_height / base_width if base_width > 0 else 0
 
         if normalized_height > 0.6:
-            return 1.5
+            return 10.0
         elif normalized_height > 0.4:
-            return 1.0
+            return 6.7
         elif normalized_height > 0.2:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_landing_balance(self, landmarks_data: List[Dict]) -> float:
-        """着地バランススコア（1.5点）"""
+        """着地バランススコア（10点）"""
         # 着地後の腰の高さの安定性を評価
         # 後半30%のフレームを着地後とみなす
         landing_start = int(len(landmarks_data) * 0.7)
         landing_frames = landmarks_data[landing_start:]
 
         if not landing_frames:
-            return 0.5
+            return 3.3
 
         hip_heights = []
         for frame_data in landing_frames:
@@ -175,16 +175,16 @@ class JumpLandingEvaluatorV2(BaseEvaluatorV2):
                 hip_heights.append(avg_hip_y)
 
         if not hip_heights:
-            return 0.5
+            return 3.3
 
         # 高さの標準偏差（小さいほど安定）
         std_dev = np.std(hip_heights)
         if std_dev < 0.02:
-            return 1.5
+            return 10.0
         elif std_dev < 0.05:
-            return 1.0
+            return 6.7
         elif std_dev < 0.10:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 

@@ -1,9 +1,9 @@
 """
-Purpose: プッシュ・プル評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Pull 15点 + Push 15点) = 計33点満点
+Purpose: Push Pull評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(3点) + B評価(30点: Pull 30点 + Push 30点) = 計320点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装、Pull/Push局面別評価（特殊構造）
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一、Pull/Push局面別評価（特殊構造）
 
 CRITICAL: 8原則・Pull/Push局面別評価、B7上下身分離・B8肩周り独立制御が主評価
 """
@@ -15,16 +15,16 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class PushPullEvaluatorV2(BaseEvaluatorV2):
     """
-    What: プッシュ・プル評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Pull/Push局面別評価（特殊構造）
+    What: Push Pull評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Pull/Push局面別評価（特殊構造）
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用、B7・B8主評価
 
     評価構造:
     - A. テスト実施の可否（3点）
       - プル距離・プッシュ角度・完遂回数
     - B. 8原則評価（30点）
-      - Pull局面（15点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
-      - Push局面（15点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
+      - Pull局面（30点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
+      - Push局面（30点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
 
     CRITICAL: 主評価（B7, B8: 各4.5点）、副評価（B1, B2: 各3.0点）
     """
@@ -42,14 +42,14 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
         """総合評価"""
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T06_push_pull',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -59,10 +59,10 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
         section_b_result = self._evaluate_section_b(landmarks_data, phases, base_width)
 
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T06_push_pull',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -71,12 +71,12 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33,
+            'max_possible': 80,
             'special_structure': 'pull_push_separate'
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
-        """A評価（3点満点）"""
+        """A評価（20点満点）"""
         score = 0.0
         breakdown = {}
 
@@ -91,7 +91,7 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
         return {'score': round(score, 1), 'breakdown': breakdown}
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
-        """B評価（30点満点: Pull + Push）"""
+        """B評価（60点満点: Pull + Push）"""
         pull_frames = phases['pull']['frames']
         pull_data = [landmarks_data[i] for i in pull_frames if i < len(landmarks_data)]
         pull_scores = self._evaluate_principles(pull_data, 'pull', base_width)
@@ -113,10 +113,10 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
                 'B8_shoulder_independent_control': 0.0
             }
 
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=3.0)
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=3.0)
-        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=4.5)
-        b8_score = self._evaluate_b8_shoulder_independent_control(landmarks_data, max_score=4.5)
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=6.0)
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=6.0)
+        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=9.0)
+        b8_score = self._evaluate_b8_shoulder_independent_control(landmarks_data, max_score=9.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -128,7 +128,7 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
     # ==================== A評価ヘルパーメソッド ====================
 
     def _score_pull_distance(self, landmarks_data: List[Dict], base_width: float) -> float:
-        """プル距離スコア（1.5点）"""
+        """プル距離スコア（10点）"""
         wrist_movements = []
         for i in range(1, len(landmarks_data)):
             prev = landmarks_data[i-1]
@@ -146,22 +146,22 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
                 wrist_movements.append(max(left_move, right_move))
 
         if not wrist_movements:
-            return 0.5
+            return 3.3
 
         max_movement = max(wrist_movements)
         normalized_movement = max_movement / base_width if base_width > 0 else 0
 
         if normalized_movement > 0.7:
-            return 1.5
+            return 10.0
         elif normalized_movement > 0.5:
-            return 1.0
+            return 6.7
         elif normalized_movement > 0.3:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_push_angle(self, landmarks_data: List[Dict]) -> float:
-        """プッシュ角度スコア（1.5点）"""
+        """プッシュ角度スコア（10点）"""
         elbow_angles = []
         for frame_data in landmarks_data:
             # 肘伸展角度（プッシュの質）
@@ -172,15 +172,15 @@ class PushPullEvaluatorV2(BaseEvaluatorV2):
                 elbow_angles.append(avg_angle)
 
         if not elbow_angles:
-            return 0.5
+            return 3.3
 
         max_elbow_angle = max(elbow_angles)
         if max_elbow_angle > 160:  # ほぼ完全伸展
-            return 1.5
+            return 10.0
         elif max_elbow_angle > 140:
-            return 1.0
+            return 6.7
         elif max_elbow_angle > 120:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 

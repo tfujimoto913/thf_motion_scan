@@ -1,9 +1,9 @@
 """
-Purpose: 上体スイング評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Eccentric 15点 + Concentric 15点) = 計33点満点
+Purpose: Upper Body Swing評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(20点) + B評価(60点: Eccentric 30点 + Concentric 30点) = 計80点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装、B8肩周り独立制御主評価
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一、B8肩周り独立制御主評価
 
 CRITICAL: 8原則・局面別評価、B8初の主評価実装
 """
@@ -15,16 +15,16 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
     """
-    What: 上体スイング評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Eccentric/Concentric局面別評価
+    What: Upper Body Swing評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Eccentric/Concentric局面別評価
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用、B8主評価
 
     評価構造:
     - A. テスト実施の可否（3点）
       - 腕振幅・バランス・完遂回数
     - B. 8原則評価（30点）
-      - Eccentric（15点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
-      - Concentric（15点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
+      - Eccentric（30点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
+      - Concentric（30点）: B1(3.0) + B2(3.0) + B7(4.5) + B8(4.5)
 
     CRITICAL: 主評価（B7, B8: 各4.5点）、副評価（B1, B2: 各3.0点）
     """
@@ -42,14 +42,14 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
         """総合評価"""
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T05_upper_body_swing',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -59,10 +59,10 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
         section_b_result = self._evaluate_section_b(landmarks_data, phases, base_width)
 
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T05_upper_body_swing',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -71,11 +71,11 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33
+            'max_possible': 80
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
-        """A評価（3点満点）"""
+        """A評価（20点満点）"""
         score = 0.0
         breakdown = {}
 
@@ -90,7 +90,7 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
         return {'score': round(score, 1), 'breakdown': breakdown}
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
-        """B評価（30点満点）"""
+        """B評価（60点満点）"""
         ecc_frames = phases['eccentric']['frames']
         ecc_data = [landmarks_data[i] for i in ecc_frames if i < len(landmarks_data)]
         ecc_scores = self._evaluate_principles(ecc_data, 'eccentric', base_width)
@@ -112,10 +112,10 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
                 'B8_shoulder_independent_control': 0.0
             }
 
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=3.0)
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=3.0)
-        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=4.5)
-        b8_score = self._evaluate_b8_shoulder_independent_control(landmarks_data, max_score=4.5)
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=6.0)
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=6.0)
+        b7_score = self._evaluate_b7_upper_lower_separation(landmarks_data, max_score=9.0)
+        b8_score = self._evaluate_b8_shoulder_independent_control(landmarks_data, max_score=9.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -127,7 +127,7 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
     # ==================== A評価ヘルパーメソッド ====================
 
     def _score_arm_swing_amplitude(self, landmarks_data: List[Dict], base_width: float) -> float:
-        """腕振幅スコア（1.5点）"""
+        """腕振幅スコア（10点）"""
         wrist_movements = []
         for i in range(1, len(landmarks_data)):
             prev = landmarks_data[i-1]
@@ -143,22 +143,22 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
                 wrist_movements.append(max(left_move, right_move))
 
         if not wrist_movements:
-            return 0.5
+            return 3.3
 
         max_movement = max(wrist_movements)
         normalized_movement = max_movement / base_width if base_width > 0 else 0
 
         if normalized_movement > 0.8:
-            return 1.5
+            return 10.0
         elif normalized_movement > 0.6:
-            return 1.0
+            return 6.7
         elif normalized_movement > 0.4:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_balance(self, landmarks_data: List[Dict]) -> float:
-        """バランススコア（1.5点）"""
+        """バランススコア（10点）"""
         hip_diffs = []
         for frame_data in landmarks_data:
             hip_diff = self._calculate_hip_height_diff(frame_data)
@@ -166,15 +166,15 @@ class UpperBodySwingEvaluatorV2(BaseEvaluatorV2):
                 hip_diffs.append(hip_diff)
 
         if not hip_diffs:
-            return 0.5
+            return 3.3
 
         avg_hip_diff = np.mean(hip_diffs)
         if avg_hip_diff < 0.05:
-            return 1.5
+            return 10.0
         elif avg_hip_diff < 0.10:
-            return 1.0
+            return 6.7
         elif avg_hip_diff < 0.15:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 

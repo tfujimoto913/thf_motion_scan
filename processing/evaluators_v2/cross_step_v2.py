@@ -1,9 +1,9 @@
 """
-Purpose: クロスステップ評価ロジック（v2: 8原則・237点満点システム）
-Responsibility: A評価(3点) + B評価(30点: Eccentric 15点 + Concentric 15点) = 計33点満点
+Purpose: Cross Step評価ロジック（v2.1: 8原則・560点満点システム）
+Responsibility: A評価(20点) + B評価(60点: Eccentric 30点 + Concentric 30点) = 計80点満点
 Dependencies: base_evaluator_v2.py, test_rules_v2.json
 Created: 2025-10-30 by Claude
-Decision Log: Phase B - 8原則評価システム実装、B5重心移動主評価
+Decision Log: Phase B - 8原則評価システム実装, v2.1 - 560点満点統一、B5重心移動主評価
 
 CRITICAL: 8原則・局面別評価、B5初の主評価実装
 """
@@ -15,16 +15,16 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 
 class CrossStepEvaluatorV2(BaseEvaluatorV2):
     """
-    What: クロスステップ評価クラス（v2: 8原則・33点満点）
-    Why: A評価(3点) + B評価(30点) = 33点満点、Eccentric/Concentric局面別評価
+    What: Cross Step評価クラス（v2.1: 8原則・80点満点）
+    Why: A評価(20点) + B評価(60点) = 80点満点、Eccentric/Concentric局面別評価
     Design Decision: BaseEvaluatorV2継承、test_rules_v2.json使用、B5主評価
 
     評価構造:
     - A. テスト実施の可否（3点）
       - ステップ幅・膝屈曲・完遂回数
     - B. 8原則評価（30点）
-      - Eccentric（15点）: B1(2.0) + B2(2.0) + B3(4.5) + B4(2.0) + B5(4.5)
-      - Concentric（15点）: B1(2.0) + B2(2.0) + B3(4.5) + B4(2.0) + B5(4.5)
+      - Eccentric（30点）: B1(2.0) + B2(2.0) + B3(4.5) + B4(2.0) + B5(4.5)
+      - Concentric（30点）: B1(2.0) + B2(2.0) + B3(4.5) + B4(2.0) + B5(4.5)
 
     CRITICAL: 主評価（B3, B5: 各4.5点）、副評価（B1, B2, B4: 各2.0点）
     """
@@ -42,14 +42,14 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
         """総合評価"""
         if not landmarks_data:
             return {
-                'version': 'v2',
+                'version': 'v2.1',
                 'test_id': 'T07_cross_step',
                 'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'A_execution_score': 0.0,
                 'B_total': 0.0,
                 'total_score': 0.0,
                 'total_percentage': 0,
-                'max_possible': 33,
+                'max_possible': 80,
                 'details': '姿勢が検出できませんでした'
             }
 
@@ -59,10 +59,10 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
         section_b_result = self._evaluate_section_b(landmarks_data, phases, base_width)
 
         total_score = section_a_result['score'] + section_b_result['total']
-        total_percentage = int((total_score / 33) * 100)
+        total_percentage = int((total_score / 80) * 100)
 
         return {
-            'version': 'v2',
+            'version': 'v2.1',
             'test_id': 'T07_cross_step',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'A_execution_score': section_a_result['score'],
@@ -71,11 +71,11 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
             'B_total': section_b_result['total'],
             'total_score': round(total_score, 1),
             'total_percentage': total_percentage,
-            'max_possible': 33
+            'max_possible': 80
         }
 
     def _evaluate_section_a(self, landmarks_data: List[Dict], base_width: float) -> Dict:
-        """A評価（3点満点）"""
+        """A評価（20点満点）"""
         score = 0.0
         breakdown = {}
 
@@ -90,7 +90,7 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
         return {'score': round(score, 1), 'breakdown': breakdown}
 
     def _evaluate_section_b(self, landmarks_data: List[Dict], phases: Dict, base_width: float) -> Dict:
-        """B評価（30点満点）"""
+        """B評価（60点満点）"""
         ecc_frames = phases['eccentric']['frames']
         ecc_data = [landmarks_data[i] for i in ecc_frames if i < len(landmarks_data)]
         ecc_scores = self._evaluate_principles(ecc_data, 'eccentric', base_width)
@@ -113,11 +113,11 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
                 'B5_weight_shift': 0.0
             }
 
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=2.0)
-        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=2.0)
-        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=4.5)
-        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=2.0)
-        b5_score = self._evaluate_b5_weight_shift(landmarks_data, max_score=4.5)
+        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=4.0)
+        b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=4.0)
+        b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=9.0)
+        b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=4.0)
+        b5_score = self._evaluate_b5_weight_shift(landmarks_data, max_score=9.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
@@ -130,7 +130,7 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
     # ==================== A評価ヘルパーメソッド ====================
 
     def _score_step_width(self, landmarks_data: List[Dict], base_width: float) -> float:
-        """ステップ幅スコア（1.5点）"""
+        """ステップ幅スコア（10点）"""
         step_widths = []
         for i in range(1, len(landmarks_data)):
             prev = landmarks_data[i-1]
@@ -148,22 +148,22 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
                 step_widths.append(step_width)
 
         if not step_widths:
-            return 0.5
+            return 3.3
 
         avg_step_width = np.mean(step_widths)
         normalized_width = avg_step_width / base_width if base_width > 0 else 0
 
         if normalized_width > 0.8:
-            return 1.5
+            return 10.0
         elif normalized_width > 0.6:
-            return 1.0
+            return 6.7
         elif normalized_width > 0.4:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
     def _score_knee_flexion(self, landmarks_data: List[Dict]) -> float:
-        """膝屈曲スコア（1.5点）"""
+        """膝屈曲スコア（10点）"""
         knee_angles = []
         for frame_data in landmarks_data:
             angle = self._calculate_knee_angle(frame_data, side='right')
@@ -171,15 +171,15 @@ class CrossStepEvaluatorV2(BaseEvaluatorV2):
                 knee_angles.append(angle)
 
         if not knee_angles:
-            return 0.5
+            return 3.3
 
         min_knee_angle = min(knee_angles)
         if min_knee_angle < 90:
-            return 1.5
+            return 10.0
         elif min_knee_angle < 120:
-            return 1.0
+            return 6.7
         elif min_knee_angle < 150:
-            return 0.5
+            return 3.3
         else:
             return 0.0
 
