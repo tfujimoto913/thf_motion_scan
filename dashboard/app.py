@@ -339,11 +339,11 @@ def get_previous_result(df: pd.DataFrame, video_id: str, test_type: str) -> Opti
 
 def show_result_detail(df: pd.DataFrame, video_id: str):
     """
-    What: 詳細結果表示（84点満点対応版）
+    What: 詳細結果表示（v2.1: 80点満点対応版）
     Why: 選択された動画の評価結果詳細を表示
-    Design Decision: 種目ごとの評価原則のみ表示、12点満点×7種目=84点満点
+    Design Decision: v2.1システム（80点満点 = Section A 20点 + Section B 60点）
 
-    CRITICAL: evaluation フィールドの構造に依存
+    CRITICAL: evaluation フィールドの構造に依存（v2.1形式）
     """
     # 該当行取得
     row = df[df['video_id'] == video_id].iloc[0]
@@ -354,24 +354,38 @@ def show_result_detail(df: pd.DataFrame, video_id: str):
     st.markdown(f"## {test_name}")
     st.markdown("---")
 
-    # === 総合スコア（12点満点） ===
-    # NOTE: 現在のdemo_dataは古い3点満点システムなので、仮のロジックで12点満点を表示
-    # 実際のDynamoDBデータでは evaluation フィールドから execution_score と principles_score を取得
+    # === 総合スコア（80点満点） ===
+    # v2.1データ構造:
+    # {
+    #   'A_execution_score': 20点満点,
+    #   'B_total': 60点満点,
+    #   'B_principles': {'eccentric': {...}, 'concentric': {...}},
+    #   'total_score': 80点満点
+    # }
 
-    # 仮実装: score を 4倍して 12点満点換算（デモデータが3点満点のため）
     if 'evaluation' in row and isinstance(row['evaluation'], dict):
-        # 新しいデータ構造の場合
         evaluation = row['evaluation']
-        execution_score = evaluation.get('execution', {}).get('total', 0.0)
-        principles_score = evaluation.get('principles', {}).get('total', 0.0)
-        total_score = execution_score + principles_score
-    else:
-        # 古いデモデータの場合：3点満点を12点満点に換算
-        total_score = row['score'] * 4.0
-        execution_score = total_score * 0.25  # 仮: 25%を完全性とする
-        principles_score = total_score * 0.75  # 仮: 75%を7原則とする
 
-    percentage = (total_score / 12.0) * 100
+        # v2.1データの場合
+        if 'version' in evaluation and evaluation['version'] == 'v2.1':
+            total_score = evaluation.get('total_score', 0.0)
+            execution_score = evaluation.get('A_execution_score', 0.0)  # Section A: 20点
+            principles_score = evaluation.get('B_total', 0.0)           # Section B: 60点
+            max_score = 80.0
+        # 旧v1データの場合（12点満点）
+        else:
+            execution_score = evaluation.get('execution', {}).get('total', 0.0)
+            principles_score = evaluation.get('principles', {}).get('total', 0.0)
+            total_score = execution_score + principles_score
+            max_score = 12.0
+    else:
+        # デモデータ（3点満点を80点満点に換算）
+        total_score = row['score'] * (80.0 / 3.0)
+        execution_score = total_score * (20.0 / 80.0)  # 25%
+        principles_score = total_score * (60.0 / 80.0)  # 75%
+        max_score = 80.0
+
+    percentage = (total_score / max_score) * 100
 
     # 色判定
     if percentage >= 80:
@@ -387,50 +401,127 @@ def show_result_detail(df: pd.DataFrame, video_id: str):
     # スコア表示
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("総合スコア", f"{total_score:.1f}/12", help="完全性(3点) + 7原則(9点)")
+        if max_score == 80.0:
+            st.metric("総合スコア", f"{total_score:.1f}/80", help="Section A(20点) + Section B(60点)")
+        else:
+            st.metric("総合スコア", f"{total_score:.1f}/{int(max_score)}", help="旧システム（12点満点）")
     with col2:
-        st.metric("達成率", f"{percentage:.0f}%", help="総合スコア / 12点満点")
+        st.metric("達成率", f"{percentage:.0f}%", help=f"総合スコア / {int(max_score)}点満点")
     with col3:
         st.metric("評価", f"{color_emoji} {status_text}")
 
     st.markdown("")
-    st.write(f"📐 **完全性**: {execution_score:.1f}/3.0")
-    st.write(f"🎯 **7原則**: {principles_score:.1f}/9.0")
+    if max_score == 80.0:
+        st.write(f"📐 **Section A（実施可否）**: {execution_score:.1f}/20.0")
+        st.write(f"🎯 **Section B（8原則）**: {principles_score:.1f}/60.0")
+    else:
+        st.write(f"📐 **完全性**: {execution_score:.1f}/3.0")
+        st.write(f"🎯 **7原則**: {principles_score:.1f}/9.0")
 
     # === 評価される原則のみ表示 ===
     st.markdown("---")
     st.subheader("📊 評価原則の詳細")
 
-    principles_to_show = TEST_PRINCIPLES_MAP.get(test_type, [])
+    # v2.1の場合、B_principlesから原則別スコアを取得
+    if 'evaluation' in row and isinstance(row['evaluation'], dict) and evaluation.get('version') == 'v2.1':
+        b_principles = evaluation.get('B_principles', {})
+        ecc_scores = b_principles.get('eccentric', {})
+        con_scores = b_principles.get('concentric', {})
 
-    if principles_to_show:
-        st.write("")
-        for principle_num in principles_to_show:
-            # 仮実装: 各原則のスコアを均等配分（実データでは evaluation から取得）
-            score = principles_score / 3.0  # 9点を3原則で均等割り
+        # Eccentric局面
+        if ecc_scores:
+            st.write("### 下降局面（Eccentric）")
+            for key, value in ecc_scores.items():
+                # キー形式: "B1_core_stability" → "B1", "core_stability"
+                if isinstance(value, (int, float)):
+                    principle_num = key.split('_')[0].replace('B', '')
+                    principle_full_name = key.replace(f'B{principle_num}_', '').replace('_', ' ').title()
+                    warning = " ⚠️" if value < 2.0 else ""
 
-            principle_name = PRINCIPLE_NAMES.get(principle_num, f"P{principle_num}")
-            warning = " ⚠️" if score < 2.0 else ""
+                    # プログレスバー（最大値を15点と仮定、実際はmax_scoreが必要）
+                    max_principle_score = 15.0  # Eccentric 30点を2原則で分割の場合
+                    progress = min(value / max_principle_score, 1.0)
 
-            # プログレスバー表示
-            progress = score / 3.0
-            st.write(f"**P{principle_num} {principle_name}**: {score:.1f}/3.0{warning}")
-            st.progress(progress)
+                    st.write(f"**B{principle_num} {principle_full_name}**: {value:.1f}点{warning}")
+                    st.progress(progress)
+                    st.write("")
+
+        # Concentric局面
+        if con_scores:
+            st.write("### 上昇局面（Concentric）")
+            for key, value in con_scores.items():
+                if isinstance(value, (int, float)):
+                    principle_num = key.split('_')[0].replace('B', '')
+                    principle_full_name = key.replace(f'B{principle_num}_', '').replace('_', ' ').title()
+                    warning = " ⚠️" if value < 2.0 else ""
+
+                    max_principle_score = 15.0
+                    progress = min(value / max_principle_score, 1.0)
+
+                    st.write(f"**B{principle_num} {principle_full_name}**: {value:.1f}点{warning}")
+                    st.progress(progress)
+                    st.write("")
+
+    else:
+        # 旧システムまたはデモデータの場合
+        principles_to_show = TEST_PRINCIPLES_MAP.get(test_type, [])
+
+        if principles_to_show:
             st.write("")
-    else:
-        st.info("この種目の評価原則マッピングが未定義です")
+            for principle_num in principles_to_show:
+                # 仮実装: 各原則のスコアを均等配分
+                if max_score == 80.0:
+                    score = principles_score / len(principles_to_show)  # 60点を原則数で均等割り
+                    max_principle_score = 60.0 / len(principles_to_show)
+                else:
+                    score = principles_score / len(principles_to_show)  # 9点を原則数で均等割り
+                    max_principle_score = 9.0 / len(principles_to_show)
 
-    # === ピーク写真表示 ===
+                principle_name = PRINCIPLE_NAMES.get(principle_num, f"P{principle_num}")
+                warning = " ⚠️" if score < 2.0 else ""
+
+                # プログレスバー表示
+                progress = score / max_principle_score if max_principle_score > 0 else 0
+                st.write(f"**P{principle_num} {principle_name}**: {score:.1f}/{max_principle_score:.1f}点{warning}")
+                st.progress(progress)
+                st.write("")
+        else:
+            st.info("この種目の評価原則マッピングが未定義です")
+
+    # === 動作フレーム表示（ピーク・ベスト・ワースト） ===
     st.markdown("---")
-    st.subheader("📸 ピーク時の写真")
+    st.subheader("📸 動作フレーム（ピーク・ベスト・ワースト）")
 
-    # 仮実装: 実際のS3 URLがあれば表示
-    peak_frame_url = None  # TODO: S3から取得
-    if peak_frame_url:
-        st.image(peak_frame_url, caption="ピーク時の写真（骨格線付き）")
-        # st.caption(f"膝角度: {angle:.1f}° | フレーム: {frame}")
-    else:
-        st.info("📷 ピーク時の静止画は処理完了後に表示されます")
+    # Phase 2.5で実装予定: S3から3枚画像を取得して骨格線付きで表示
+    # s3://{bucket}/{user_id}/{test_type}/{timestamp}/frames/peak.jpg
+    # s3://{bucket}/{user_id}/{test_type}/{timestamp}/frames/best.jpg
+    # s3://{bucket}/{user_id}/{test_type}/{timestamp}/frames/worst.jpg
+    peak_frame_url = None  # TODO: Phase 2.5で実装
+    best_frame_url = None  # TODO: Phase 2.5で実装
+    worst_frame_url = None  # TODO: Phase 2.5で実装
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**🎯 ピークフレーム**")
+        if peak_frame_url:
+            st.image(peak_frame_url, caption="動作完遂度（最大屈曲時）")
+        else:
+            st.info("Phase 2.5で実装予定\n\n動作のピーク時点（最大屈曲）の骨格線付き画像を表示します")
+
+    with col2:
+        st.markdown("**✅ ベストフレーム**")
+        if best_frame_url:
+            st.image(best_frame_url, caption="フォーム総合評価最高点")
+        else:
+            st.info("Phase 2.5で実装予定\n\nフォームが最も優れているフレームの骨格線付き画像を表示します")
+
+    with col3:
+        st.markdown("**⚠️ ワーストフレーム**")
+        if worst_frame_url:
+            st.image(worst_frame_url, caption="改善ポイント")
+        else:
+            st.info("Phase 2.5で実装予定\n\n改善が必要なフレームの骨格線付き画像を表示します")
 
     # === 前回との比較セクション（常時表示） ===
     st.markdown("---")
@@ -449,40 +540,66 @@ def show_result_detail(df: pd.DataFrame, video_id: str):
         """)
     else:
         # 2回目以降の表示
-        # 前回スコア（同様に12点満点換算）
+        # 前回スコア取得
         if 'evaluation' in previous and isinstance(previous['evaluation'], dict):
             prev_evaluation = previous['evaluation']
-            prev_execution = prev_evaluation.get('execution', {}).get('total', 0.0)
-            prev_principles = prev_evaluation.get('principles', {}).get('total', 0.0)
-            prev_total = prev_execution + prev_principles
+
+            # v2.1データの場合
+            if 'version' in prev_evaluation and prev_evaluation['version'] == 'v2.1':
+                prev_total = prev_evaluation.get('total_score', 0.0)
+                prev_max_score = 80.0
+            # 旧v1データの場合
+            else:
+                prev_execution = prev_evaluation.get('execution', {}).get('total', 0.0)
+                prev_principles = prev_evaluation.get('principles', {}).get('total', 0.0)
+                prev_total = prev_execution + prev_principles
+                prev_max_score = 12.0
         else:
-            prev_total = previous['score'] * 4.0
+            # デモデータ（3点満点を80点満点に換算）
+            prev_total = previous['score'] * (80.0 / 3.0)
+            prev_max_score = 80.0
 
         curr_total = total_score
         diff = curr_total - prev_total
 
-        prev_pct = (prev_total / 12.0) * 100
-        curr_pct = percentage
-        pct_diff = curr_pct - prev_pct
+        # 異なるスコアシステム間の比較の場合、パーセンテージで比較
+        if prev_max_score != max_score:
+            prev_pct = (prev_total / prev_max_score) * 100
+            curr_pct = (curr_total / max_score) * 100
+            pct_diff = curr_pct - prev_pct
+            use_percentage_only = True
+        else:
+            prev_pct = (prev_total / max_score) * 100
+            curr_pct = percentage
+            pct_diff = curr_pct - prev_pct
+            use_percentage_only = False
 
         # 比較表示
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("総合スコア", f"{curr_total:.1f}/12", f"{diff:+.1f}")
+            if use_percentage_only:
+                st.metric("達成率（今回）", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
+            else:
+                st.metric("総合スコア", f"{curr_total:.1f}/{int(max_score)}", f"{diff:+.1f}")
         with col2:
-            st.metric("達成率", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
+            if use_percentage_only:
+                st.info(f"前回システム: {int(prev_max_score)}点満点、今回: {int(max_score)}点満点")
+            else:
+                st.metric("達成率", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
 
         st.write("")
 
-        # 改善・悪化判定
-        if diff > 0.5:
-            st.success(f"✅ **{diff:.1f}点 改善しました！**")
-        elif diff < -0.5:
-            st.warning(f"⚠️ **{abs(diff):.1f}点 低下しています**")
+        # 改善・悪化判定（パーセンテージベース）
+        if pct_diff > 5:
+            st.success(f"✅ **{pct_diff:.1f}% 改善しました！**")
+        elif pct_diff < -5:
+            st.warning(f"⚠️ **{abs(pct_diff):.1f}% 低下しています**")
         else:
             st.info("📊 前回とほぼ同じ水準です")
 
-        # TODO: 原則ごとの改善・悪化詳細（実データ構造に合わせて実装）
+        # 異なるシステム間の比較時の注意
+        if use_percentage_only:
+            st.caption("ℹ️ スコアシステムが異なるため、達成率での比較を表示しています")
 
     # === Health Check ===
     st.markdown("---")
