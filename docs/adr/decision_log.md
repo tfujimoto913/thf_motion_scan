@@ -2205,3 +2205,101 @@
   - 関連Issue: v2システム統一配点化
   - test_rules_v2.json: v2.1設定完全定義
 
+
+## ADR-024: Lambda v2.1統合とCloudWatch監視基盤
+- 日付: 2025-10-30
+- 決定者: Human + Claude
+- 決定: v2.1スコアリングシステムのLambda統合 + CloudWatch監視アラーム実装
+- 理由:
+  - **本番運用必須**: v2.1（560点満点）のクラウド実行基盤確立
+  - **早期障害検知**: Lambda/SQS/DLQの異常を即座に通知
+  - **コスト最適化準備**: 実行時間・メモリ使用量の可視化
+  - **運用保守性**: 手動監視からの脱却、自動アラート体制構築
+- 技術的課題と解決:
+  1. **numpy依存関係競合（3回失敗ルール適用）**:
+     - **問題**: streamlit → pandas-stubs → numpy 2.x → GCC 9.3要求
+     - **Lambda環境**: GCC 7.3.1（numpy<2.0必須）
+     - **試行1**: `numpy==1.24.3` 直接指定 → FAILED
+     - **試行2**: constraints.txt使用 → FAILED
+     - **試行3**: requirements-lambda.txt作成（開発ツール除外） → **SUCCESS**
+  2. **MediaPipeモデル読み取り専用エラー（3回試行）**:
+     - **問題**: Lambda実行時に /var/task が読み取り専用
+     - **試行1**: 環境変数 `MEDIAPIPE_HOME=/tmp` → 無効
+     - **試行2**: Pythonでの事前ダウンロード → 不完全
+     - **試行3**: curlで手動ダウンロード（27MB .tflite） → **SUCCESS**
+  3. **DynamoDB float型エラー**:
+     - **問題**: `Float types are not supported. Use Decimal types instead.`
+     - **解決**: `convert_float_to_decimal()` 再帰関数実装
+- 実装内容:
+  1. **Lambda v2.1統合**:
+     ```dockerfile
+     # requirements-lambda.txt使用（streamlit/pytest除外）
+     RUN pip install --no-cache-dir --target /var/task -r requirements-lambda.txt
+
+     # MediaPipeモデル手動ダウンロード
+     RUN mkdir -p /var/task/mediapipe/modules/pose_landmark && \
+         curl -L -o /var/task/mediapipe/modules/pose_landmark/pose_landmark_heavy.tflite \
+         https://storage.googleapis.com/mediapipe-assets/pose_landmark_heavy.tflite
+     ```
+     ```python
+     # src/handler.py
+     def convert_float_to_decimal(obj):
+         """DynamoDB用にfloatをDecimalに変換"""
+         if isinstance(obj, float): return Decimal(str(obj))
+         elif isinstance(obj, dict): return {k: convert_float_to_decimal(v) for k, v in obj.items()}
+         elif isinstance(obj, list): return [convert_float_to_decimal(item) for item in obj]
+         return obj
+     ```
+  2. **CloudWatch監視基盤**:
+     ```yaml
+     # template.yaml
+     AlarmTopic:
+       Type: AWS::SNS::Topic
+       Properties:
+         TopicName: thf-motion-scan-alarms
+
+     # アラーム5種類
+     ProcessingFunctionErrorAlarm:     # エラー率 >5%
+     ProcessingFunctionDurationAlarm:  # 実行時間 >150秒
+     ProcessingFunctionMemoryAlarm:    # メモリ >2400MB（80%）
+     ProcessingQueueDepthAlarm:        # SQS滞留 >10件
+     DeadLetterQueueAlarm:             # DLQ到達 >=1件
+     ```
+- 影響範囲:
+  - **新規作成**: requirements-lambda.txt（Lambda専用依存関係）
+  - **修正**:
+    - Dockerfile（pip --target, モデル手動DL）
+    - src/handler.py（Decimal変換、v2.1ログ）
+    - template.yaml（SNS + 5アラーム追加）
+- 検証結果:
+  - ✅ Lambda実行成功: 140秒、668MB、score 55.2/80（v2.1）
+  - ✅ S3保存成功: results/2025/10/30/*.json
+  - ✅ DynamoDB記録成功: max_score=80, scoring_version=v2.1
+  - ✅ CloudWatchアラーム全5種OK状態
+- 運用設定:
+  - **Email通知**: thehockeyfuture@gmail.com（確認待ち）
+  - **アラーム閾値**:
+    | アラーム | 閾値 | 評価期間 |
+    |---------|------|---------|
+    | ErrorRate | 5分間に1回以上 | 10分 |
+    | Duration | 150秒超過 | 10分 |
+    | Memory | 2400MB超過（80%） | 10分 |
+    | QueueDepth | 10件以上 | 10分 |
+    | DLQ | 1件以上 | 1分 |
+- 制約事項:
+  - Email確認必須（SNSサブスクリプション手動承認）
+  - 初回実行時のコールドスタート: 約10秒（Init Duration: 10000ms）
+  - MediaPipeモデルサイズ: 27MB（Dockerイメージ増加）
+- コスト影響:
+  - Lambda実行時間: 140秒 × 3008MB = 約$0.023/実行
+  - CloudWatchアラーム: $0.10/月 × 5 = $0.50/月
+  - SNS通知: $0（Free Tierで1,000通知/月）
+- 今後の展開:
+  - **優先度A**: Email通知動作確認（テストアラーム発火）
+  - **優先度B**: 1週間後コスト最適化検討（メモリ削減、実行時間短縮）
+  - **優先度C**: Phase 5 Dashboard実装（Streamlit可視化）
+- 参照:
+  - Commit: 265cf74 "feat(v2.1): Lambda integration + CloudWatch monitoring"
+  - ECRイメージ: thf-motion-scan:v2.1-decimal（SHA: 608a445581...）
+  - CloudFormation Stack: thf-motion-scan（UPDATE_COMPLETE）
+  - ADR-009（Lambda Container）、ADR-023（v2.1システム）
