@@ -12,7 +12,9 @@ from .base_evaluator_v2 import BaseEvaluatorV2
 from .single_leg_squat_v2 import SingleLegSquatEvaluatorV2
 from .skater_lunge_v2 import SkaterLungeEvaluatorV2
 from .stride_mimic_v2 import StrideMimicEvaluatorV2
+from .jump_landing_v2 import JumpLandingEvaluatorV2
 from .upper_body_swing_v2 import UpperBodySwingEvaluatorV2
+from .push_pull_v2 import PushPullEvaluatorV2
 from .cross_step_v2 import CrossStepEvaluatorV2
 
 __all__ = [
@@ -20,6 +22,8 @@ __all__ = [
     'SingleLegSquatEvaluatorV2',
     'SkaterLungeEvaluatorV2',
     'StrideMimicEvaluatorV2',
+    'JumpLandingEvaluatorV2',
     'UpperBodySwingEvaluatorV2',
+    'PushPullEvaluatorV2',
     'CrossStepEvaluatorV2'
 ]
