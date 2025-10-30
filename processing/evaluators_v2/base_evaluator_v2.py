@@ -38,6 +38,8 @@ class BaseEvaluatorV2(ABC):
     RIGHT_KNEE = 26
     LEFT_ANKLE = 27
     RIGHT_ANKLE = 28
+    LEFT_FOOT_INDEX = 31
+    RIGHT_FOOT_INDEX = 32
 
     def __init__(self, config_path: str = 'processing/evaluators_v2/config_v2/test_rules_v2.json'):
         """
@@ -408,6 +410,34 @@ class BaseEvaluatorV2(ABC):
             return 0.0
 
         return self._calculate_angle_3d(hip, knee, ankle)
+
+    def _calculate_ankle_angle(self, frame_data: Dict, side: str = 'right') -> float:
+        """
+        What: 足首関節角度を計算（B3: 3関節連動性、B6: 後方筋群活性化）
+        Why: 関節連動と衝撃吸収能力を評価
+        Design Decision: 膝-足首-つま先の3点から角度算出
+
+        Args:
+            side: 'left' or 'right'
+
+        Returns:
+            float: 足首関節角度（度数）
+
+        CRITICAL: NaN/Inf保護
+        """
+        if side == 'left':
+            knee = self._get_landmark(frame_data, self.LEFT_KNEE)
+            ankle = self._get_landmark(frame_data, self.LEFT_ANKLE)
+            foot = self._get_landmark(frame_data, self.LEFT_FOOT_INDEX)
+        else:
+            knee = self._get_landmark(frame_data, self.RIGHT_KNEE)
+            ankle = self._get_landmark(frame_data, self.RIGHT_ANKLE)
+            foot = self._get_landmark(frame_data, self.RIGHT_FOOT_INDEX)
+
+        if not all([knee, ankle, foot]):
+            return 0.0
+
+        return self._calculate_angle_3d(knee, ankle, foot)
 
     def _calculate_hip_angle(self, frame_data: Dict, side: str = 'right') -> float:
         """
