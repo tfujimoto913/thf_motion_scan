@@ -1,0 +1,151 @@
+{
+  "_comment": "8原則・237点満点評価システム（v2.0）- Phase A雛形",
+  "_created": "2025-10-30",
+  "_status": "Phase A: 構造定義のみ、Phase Bで詳細実装",
+
+  "version": "v2.0",
+  "scoring_system": {
+    "total_max_score": 237,
+    "section_a": {
+      "description": "SECTION A: テスト実施の可否",
+      "max_score": 21,
+      "weight": 1.0,
+      "criteria": ["setup", "execution_completion", "safety"]
+    },
+    "section_b": {
+      "description": "SECTION B: 8原則評価",
+      "max_score": 216,
+      "weight": 1.0,
+      "principles": 8
+    }
+  },
+
+  "principles": {
+    "_comment": "8原則（B1-B8）定義 - Phase Bで詳細追加",
+    "B1": {
+      "name": "Principle 1: [Phase Bで定義]",
+      "max_score_per_phase": 27,
+      "phases": ["eccentric", "concentric"],
+      "total_max_score": 54,
+      "description": "Phase Bで実装予定"
+    },
+    "B2": {
+      "name": "Principle 2: [Phase Bで定義]",
+      "max_score_per_phase": 27,
+      "phases": ["eccentric", "concentric"],
+      "total_max_score": 54,
+      "description": "Phase Bで実装予定"
+    },
+    "B3": {
+      "name": "Principle 3: [Phase Bで定義]",
+      "max_score_per_phase": 27,
+      "phases": ["eccentric", "concentric"],
+      "total_max_score": 54,
+      "description": "Phase Bで実装予定"
+    },
+    "B4": {
+      "name": "Principle 4: [Phase Bで定義]",
+      "max_score_per_phase": 27,
+      "phases": ["eccentric", "concentric"],
+      "total_max_score": 54,
+      "description": "Phase Bで実装予定"
+    },
+    "B5": {
+      "name": "Principle 5: [Phase Bで定義]",
+      "max_score_per_phase": 0,
+      "phases": [],
+      "total_max_score": 0,
+      "description": "Phase Bで実装予定"
+    },
+    "B6": {
+      "name": "Principle 6: [Phase Bで定義]",
+      "max_score_per_phase": 0,
+      "phases": [],
+      "total_max_score": 0,
+      "description": "Phase Bで実装予定"
+    },
+    "B7": {
+      "name": "Principle 7: [Phase Bで定義]",
+      "max_score_per_phase": 0,
+      "phases": [],
+      "total_max_score": 0,
+      "description": "Phase Bで実装予定"
+    },
+    "B8": {
+      "name": "Principle 8: [Phase Bで定義]",
+      "max_score_per_phase": 0,
+      "phases": [],
+      "total_max_score": 0,
+      "description": "Phase Bで実装予定"
+    }
+  },
+
+  "test_types": {
+    "_comment": "7種目定義 - Phase Bで詳細実装",
+    "single_leg_squat": {
+      "display_name": "Single Leg Squat",
+      "section_a_criteria": ["setup_balance", "depth_requirement", "no_fall"],
+      "applicable_principles": ["B1", "B2", "B3", "B4"],
+      "phase_detection": {
+        "eccentric": {
+          "description": "下降局面",
+          "trigger": "hip_flexion_increase"
+        },
+        "concentric": {
+          "description": "上昇局面",
+          "trigger": "hip_flexion_decrease"
+        }
+      },
+      "status": "Phase Bで実装予定"
+    },
+    "upper_body_swing": {
+      "display_name": "Upper Body Swing",
+      "status": "Phase Bで実装予定"
+    },
+    "skater_lunge": {
+      "display_name": "Skater Lunge",
+      "status": "Phase Bで実装予定"
+    },
+    "cross_step": {
+      "display_name": "Cross Step",
+      "status": "Phase Bで実装予定"
+    },
+    "stride_mimic": {
+      "display_name": "Stride Mimic",
+      "status": "Phase Bで実装予定"
+    },
+    "push_pull": {
+      "display_name": "Push-Pull",
+      "status": "Phase Bで実装予定"
+    },
+    "jump_landing": {
+      "display_name": "Jump & Landing",
+      "status": "Phase Bで実装予定"
+    }
+  },
+
+  "output_format": {
+    "_comment": "出力形式定義",
+    "version": "v2",
+    "structure": {
+      "total_score": "int (0-237)",
+      "section_a": {
+        "score": "int (0-21)",
+        "details": "str"
+      },
+      "section_b": {
+        "score": "int (0-216)",
+        "principles": {
+          "B1": {"eccentric": "int", "concentric": "int"},
+          "B2": {"eccentric": "int", "concentric": "int"},
+          "B3": {"eccentric": "int", "concentric": "int"},
+          "B4": {"eccentric": "int", "concentric": "int"}
+        }
+      },
+      "phase_scores": {
+        "eccentric_total": "int",
+        "concentric_total": "int"
+      }
+    }
+  }
+}

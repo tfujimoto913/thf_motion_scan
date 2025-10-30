@@ -49,9 +49,18 @@ class VideoProcessingWorker:
         # CRITICAL: random_seed適用（ADR-004）
         apply_random_seed(config_path)
 
+        # PHASE A: scoring_system設定読み込み（並行動作環境）
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        self.scoring_version = config.get('scoring_system', {}).get('version', 'v1')
+        self.validation_mode = config.get('scoring_system', {}).get('validation_mode', False)
+
         # PHASE CORE LOGIC: コンポーネント初期化
         self.pose_extractor = PoseExtractor()
         self.normalizer = BodyNormalizer()
+
+        # PHASE A: v1（既存システム）のevaluators初期化
+        # v2の場合でも一旦v1を初期化（validation_modeで両方使用）
         self.evaluators = {
             'single_leg_squat': SingleLegSquatEvaluator(config_path),
             'upper_body_swing': UpperBodySwingEvaluator(config_path),
@@ -61,6 +70,11 @@ class VideoProcessingWorker:
             'push_pull': PushPullEvaluator(config_path),
             'jump_landing': JumpLandingEvaluator(config_path)
         }
+
+        # PHASE A: v2（新システム）のevaluators初期化プレースホルダー
+        # Phase Bで実装予定
+        self.evaluators_v2 = None  # Phase Bで初期化
+
         self.health_checker = HealthChecker(config_path)
         self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
         self.config_path = config_path
@@ -166,17 +180,27 @@ class VideoProcessingWorker:
         base_width = representative_values.get('base_width', 1.0)
         print(f"✅ 正規化完了: base_width={base_width:.3f}")
 
-        # 4. 評価
-        print(f"📈 評価を実行中...")
-        evaluator = self.evaluators[test_type]
-        evaluation_result = evaluator.evaluate(
-            extraction_result['landmarks'],
-            base_width=base_width,
-            shoulder_width=representative_values.get('shoulder_width', 0.4),
-            leg_length=representative_values.get('leg_length', 1.0)
-        )
+        # 4. 評価（バージョン切り替え対応）
+        print(f"📈 評価を実行中... (システムバージョン: {self.scoring_version})")
 
-        print(f"✅ 評価完了: スコア {evaluation_result['total']}/12")
+        # PHASE A: バージョン選択ロジック
+        if self.scoring_version == 'v2':
+            # Phase Bで実装予定
+            raise NotImplementedError(
+                "Phase B で実装予定: 8原則・237点満点評価システム (v2)\n"
+                f"config.json の scoring_system.version を 'v1' に変更してください。"
+            )
+        else:
+            # v1: 既存システム（7原則・12点満点）
+            evaluator = self.evaluators[test_type]
+            evaluation_result = evaluator.evaluate(
+                extraction_result['landmarks'],
+                base_width=base_width,
+                shoulder_width=representative_values.get('shoulder_width', 0.4),
+                leg_length=representative_values.get('leg_length', 1.0)
+            )
+
+        print(f"✅ 評価完了: スコア {evaluation_result.get('total', 0)}/{12 if self.scoring_version == 'v1' else 237}")
 
         # 5. 結果をまとめる
         result = {
