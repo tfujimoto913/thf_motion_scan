@@ -1628,3 +1628,306 @@
     - Team/Athleteエンティティが`video_id/processed_at`を使用
     - 影響: 既存データがある場合はmigration必要
     - 緩和策: Week 1で初回デプロイのため既存データなし
+
+## ADR-021: Phase 2.5 Stage 1 - 管理者編集API + 身長フィールド
+- 日付: 2025-10-29
+- 決定者: Human + Claude Code
+- 状態: ✅ Accepted
+- 関連ADR: ADR-018（チーム一括受付システム）, ADR-020（選手登録フィールド拡張）
+- コンテキスト:
+  - **Week 1デプロイ後の追加要求**:
+    1. **身長フィールド**: 選手登録時に身長を記録（オプショナル、後方互換性必須）
+    2. **管理者用編集API**: チーム名・選手情報の修正機能（認証はStage 2以降）
+    3. **編集制限**: 重要フィールド（teamId, playerId, 認証情報等）は編集禁止
+- 決定内容:
+  - **Part 1: 身長フィールド追加（オプショナル）**:
+    - validate_height() 追加: 100-250cm、int型のみ
+    - player_auth/handler.py 拡張: bodyCharacteristics.height 追加
+    - 既存データとの互換性: height なしでも登録可能
+  - **Part 2: 管理者編集API（認証なし - Stage 1）**:
+    - PATCH /admin/teams/{teamId}: teamName のみ編集可能
+    - PATCH /admin/players/{playerId}: personalInfo, bodyCharacteristics のみ編集可能
+    - ホワイトリスト検証: 編集可能フィールドを明示的に定義
+    - 編集不可フィールド: teamId, teamSlug, playerId, teamInfo, auth 等
+- 技術詳細:
+  - **1. 身長バリデーター**（lambda/common/validators.py:240-262）:
+    ```python
+    def validate_height(height: int) -> Tuple[bool, Optional[str]]:
+        """
+        100-250cm、int型のみ許可
+        オプショナル（ADR-020との後方互換性）
+        """
+        if not isinstance(height, int):
+            return False, "Height must be an integer"
+        if height < 100 or height > 250:
+            return False, "Height must be between 100 and 250 cm"
+        return True, None
+    ```
+  - **2. チーム編集API**（lambda/admin_edit/handler.py:32-147）:
+    ```python
+    ALLOWED_TEAM_FIELDS = ['teamName']
+    FORBIDDEN_TEAM_FIELDS = ['teamId', 'teamSlug', 'teamCode',
+                             'registrationUrl', 'qrCodeS3Key']
+
+    def update_team(event, context):
+        """
+        PATCH /admin/teams/{teamId}
+        - teamName のみ編集可能
+        - 編集不可フィールドへのアクセスは400エラー
+        - DynamoDB UpdateExpression で部分更新
+        """
+        # ホワイトリスト検証
+        forbidden_fields = [field for field in body.keys()
+                           if field in FORBIDDEN_TEAM_FIELDS]
+        if forbidden_fields:
+            return error_response(
+                f"Fields not allowed to update: {', '.join(forbidden_fields)}",
+                400, 'FORBIDDEN_FIELD'
+            )
+
+        # 許可されていないフィールドチェック
+        unknown_fields = [field for field in body.keys()
+                         if field not in ALLOWED_TEAM_FIELDS]
+        if unknown_fields:
+            return error_response(
+                f"Unknown fields: {', '.join(unknown_fields)}",
+                400, 'UNKNOWN_FIELD'
+            )
+
+        # DynamoDB更新（updatedAt自動追加）
+        update_item(
+            pk=f"TEAM#{team_id}",
+            sk="METADATA",
+            update_expression="SET #teamName = :teamName, #updatedAt = :updatedAt",
+            expression_attribute_values={
+                ':teamName': body['teamName'],
+                ':updatedAt': datetime.utcnow().isoformat() + 'Z'
+            },
+            expression_attribute_names={
+                '#teamName': 'teamName',
+                '#updatedAt': 'updatedAt'
+            }
+        )
+    ```
+  - **3. 選手編集API**（lambda/admin_edit/handler.py:150-285）:
+    ```python
+    ALLOWED_PLAYER_FIELDS = ['personalInfo', 'bodyCharacteristics']
+    FORBIDDEN_PLAYER_FIELDS = ['playerId', 'teamInfo', 'auth']
+
+    def update_player(event, context):
+        """
+        PATCH /admin/players/{playerId}
+        - personalInfo, bodyCharacteristics のみ編集可能
+        - ネストされたフィールドの部分更新対応
+        - jerseyNumber, passwordHash 等は編集禁止
+        """
+        # personalInfo更新（ネストフィールド対応）
+        if 'personalInfo' in body:
+            for key, value in body['personalInfo'].items():
+                placeholder_key = f'#pi_{key}'
+                placeholder_value = f':pi_{key}'
+                update_expression_parts.append(
+                    f'personalInfo.{placeholder_key} = {placeholder_value}'
+                )
+                expression_attribute_names[placeholder_key] = key
+                expression_attribute_values[placeholder_value] = value
+
+        # bodyCharacteristics更新（ネストフィールド対応）
+        if 'bodyCharacteristics' in body:
+            for key, value in body['bodyCharacteristics'].items():
+                placeholder_key = f'#bc_{key}'
+                placeholder_value = f':bc_{key}'
+                update_expression_parts.append(
+                    f'bodyCharacteristics.{placeholder_key} = {placeholder_value}'
+                )
+                expression_attribute_names[placeholder_key] = key
+                expression_attribute_values[placeholder_value] = value
+    ```
+  - **4. DecimalEncoder導入**（lambda/common/response_utils.py:16-28）:
+    ```python
+    class DecimalEncoder(json.JSONEncoder):
+        """
+        DynamoDB Decimal型のJSON変換エンコーダー
+        整数はint、小数はfloatに変換
+        """
+        def default(self, obj):
+            if isinstance(obj, Decimal):
+                return int(obj) if obj % 1 == 0 else float(obj)
+            return super(DecimalEncoder, self).default(obj)
+
+    # success_response, error_response 両方で使用
+    return {
+        'statusCode': status_code,
+        'headers': cors_headers(),
+        'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
+    }
+    ```
+  - **5. テスト環境整備**（tests/lambda/conftest.py:15-21）:
+    ```python
+    # CRITICAL: モジュールインポート前に環境変数を設定
+    os.environ['TABLE_NAME'] = 'test-table'
+    os.environ['QRCODE_BUCKET'] = 'test-qrcode-bucket'
+    os.environ['VIDEOS_BUCKET'] = 'test-videos-bucket'
+    os.environ['JWT_SECRET_KEY'] = 'test-secret-key'
+    os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
+    ```
+- 影響範囲:
+  - **lambda/common/validators.py**: validate_height() 追加（+23行）
+  - **lambda/player_auth/handler.py**: height フィールド対応（+8行）
+  - **lambda/admin_edit/handler.py**: 新規作成（304行）
+  - **lambda/common/response_utils.py**: DecimalEncoder追加（+16行）
+  - **tests/lambda/test_admin_edit.py**: 新規作成（373行、6テスト）
+  - **tests/lambda/test_common.py**: 身長テスト追加（+69行、6テスト）
+  - **tests/lambda/test_handlers.py**: DynamoDBキー修正（+18行変更）
+  - **tests/lambda/conftest.py**: 新規作成（22行）
+  - **template.yaml**: AdminEditFunction追加（+26行）
+  - 総計: 約840行追加・修正
+- API仕様:
+  - **PATCH /admin/teams/{teamId}** リクエスト:
+    ```json
+    {
+      "teamName": "栄フレッシュ2025"
+    }
+    ```
+  - **PATCH /admin/teams/{teamId}** レスポンス:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "teamId": "tm_sakae",
+        "teamName": "栄フレッシュ2025",
+        "updatedAt": "2025-10-29T12:00:00Z"
+      },
+      "message": "Team updated successfully"
+    }
+    ```
+  - **PATCH /admin/players/{playerId}** リクエスト:
+    ```json
+    {
+      "personalInfo": {
+        "firstName": "太郎Updated",
+        "birthDate": "2010-03-16"
+      },
+      "bodyCharacteristics": {
+        "height": 175
+      }
+    }
+    ```
+  - **PATCH /admin/players/{playerId}** レスポンス:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "playerId": "plr_sakae_19",
+        "personalInfo": {
+          "firstName": "太郎Updated",
+          "lastName": "山田",
+          "firstNameKana": "たろう",
+          "lastNameKana": "やまだ",
+          "birthDate": "2010-03-16"
+        },
+        "bodyCharacteristics": {
+          "dominantHand": "right",
+          "dominantFoot": "left",
+          "shootingHand": "right",
+          "height": 175
+        },
+        "updatedAt": "2025-10-29T12:00:00Z"
+      },
+      "message": "Player updated successfully"
+    }
+    ```
+- エラーハンドリング例:
+  - **編集不可フィールドへのアクセス**:
+    ```json
+    {
+      "success": false,
+      "error": "Fields not allowed to update: teamSlug, teamCode",
+      "errorCode": "FORBIDDEN_FIELD"
+    }
+    ```
+  - **不明なフィールド**:
+    ```json
+    {
+      "success": false,
+      "error": "Unknown fields: invalidField",
+      "errorCode": "UNKNOWN_FIELD"
+    }
+    ```
+  - **身長範囲外**:
+    ```json
+    {
+      "success": false,
+      "error": "Height must be between 100 and 250 cm",
+      "errorCode": "VALIDATION_ERROR"
+    }
+    ```
+- テスト結果:
+  - ✅ test_admin_edit.py: 6/6 passed
+    - test_update_team_success: チーム名変更成功
+    - test_update_team_not_found: チーム未存在404
+    - test_update_team_forbidden_fields: 編集不可フィールド拒否
+    - test_update_player_success: 選手情報変更成功
+    - test_update_player_not_found: 選手未存在404
+    - test_update_player_forbidden_fields: 編集不可フィールド拒否
+  - ✅ test_common.py: 42/42 passed（身長テスト6件追加）
+  - ✅ test_handlers.py: 6/6 passed（DynamoDBキー修正適用）
+  - ✅ 全Lambdaテスト: 48/48 passed
+- DynamoDB更新パターン:
+  - **フラットフィールド**（teamName）:
+    ```python
+    SET #teamName = :teamName
+    ```
+  - **ネストフィールド**（personalInfo.firstName）:
+    ```python
+    SET personalInfo.#pi_firstName = :pi_firstName
+    ```
+  - **複数フィールド同時更新**:
+    ```python
+    SET personalInfo.#pi_firstName = :pi_firstName,
+        bodyCharacteristics.#bc_height = :bc_height,
+        #updatedAt = :updatedAt
+    ```
+- セキュリティ:
+  - **認証なし（Stage 1）**: CRITICAL コメントで明記、Stage 2で実装予定
+  - **ホワイトリスト検証**: 許可フィールドのみ更新可能
+  - **エラーメッセージ**: 個人情報を含めない（ADR-013準拠）
+  - **パスワードハッシュ保護**: auth フィールド全体を編集禁止
+- パフォーマンス:
+  - バリデーション追加: +0.002秒/リクエスト（身長チェック）
+  - DynamoDB部分更新: 全フィールド上書きより高速（UpdateExpression使用）
+  - DecimalEncoder: +0.001秒/レスポンス（JSON変換）
+- Lessons Learned:
+  - **DynamoDB Decimal型の罠**:
+    - 問題: `json.dumps()` で "Object of type Decimal is not JSON serializable" エラー
+    - 原因: DynamoDBは全数値をDecimal型で保存
+    - 解決: DecimalEncoderカスタムクラス導入（int/float自動変換）
+    - 推奨: DynamoDB使用時は常にDecimalEncoder適用
+  - **pytest環境変数競合**:
+    - 問題: test_common.py の setup_jwt_secret fixture が環境変数削除
+    - 原因: テストファイル間で環境変数の設定/削除が競合
+    - 解決: conftest.py で一元管理（モジュールレベルで設定）
+    - 推奨: 複数テストファイルがある場合は conftest.py 必須
+  - **ホワイトリスト vs ブラックリスト**:
+    - 選択: ホワイトリスト方式（ALLOWED_FIELDS定義）
+    - 理由: セキュリティ強化（デフォルト拒否）
+    - 利点: 新規フィールド追加時も安全（明示的に許可するまで編集不可）
+- 次のステップ（Stage 2以降）:
+  - 認証機能追加: 管理者トークン検証
+  - 監査ログ: 編集履歴の記録（誰が・いつ・何を変更したか）
+  - バリデーション強化: teamName正規表現チェック等
+- 参照:
+  - Git commit: eb0aedc（身長追加）, 4e3fbf0（チーム編集）, 8397784（選手編集+Decimal）, 2f08b0a（テスト修正）, 8eed15d（SAM+conftest）
+  - ADR-020（選手登録フィールド拡張）
+  - lambda/admin_edit/handler.py:24-303（編集API実装）
+  - lambda/common/response_utils.py:16-28（DecimalEncoder）
+  - tests/lambda/conftest.py:15-21（環境変数一元管理）
+- 破壊的変更:
+  - **player_auth/handler.py POST /player/register**:
+    - 新規オプショナルフィールド: height（100-250cm、int）
+    - 影響: 既存フロントエンドは無変更でも動作（オプショナル）
+    - 推奨: フォームに身長入力欄追加
+  - **response_utils.py**:
+    - DecimalEncoder適用: 全レスポンスで自動Decimal変換
+    - 影響: なし（既存JSONレスポンス互換）
+    - 利点: DynamoDB数値フィールドが正しくJSON化される

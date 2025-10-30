@@ -20,14 +20,21 @@ env/
 *.tflite
 *.pth
 
-# Test videos (tests/test_videos/ のみ対象)
+# Test videos
 tests/test_videos/*.mp4
 tests/test_videos/*.avi
 tests/test_videos/*.mov
+test_videos/*.mp4
+test_videos/*.avi
+test_videos/*.mov
+test_videos/**/*.mp4
+test_videos/**/*.avi
+test_videos/**/*.mov
 
 # Test outputs
 tests/output/
 output_test/
+output/
 warnings.json
 .coverage
 htmlcov/
