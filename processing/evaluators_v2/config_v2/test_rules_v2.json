@@ -21,82 +21,89 @@
   },
 
   "principles": {
-    "_comment": "8原則（B1-B8）定義 - Phase Bで詳細追加",
+    "_comment": "8原則（B1-B8）定義 - Phase B実装",
     "B1": {
-      "name": "Principle 1: [Phase Bで定義]",
-      "max_score_per_phase": 27,
-      "phases": ["eccentric", "concentric"],
-      "total_max_score": 54,
-      "description": "Phase Bで実装予定"
+      "name": "B1: 体幹安定性 (Core Stability)",
+      "description": "体幹の安定性、胴体の揺れ抑制",
+      "evaluation_method": "体幹回旋角度、左右肩・腰の高低差、体幹前後傾斜角度",
+      "weight": "primary_or_secondary"
     },
     "B2": {
-      "name": "Principle 2: [Phase Bで定義]",
-      "max_score_per_phase": 27,
-      "phases": ["eccentric", "concentric"],
-      "total_max_score": 54,
-      "description": "Phase Bで実装予定"
+      "name": "B2: 支持基盤 (Support Foundation)",
+      "description": "支持脚の安定性、支持基盤の確保",
+      "evaluation_method": "支持脚膝の内外反、足部の接地状態、重心バランス",
+      "weight": "primary_or_secondary"
     },
     "B3": {
-      "name": "Principle 3: [Phase Bで定義]",
-      "max_score_per_phase": 27,
-      "phases": ["eccentric", "concentric"],
-      "total_max_score": 54,
-      "description": "Phase Bで実装予定"
+      "name": "B3: 3関節連動性 (3-Joint Coordination)",
+      "description": "股関節・膝関節・足関節の協調動作",
+      "evaluation_method": "股・膝・足関節の角度変化パターン、タイミング同期性",
+      "weight": "primary_or_secondary"
     },
     "B4": {
-      "name": "Principle 4: [Phase Bで定義]",
-      "max_score_per_phase": 27,
-      "phases": ["eccentric", "concentric"],
-      "total_max_score": 54,
-      "description": "Phase Bで実装予定"
+      "name": "B4: 骨盤水平維持 (Pelvis Horizontal)",
+      "description": "骨盤の水平保持、左右の高低差抑制",
+      "evaluation_method": "左右腰の高低差、骨盤傾斜角度",
+      "weight": "primary_or_secondary"
     },
     "B5": {
-      "name": "Principle 5: [Phase Bで定義]",
-      "max_score_per_phase": 0,
-      "phases": [],
-      "total_max_score": 0,
-      "description": "Phase Bで実装予定"
+      "name": "B5: 重心移動 (Weight Shift)",
+      "description": "重心の適切な移動制御",
+      "evaluation_method": "重心位置の軌跡、移動速度、方向性",
+      "weight": "primary_or_secondary"
     },
     "B6": {
-      "name": "Principle 6: [Phase Bで定義]",
-      "max_score_per_phase": 0,
-      "phases": [],
-      "total_max_score": 0,
-      "description": "Phase Bで実装予定"
+      "name": "B6: 後方筋群活性化 (Posterior Chain)",
+      "description": "後方筋群（ハムストリング、臀部）の活性化",
+      "evaluation_method": "股関節伸展角度、膝関節と股関節の協調パターン",
+      "weight": "primary_or_secondary"
     },
     "B7": {
-      "name": "Principle 7: [Phase Bで定義]",
-      "max_score_per_phase": 0,
-      "phases": [],
-      "total_max_score": 0,
-      "description": "Phase Bで実装予定"
+      "name": "B7: 上下身分離性 (Upper-Lower Separation)",
+      "description": "上半身と下半身の独立動作、分離性",
+      "evaluation_method": "体幹回旋と骨盤回旋の差、上半身の安定性",
+      "weight": "primary_or_secondary"
     },
     "B8": {
-      "name": "Principle 8: [Phase Bで定義]",
-      "max_score_per_phase": 0,
-      "phases": [],
-      "total_max_score": 0,
-      "description": "Phase Bで実装予定"
+      "name": "B8: 肩周り独立制御 (Shoulder Independent Control)",
+      "description": "肩甲骨・肩関節の独立制御、上肢の安定性",
+      "evaluation_method": "肩甲骨の安定性、肩の高低差、上腕の動作パターン",
+      "weight": "primary_or_secondary"
     }
   },
 
   "test_types": {
-    "_comment": "7種目定義 - Phase Bで詳細実装",
+    "_comment": "7種目定義 - Phase B実装",
     "single_leg_squat": {
       "display_name": "Single Leg Squat",
-      "section_a_criteria": ["setup_balance", "depth_requirement", "no_fall"],
-      "applicable_principles": ["B1", "B2", "B3", "B4"],
-      "phase_detection": {
+      "test_id": "T01",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["setup_balance", "depth_requirement", "no_fall"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B2", "B4"],
+        "secondary_principles": ["B1", "B3"],
         "eccentric": {
           "description": "下降局面",
-          "trigger": "hip_flexion_increase"
+          "B1": 2.5,
+          "B2": 5.0,
+          "B3": 2.5,
+          "B4": 5.0,
+          "total": 15
         },
         "concentric": {
           "description": "上昇局面",
-          "trigger": "hip_flexion_decrease"
+          "B1": 2.5,
+          "B2": 5.0,
+          "B3": 2.5,
+          "B4": 5.0,
+          "total": 15
         }
       },
-      "status": "Phase Bで実装予定"
+      "status": "Phase B実装中"
     },
     "upper_body_swing": {
       "display_name": "Upper Body Swing",
