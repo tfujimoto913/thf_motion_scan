@@ -105,12 +105,41 @@
       },
       "status": "Phase B実装中"
     },
-    "upper_body_swing": {
-      "display_name": "Upper Body Swing",
-      "status": "Phase Bで実装予定"
-    },
     "skater_lunge": {
       "display_name": "Skater Lunge",
+      "test_id": "T02",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["step_width", "landing_stability", "no_fall"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B4", "B7"],
+        "secondary_principles": ["B1", "B2", "B3"],
+        "eccentric": {
+          "description": "着地・下降局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 2.0,
+          "B4": 4.5,
+          "B7": 4.5,
+          "total": 15.0
+        },
+        "concentric": {
+          "description": "蹴り出し局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 2.0,
+          "B4": 4.5,
+          "B7": 4.5,
+          "total": 15.0
+        }
+      },
+      "status": "Phase B実装中"
+    },
+    "upper_body_swing": {
+      "display_name": "Upper Body Swing",
       "status": "Phase Bで実装予定"
     },
     "cross_step": {

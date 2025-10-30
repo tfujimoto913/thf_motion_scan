@@ -10,8 +10,10 @@ CRITICAL: 既存のevaluators/には一切影響を与えない
 
 from .base_evaluator_v2 import BaseEvaluatorV2
 from .single_leg_squat_v2 import SingleLegSquatEvaluatorV2
+from .skater_lunge_v2 import SkaterLungeEvaluatorV2
 
 __all__ = [
     'BaseEvaluatorV2',
-    'SingleLegSquatEvaluatorV2'
+    'SingleLegSquatEvaluatorV2',
+    'SkaterLungeEvaluatorV2'
 ]
