@@ -349,6 +349,126 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  # ==============================================================================
+  # CloudWatch Monitoring（監視基盤）
+  # Purpose: Lambda処理エラー、パフォーマンス、SQS滞留の早期検知
+  # Decision Log: ADR-014（監視戦略）
+  #
+  # CRITICAL:
+  #   - アラーム通知先SNSトピックのサブスクリプション設定必須（手動）
+  #   - 本番運用前に必ずテストアラーム発火を確認
+  # ==============================================================================
+
+  # SNSトピック: アラーム通知先
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: thf-motion-scan-alarms
+      DisplayName: THF Motion Scan Alarms
+      # CRITICAL: デプロイ後に手動でEmailサブスクリプション追加が必要
+      # aws sns subscribe --topic-arn <ARN> --protocol email --notification-endpoint <email>
+
+  # アラーム1: Lambda実行エラー率
+  ProcessingFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-Lambda-ErrorRate'
+      AlarmDescription: 'Lambda実行エラー率が5%を超過'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300  # 5分
+      EvaluationPeriods: 2
+      Threshold: 1  # 5分間に1回以上のエラー
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessingFunction
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # アラーム2: Lambda実行時間超過
+  ProcessingFunctionDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-Lambda-Duration'
+      AlarmDescription: 'Lambda実行時間が150秒を超過（v2.1想定: 140秒）'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300  # 5分
+      EvaluationPeriods: 2
+      Threshold: 150000  # 150秒（ミリ秒）
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessingFunction
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # アラーム3: Lambdaメモリ使用量超過
+  # CRITICAL: MaxMemoryUsedメトリクスは5分ごとに発行されるため、Period=300推奨
+  ProcessingFunctionMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-Lambda-Memory'
+      AlarmDescription: 'Lambdaメモリ使用量が2400MB（80%）を超過'
+      MetricName: MaxMemoryUsed
+      Namespace: AWS/Lambda
+      Statistic: Maximum
+      Period: 300  # 5分
+      EvaluationPeriods: 2
+      Threshold: 2400  # 3008MB * 0.8 = 2406MB
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessingFunction
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # アラーム4: SQSキュー滞留
+  ProcessingQueueDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-SQS-QueueDepth'
+      AlarmDescription: 'SQSキューに10件以上のメッセージが滞留'
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Average
+      Period: 300  # 5分
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ProcessingQueue.QueueName
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # アラーム5: デッドレターキュー（DLQ）メッセージ検知
+  DeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-DLQ-Messages'
+      AlarmDescription: 'DLQに失敗メッセージが到達（3回リトライ後）'
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Sum
+      Period: 60  # 1分（即座に通知）
+      EvaluationPeriods: 1
+      Threshold: 1  # 1件でもアラーム
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
 Outputs:
   # 既存リソース
   VideosBucketName:
@@ -423,3 +543,10 @@ Outputs:
     Value: !GetAtt AdminEditFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-AdminEditArn'
+
+  # CloudWatch Monitoring
+  AlarmTopicArn:
+    Description: "SNSトピックARN（アラーム通知）- Emailサブスクリプション設定が必要"
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-AlarmTopic'

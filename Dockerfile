@@ -27,9 +27,22 @@ RUN yum install -y \
     make \
     && yum clean all
 
-# requirements.txtをコピーして依存関係をインストール
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# requirements-lambda.txtをコピーして依存関係を/var/taskにインストール
+# CRITICAL: Lambda必須依存のみ（streamlit等の開発ツール除外）
+# CRITICAL: numpy<2.0を明示（GCC 7.3.1制約）
+# CRITICAL: /var/taskにインストールすることで、MediaPipeモデルダウンロード先も書き込み可能に
+COPY requirements-lambda.txt ./
+RUN pip install --no-cache-dir --target /var/task -r requirements-lambda.txt
+
+# MediaPipeモデルを手動ダウンロード
+# CRITICAL: Lambda実行時は/var/taskが読み取り専用になるため、ビルド時にモデルを配置必須
+# CRITICAL: pose_landmark_heavy.tflite (model_complexity=2, デフォルト)
+ENV PYTHONPATH="/var/task:${PYTHONPATH}"
+RUN mkdir -p /var/task/mediapipe/modules/pose_landmark && \
+    curl -L -o /var/task/mediapipe/modules/pose_landmark/pose_landmark_heavy.tflite \
+    https://storage.googleapis.com/mediapipe-assets/pose_landmark_heavy.tflite && \
+    ls -lh /var/task/mediapipe/modules/pose_landmark/pose_landmark_heavy.tflite && \
+    echo "✅ MediaPipeモデルダウンロード完了"
 
 # アプリケーションコードをコピー
 COPY config.json .

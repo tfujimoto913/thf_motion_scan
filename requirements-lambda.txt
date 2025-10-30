@@ -1,0 +1,32 @@
+# ==============================================================================
+# THF Motion Scan - Lambda Container Dependencies
+# Purpose: Lambda環境で動画処理を実行するための最小依存関係
+# Decision Log: ADR-009（Lambda Container），3回失敗ルール適用後の分割戦略
+# Created: 2025-10-30
+#
+# CRITICAL:
+#   - numpy<2.0必須（Lambda Python 3.11のGCC 7.3.1制約）
+#   - streamlit/plotly等の開発ツールは除外（Lambda不要）
+#   - テストツール（pytest等）も除外
+# ==============================================================================
+
+# MediaPipe & OpenCV（姿勢推定・動画処理）
+# CRITICAL: numpy<2.0 required for Lambda Python 3.11 (GCC 7.3.1 limitation)
+numpy>=1.24.3,<2.0
+mediapipe==0.10.9
+opencv-python-headless==4.8.1.78
+pandas==2.0.3
+
+# Exporters（Phase 2 - PDF/グラフ出力）
+matplotlib==3.8.2
+reportlab==4.0.7
+
+# AWS SDK（S3/DynamoDB/SQS連携）
+boto3==1.34.0
+botocore==1.34.0
+
+# Lambda Functions（Week 1 - 認証・QR生成）
+PyJWT==2.8.0
+qrcode[pil]==7.4.2
+bcrypt==4.1.1
+Pillow==10.1.0

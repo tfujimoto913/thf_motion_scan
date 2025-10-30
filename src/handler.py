@@ -21,6 +21,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
+from decimal import Decimal
 import boto3
 from urllib.parse import unquote_plus
 
@@ -63,9 +64,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 bucket = record['s3']['bucket']['name']
                 key = unquote_plus(record['s3']['object']['key'])
             elif 'body' in record:
-                # SQS経由のS3イベント
+                # SQS経由のS3イベント（直接）
                 body = json.loads(record['body'])
-                s3_record = json.loads(body['Message'])['Records'][0]
+                # bodyに直接S3イベント構造が含まれている
+                s3_record = body['Records'][0]
                 bucket = s3_record['s3']['bucket']['name']
                 key = unquote_plus(s3_record['s3']['object']['key'])
             else:
@@ -89,6 +91,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 動画処理
         print(f"🎬 動画処理開始")
         worker = VideoProcessingWorker('/var/task/config.json')
+
+        # PHASE B: スコアリングバージョン確認（v2.1システム検証用）
+        print(f"📊 スコアリングシステム: {worker.scoring_version}")
+        print(f"🔄 検証モード: {worker.validation_mode}")
+
         result = worker.process_video(video_path, test_type=test_type)
         
         # 一時ファイル削除
@@ -168,29 +175,57 @@ def save_results_to_s3(result: Dict, original_key: str) -> str:
     return result_key
 
 
+def convert_float_to_decimal(obj):
+    """
+    DynamoDB用にfloatをDecimalに変換
+
+    Args:
+        obj: 変換対象のオブジェクト（dict, list, float等）
+
+    Returns:
+        変換後のオブジェクト
+    """
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    elif isinstance(obj, dict):
+        return {k: convert_float_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_float_to_decimal(item) for item in obj]
+    return obj
+
+
 def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str):
     """
     処理結果をDynamoDBに保存
-    
+
     Args:
         result: 処理結果
         bucket: 元のバケット名
         video_key: 動画のS3キー
         result_key: 結果のS3キー
+
+    PHASE B: v2.1対応 - max_scoreとscoring_versionを記録
+    CRITICAL: DynamoDBはfloat型を受け付けないため、Decimal変換必須
     """
     from datetime import datetime
-    
+
     table = dynamodb.Table(TABLE_NAME)
-    
+
+    # PHASE B: v2.1システム対応（max_scoreとversionを追加）
     item = {
         'video_id': f"{bucket}/{video_key}",
         'processed_at': result['processed_at'],
         'test_type': result['test_type'],
         'score': result['score'],
+        'max_score': result.get('max_score', 12),  # v1: 12, v2.1: 80
+        'scoring_version': result.get('evaluation', {}).get('version', 'v1'),  # v1 or v2.1
         'result_s3_key': result_key,
         'video_info': result['video_info'],
         'health_check': result['health_check'],
         'ttl': int(datetime.now().timestamp()) + (90 * 24 * 60 * 60)  # 90日後に削除
     }
-    
+
+    # DynamoDB用にfloatをDecimalに変換
+    item = convert_float_to_decimal(item)
+
     table.put_item(Item=item)
