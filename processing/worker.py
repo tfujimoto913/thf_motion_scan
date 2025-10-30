@@ -12,6 +12,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 
+# PHASE 5: 構造化ロギング（JSON形式）
+from .logger import log_info, log_warning, log_error, log_processing_start, log_processing_complete, log_quality_check
+
 from .pose_extractor import PoseExtractor
 from .normalizer import BodyNormalizer
 from .evaluators.single_leg_squat import SingleLegSquatEvaluator
@@ -155,49 +158,61 @@ class VideoProcessingWorker:
 
         # PHASE CORE LOGIC: ワークフロー実行
         # 1. ランドマーク抽出
-        print(f"🎥 動画を解析中: {video_path}")
-        print(f"📋 テストタイプ: {test_type}")
+        log_processing_start(str(video_path), test_type)
 
         extraction_result = self.pose_extractor.extract_landmarks(video_path)
 
-        print(f"📊 動画情報: {extraction_result['frame_count']}フレーム, "
-              f"{extraction_result['fps']:.1f}fps, "
-              f"{extraction_result['duration']:.1f}秒")
-        print(f"✅ ランドマーク抽出完了: {extraction_result['detected_frames']}フレーム検出")
+        log_info(
+            "Landmark extraction completed",
+            test_type=test_type,
+            context={
+                "frame_count": extraction_result['frame_count'],
+                "fps": round(extraction_result['fps'], 1),
+                "duration": round(extraction_result['duration'], 1),
+                "detected_frames": extraction_result['detected_frames']
+            }
+        )
 
         # CRITICAL: Health Check実行（ADR-004）
         # 2. ランドマーク品質チェック
-        print(f"🔍 品質チェック実行中...")
+        log_info("Quality check in progress", test_type=test_type)
         is_quality_ok, quality_result = self.health_checker.check_landmark_quality(
             extraction_result['landmarks'],
             video_path
         )
 
-        if is_quality_ok:
-            print(f"✅ 品質チェック完了: OK (検出率 {quality_result['detection_rate']:.1%})")
-        else:
-            print(f"⚠️  品質チェック: 低品質データ検出 (検出率 {quality_result['detection_rate']:.1%})")
-
         # PHASE 1: 品質モニタリング実行
-        print(f"📊 品質モニタリング実行中...")
+        log_info("Quality monitoring in progress", test_type=test_type)
         quality_metrics = self.quality_monitor.calculate_quality_metrics(
             extraction_result['landmarks'],
             total_frames=extraction_result['frame_count']
         )
-        print(f"✅ 品質スコア: {quality_metrics['quality_score']}/100")
-        if quality_metrics['recommend_retake']:
-            print(f"⚠️  再撮影推奨: 品質スコアが{self.quality_monitor.quality_score_threshold}点未満です")
+
+        log_quality_check(
+            detection_rate=quality_result['detection_rate'],
+            quality_score=quality_metrics['quality_score'],
+            test_type=test_type,
+            passed=is_quality_ok and not quality_metrics['recommend_retake']
+        )
 
         # 3. 正規化（base_width計算）
-        print(f"📏 ランドマーク正規化中...")
+        log_info("Landmark normalization in progress", test_type=test_type)
         representative_values, _frame_values = self.normalizer.normalize_landmarks_sequence(
             extraction_result['landmarks']
         )
         base_width = representative_values.get('base_width', 1.0)
-        print(f"✅ 正規化完了: base_width={base_width:.3f}")
+        log_info(
+            "Normalization completed",
+            test_type=test_type,
+            context={"base_width": round(base_width, 3)}
+        )
 
         # 4. 評価（バージョン切り替え対応）
-        print(f"📈 評価を実行中... (システムバージョン: {self.scoring_version})")
+        log_info(
+            "Evaluation in progress",
+            test_type=test_type,
+            context={"scoring_version": self.scoring_version}
+        )
 
         # PHASE B: バージョン選択ロジック（ADR-022, ADR-023）
         if self.scoring_version in ['v2', 'v2.1']:
@@ -224,7 +239,11 @@ class VideoProcessingWorker:
             score = evaluation_result.get('total', 0)
             max_score = 12
 
-        print(f"✅ 評価完了: スコア {score:.1f}/{max_score}")
+        log_processing_complete(
+            test_type=test_type,
+            score=round(score, 1),
+            max_score=max_score
+        )
 
         # 5. 結果をまとめる
         result = {
@@ -253,21 +272,33 @@ class VideoProcessingWorker:
                 result, output_dir, athlete_id, session_id, test_type
             )
             result['score_file'] = str(score_path)
-            print(f"💾 score.json保存: {score_path}")
+            log_info(
+                "Results saved to score.json",
+                test_type=test_type,
+                context={"score_path": str(score_path)}
+            )
 
             # CRITICAL: manifest.json更新（ADR-017）
             manifest_path = self._update_manifest(
                 output_dir, athlete_id, session_id, test_type, result['score']
             )
             result['manifest_file'] = str(manifest_path)
-            print(f"📋 manifest.json更新: {manifest_path}")
+            log_info(
+                "Manifest updated",
+                test_type=test_type,
+                context={"manifest_path": str(manifest_path)}
+            )
 
             # CRITICAL: warnings.json出力（ADR-004, ADR-017）
             warnings_dir = Path(output_dir) / 'processed' / athlete_id / session_id
             warnings_path = self.health_checker.save_warnings(
                 str(warnings_dir / 'warnings.json')
             )
-            print(f"⚠️  warnings.json保存: {warnings_path}")
+            log_info(
+                "Warnings saved",
+                test_type=test_type,
+                context={"warnings_path": str(warnings_path)}
+            )
 
             # PHASE 1: quality_log.json保存
             measurement_id = f"{athlete_id}_{session_id}_{test_type}"
@@ -278,7 +309,11 @@ class VideoProcessingWorker:
                 total_frames=extraction_result['frame_count']
             )
             result['quality_log_file'] = str(quality_log_path)
-            print(f"📊 quality_log.json保存: {quality_log_path}")
+            log_info(
+                "Quality log saved",
+                test_type=test_type,
+                context={"quality_log_path": str(quality_log_path)}
+            )
 
             # PHASE CORE LOGIC: 出力形式エクスポート（ADR-011）
             if output_formats:
@@ -314,25 +349,46 @@ class VideoProcessingWorker:
                     exporter = CSVExporter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['csv'] = filepath
-                    print(f"📄 CSV出力: {filepath}")
+                    log_info(
+                        f"CSV export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 elif fmt == 'png':
                     exporter = PNGPlotter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['png'] = filepath
-                    print(f"📊 PNG出力: {filepath}")
+                    log_info(
+                        f"PNG export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 elif fmt == 'pdf':
                     exporter = PDFReporter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['pdf'] = filepath
-                    print(f"📋 PDF出力: {filepath}")
+                    log_info(
+                        f"PDF export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 else:
-                    print(f"⚠️  未サポート形式: {fmt}")
+                    log_warning(
+                        f"Unsupported format: {fmt}",
+                        test_type=result['test_type'],
+                        context={"format": fmt}
+                    )
 
             except Exception as e:
-                print(f"❌ {fmt}エクスポート失敗: {e}")
+                log_error(
+                    f"{fmt} export failed",
+                    test_type=result['test_type'],
+                    context={"format": fmt},
+                    exc_info=e
+                )
 
         return exported
 

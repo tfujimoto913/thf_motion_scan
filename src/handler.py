@@ -28,6 +28,7 @@ from urllib.parse import unquote_plus
 # processingモジュールをインポート
 sys.path.append('/var/task')
 from processing.worker import VideoProcessingWorker
+from processing.logger import log_info, log_warning, log_error
 
 # AWS クライアント初期化
 s3_client = boto3.client('s3')
@@ -51,14 +52,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Returns:
         Dict: 処理結果
     """
-    print(f"📥 イベント受信: {json.dumps(event)}")
-    
+    log_info("Event received", context={"event": event})
+
     try:
         # S3イベントからバケット名とキーを取得
         if 'Records' in event:
             # S3またはSQS経由
             record = event['Records'][0]
-            
+
             if 'eventSource' in record and record['eventSource'] == 'aws:s3':
                 # S3ダイレクト
                 bucket = record['s3']['bucket']['name']
@@ -72,42 +73,61 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 key = unquote_plus(s3_record['s3']['object']['key'])
             else:
                 raise ValueError("未知のイベントフォーマット")
-                
+
         else:
             raise ValueError("イベントにRecordsが含まれていません")
-        
-        print(f"📦 処理対象: s3://{bucket}/{key}")
-        
+
         # テストタイプをキーから抽出（例: videos/single_leg_squat/xxx.mp4）
         test_type = extract_test_type(key)
-        print(f"📋 テストタイプ: {test_type}")
+
+        log_info(
+            "Processing target identified",
+            test_type=test_type,
+            context={"bucket": bucket, "key": key}
+        )
         
         # 動画をダウンロード
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
             video_path = tmp_file.name
-            print(f"⬇️  動画ダウンロード中: {key}")
+            log_info(
+                "Downloading video from S3",
+                test_type=test_type,
+                context={"key": key}
+            )
             s3_client.download_file(bucket, key, video_path)
-        
+
         # 動画処理
-        print(f"🎬 動画処理開始")
         worker = VideoProcessingWorker('/var/task/config.json')
 
-        # PHASE B: スコアリングバージョン確認（v2.1システム検証用）
-        print(f"📊 スコアリングシステム: {worker.scoring_version}")
-        print(f"🔄 検証モード: {worker.validation_mode}")
+        log_info(
+            "Video processing started",
+            test_type=test_type,
+            context={
+                "scoring_version": worker.scoring_version,
+                "validation_mode": worker.validation_mode
+            }
+        )
 
         result = worker.process_video(video_path, test_type=test_type)
-        
+
         # 一時ファイル削除
         os.unlink(video_path)
-        
+
         # 結果をS3に保存
         result_key = save_results_to_s3(result, key)
-        print(f"💾 結果保存: s3://{RESULTS_BUCKET}/{result_key}")
-        
+        log_info(
+            "Results saved to S3",
+            test_type=test_type,
+            context={"result_key": result_key, "bucket": RESULTS_BUCKET}
+        )
+
         # DynamoDBに記録
         save_to_dynamodb(result, bucket, key, result_key)
-        print(f"📝 DynamoDB記録完了")
+        log_info(
+            "Results saved to DynamoDB",
+            test_type=test_type,
+            context={"table_name": TABLE_NAME}
+        )
         
         return {
             'statusCode': 200,
@@ -120,10 +140,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        print(f"❌ エラー: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
+        # エラーコンテキスト情報を含むログ出力
+        error_context = {
+            "bucket": bucket if 'bucket' in locals() else None,
+            "key": key if 'key' in locals() else None,
+            "test_type": test_type if 'test_type' in locals() else None
+        }
+
+        log_error(
+            "Lambda function execution failed",
+            video_id=key if 'key' in locals() else None,
+            test_type=test_type if 'test_type' in locals() else None,
+            context=error_context,
+            exc_info=e
+        )
+
         return {
             'statusCode': 500,
             'body': json.dumps({
