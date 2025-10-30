@@ -436,3 +436,94 @@ class BaseEvaluatorV2(ABC):
             return 0.0
 
         return self._calculate_angle_3d(shoulder, hip, knee)
+
+    def _calculate_center_of_mass(self, frame_data: Dict) -> Optional[Dict]:
+        """
+        What: 重心位置を計算（B5: 重心移動）
+        Why: 重心の軌跡・移動速度を評価
+        Design Decision: 主要ランドマークの平均位置
+
+        Returns:
+            Dict or None: {'x': float, 'y': float, 'z': float}
+
+        CRITICAL: NaN/Inf保護
+        """
+        # 重心計算に使用するランドマーク
+        key_landmarks = [
+            self.LEFT_SHOULDER, self.RIGHT_SHOULDER,
+            self.LEFT_HIP, self.RIGHT_HIP,
+            self.LEFT_KNEE, self.RIGHT_KNEE
+        ]
+
+        positions = []
+        for idx in key_landmarks:
+            lm = self._get_landmark(frame_data, idx)
+            if lm:
+                positions.append([lm['x'], lm['y'], lm['z']])
+
+        if not positions:
+            return None
+
+        # 平均位置を重心として計算
+        com = np.mean(positions, axis=0)
+        return {
+            'x': float(com[0]),
+            'y': float(com[1]),
+            'z': float(com[2])
+        }
+
+    def _calculate_elbow_angle(self, frame_data: Dict, side: str = 'right') -> float:
+        """
+        What: 肘関節角度を計算（B8: 肩周り独立制御）
+        Why: 上腕の動作パターンを評価
+        Design Decision: 肩-肘-手首の3点から角度算出
+
+        Args:
+            side: 'left' or 'right'
+
+        Returns:
+            float: 肘関節角度（度数）
+
+        CRITICAL: NaN/Inf保護
+        """
+        if side == 'left':
+            shoulder = self._get_landmark(frame_data, self.LEFT_SHOULDER)
+            elbow = self._get_landmark(frame_data, self.LEFT_ELBOW)
+            wrist = self._get_landmark(frame_data, self.LEFT_WRIST)
+        else:
+            shoulder = self._get_landmark(frame_data, self.RIGHT_SHOULDER)
+            elbow = self._get_landmark(frame_data, self.RIGHT_ELBOW)
+            wrist = self._get_landmark(frame_data, self.RIGHT_WRIST)
+
+        if not all([shoulder, elbow, wrist]):
+            return 0.0
+
+        return self._calculate_angle_3d(shoulder, elbow, wrist)
+
+    def _calculate_shoulder_elevation(self, frame_data: Dict, side: str = 'right') -> float:
+        """
+        What: 肩挙上角度を計算（B8: 肩周り独立制御）
+        Why: 肩甲骨の安定性を評価
+        Design Decision: 肩と肘のy座標差
+
+        Args:
+            side: 'left' or 'right'
+
+        Returns:
+            float: 肩挙上角度（正規化座標の差分）
+
+        CRITICAL: NaN/Inf保護
+        """
+        if side == 'left':
+            shoulder = self._get_landmark(frame_data, self.LEFT_SHOULDER)
+            elbow = self._get_landmark(frame_data, self.LEFT_ELBOW)
+        else:
+            shoulder = self._get_landmark(frame_data, self.RIGHT_SHOULDER)
+            elbow = self._get_landmark(frame_data, self.RIGHT_ELBOW)
+
+        if not all([shoulder, elbow]):
+            return 0.0
+
+        # y座標の差（正の値 = 肩が肘より高い = 腕を下げている、負の値 = 肩挙上）
+        elevation = shoulder['y'] - elbow['y']
+        return float(abs(elevation))

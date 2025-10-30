@@ -138,25 +138,160 @@
       },
       "status": "Phase B実装中"
     },
-    "upper_body_swing": {
-      "display_name": "Upper Body Swing",
-      "status": "Phase Bで実装予定"
-    },
-    "cross_step": {
-      "display_name": "Cross Step",
-      "status": "Phase Bで実装予定"
-    },
     "stride_mimic": {
       "display_name": "Stride Mimic",
-      "status": "Phase Bで実装予定"
-    },
-    "push_pull": {
-      "display_name": "Push-Pull",
-      "status": "Phase Bで実装予定"
+      "test_id": "T03",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["stride_length", "hip_extension", "completion"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B3", "B7"],
+        "secondary_principles": ["B1", "B2", "B6"],
+        "eccentric": {
+          "description": "準備・引き込み局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 4.5,
+          "B6": 2.0,
+          "B7": 4.5,
+          "total": 15.0
+        },
+        "concentric": {
+          "description": "蹴り出し・前進局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 4.5,
+          "B6": 2.0,
+          "B7": 4.5,
+          "total": 15.0
+        }
+      },
+      "status": "Phase B実装中"
     },
     "jump_landing": {
       "display_name": "Jump & Landing",
-      "status": "Phase Bで実装予定"
+      "test_id": "T04",
+      "max_score": 36,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["jump_height", "landing_balance", "no_fall"]
+      },
+      "section_b": {
+        "max_score": 33,
+        "primary_principles": ["B2", "B6"],
+        "secondary_principles": ["B1", "B3", "B4"],
+        "eccentric": {
+          "description": "着地・衝撃吸収局面のみ",
+          "B1": 4.0,
+          "B2": 9.0,
+          "B3": 4.0,
+          "B4": 4.0,
+          "B6": 12.0,
+          "total": 33.0
+        },
+        "concentric": null
+      },
+      "special_structure": "eccentric_only",
+      "status": "Phase B実装中"
+    },
+    "upper_body_swing": {
+      "display_name": "Upper Body Swing",
+      "test_id": "T05",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["arm_swing_amplitude", "balance", "completion"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B7", "B8"],
+        "secondary_principles": ["B1", "B2"],
+        "eccentric": {
+          "description": "後方スイング局面",
+          "B1": 3.0,
+          "B2": 3.0,
+          "B7": 4.5,
+          "B8": 4.5,
+          "total": 15.0
+        },
+        "concentric": {
+          "description": "前方スイング局面",
+          "B1": 3.0,
+          "B2": 3.0,
+          "B7": 4.5,
+          "B8": 4.5,
+          "total": 15.0
+        }
+      },
+      "status": "Phase B実装中"
+    },
+    "push_pull": {
+      "display_name": "Push-Pull",
+      "test_id": "T06",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["pull_distance", "push_angle", "completion"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B7", "B8"],
+        "secondary_principles": ["B1", "B2"],
+        "pull_phase": {
+          "description": "プル局面",
+          "B1": 3.0,
+          "B2": 3.0,
+          "B7": 4.5,
+          "B8": 4.5,
+          "total": 15.0
+        },
+        "push_phase": {
+          "description": "プッシュ局面",
+          "B1": 3.0,
+          "B2": 3.0,
+          "B7": 4.5,
+          "B8": 4.5,
+          "total": 15.0
+        }
+      },
+      "special_structure": "pull_push_separate",
+      "status": "Phase B実装中"
+    },
+    "cross_step": {
+      "display_name": "Cross Step",
+      "test_id": "T07",
+      "max_score": 33,
+      "section_a": {
+        "max_score": 3,
+        "criteria": ["step_width", "knee_flexion", "completion"]
+      },
+      "section_b": {
+        "max_score": 30,
+        "primary_principles": ["B3", "B5"],
+        "secondary_principles": ["B1", "B2", "B4"],
+        "eccentric": {
+          "description": "クロス・下降局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 4.5,
+          "B4": 2.0,
+          "B5": 4.5,
+          "total": 15.0
+        },
+        "concentric": {
+          "description": "蹴り出し・復帰局面",
+          "B1": 2.0,
+          "B2": 2.0,
+          "B3": 4.5,
+          "B4": 2.0,
+          "B5": 4.5,
+          "total": 15.0
+        }
+      },
+      "status": "Phase B実装中"
     }
   },
 
