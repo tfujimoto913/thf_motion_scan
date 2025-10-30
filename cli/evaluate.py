@@ -129,7 +129,28 @@ def main():
         print("=" * 60)
         print("✨ 評価完了！")
         print("=" * 60)
-        print(f"🎯 総合スコア: {result['score']:.1f}/12")
+
+        # PHASE B: v2.1対応（動的max_score表示）
+        max_score = result.get('max_score', 12)
+        print(f"🎯 総合スコア: {result['score']:.1f}/{max_score}")
+
+        # v2.1の場合は詳細スコア表示
+        if 'evaluation' in result and 'version' in result['evaluation']:
+            version = result['evaluation']['version']
+            if version in ['v2', 'v2.1']:
+                eval_data = result['evaluation']
+                print(f"   📊 システムバージョン: {version}")
+                print(f"   🅰️  A評価（実施可否）: {eval_data.get('A_execution_score', 0):.1f}/20")
+                print(f"   🅱️  B評価（8原則）: {eval_data.get('B_total', 0):.1f}/60")
+
+                # B評価の局面別詳細（B_principlesから計算）
+                if 'B_principles' in eval_data:
+                    principles = eval_data['B_principles']
+                    ecc_total = sum(principles.get('eccentric', {}).values())
+                    con_total = sum(principles.get('concentric', {}).values())
+                    print(f"      - Eccentric局面: {ecc_total:.1f}/30")
+                    print(f"      - Concentric局面: {con_total:.1f}/30")
+
         print(f"👤 アスリートID: {result['athlete_id']}")
         print(f"📅 セッションID: {result['session_id']}")
         print(f"⏱️  処理時間: {result['processed_at']}")

@@ -553,8 +553,8 @@
     "nan_handling": "preserve"
   },
   "scoring_system": {
-    "_comment": "Phase A: 並行動作環境 - v1=既存(7原則・12点満点), v2=新システム(8原則・237点満点)",
-    "version": "v1",
+    "_comment": "Phase B: v2.1システム実装完了（ADR-022, ADR-023） - v1=既存(7原則・12点満点), v2.1=新システム(8原則・560点満点)",
+    "version": "v2.1",
     "validation_mode": false,
     "v1_config": {
       "description": "既存評価システム（7原則・12点満点）",
@@ -562,7 +562,7 @@
       "rules_path": "processing/config/test_rules.json"
     },
     "v2_config": {
-      "description": "新評価システム（8原則・237点満点）- Phase Bで実装",
+      "description": "新評価システム（8原則・560点満点）- Phase B実装完了",
       "evaluators_path": "processing/evaluators_v2/",
       "rules_path": "processing/evaluators_v2/config_v2/test_rules_v2.json"
     }

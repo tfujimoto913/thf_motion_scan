@@ -21,6 +21,14 @@ from .evaluators.cross_step import CrossStepEvaluator
 from .evaluators.stride_mimic import StrideMinicryEvaluator
 from .evaluators.push_pull import PushPullEvaluator
 from .evaluators.jump_landing import JumpLandingEvaluator
+# PHASE B: v2評価器（8原則・560点満点システム）
+from .evaluators_v2.single_leg_squat_v2 import SingleLegSquatEvaluatorV2
+from .evaluators_v2.upper_body_swing_v2 import UpperBodySwingEvaluatorV2
+from .evaluators_v2.skater_lunge_v2 import SkaterLungeEvaluatorV2
+from .evaluators_v2.cross_step_v2 import CrossStepEvaluatorV2
+from .evaluators_v2.stride_mimic_v2 import StrideMimicEvaluatorV2
+from .evaluators_v2.push_pull_v2 import PushPullEvaluatorV2
+from .evaluators_v2.jump_landing_v2 import JumpLandingEvaluatorV2
 from .health_check import HealthChecker, apply_random_seed
 from .quality_monitor import QualityMonitor
 from .exporters import CSVExporter, PNGPlotter, PDFReporter
@@ -71,9 +79,17 @@ class VideoProcessingWorker:
             'jump_landing': JumpLandingEvaluator(config_path)
         }
 
-        # PHASE A: v2（新システム）のevaluators初期化プレースホルダー
-        # Phase Bで実装予定
-        self.evaluators_v2 = None  # Phase Bで初期化
+        # PHASE B: v2（新システム）のevaluators初期化（8原則・560点満点）
+        # ADR-022, ADR-023: v2.1システム実装完了
+        self.evaluators_v2 = {
+            'single_leg_squat': SingleLegSquatEvaluatorV2(),
+            'upper_body_swing': UpperBodySwingEvaluatorV2(),
+            'skater_lunge': SkaterLungeEvaluatorV2(),
+            'cross_step': CrossStepEvaluatorV2(),
+            'stride_mimic': StrideMimicEvaluatorV2(),
+            'push_pull': PushPullEvaluatorV2(),
+            'jump_landing': JumpLandingEvaluatorV2()
+        }
 
         self.health_checker = HealthChecker(config_path)
         self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
@@ -183,13 +199,19 @@ class VideoProcessingWorker:
         # 4. 評価（バージョン切り替え対応）
         print(f"📈 評価を実行中... (システムバージョン: {self.scoring_version})")
 
-        # PHASE A: バージョン選択ロジック
-        if self.scoring_version == 'v2':
-            # Phase Bで実装予定
-            raise NotImplementedError(
-                "Phase B で実装予定: 8原則・237点満点評価システム (v2)\n"
-                f"config.json の scoring_system.version を 'v1' に変更してください。"
+        # PHASE B: バージョン選択ロジック（ADR-022, ADR-023）
+        if self.scoring_version in ['v2', 'v2.1']:
+            # v2/v2.1: 8原則・560点満点評価システム
+            evaluator = self.evaluators_v2[test_type]
+            evaluation_result = evaluator.evaluate(
+                extraction_result['landmarks'],
+                base_width=base_width,
+                shoulder_width=representative_values.get('shoulder_width', 0.4),
+                leg_length=representative_values.get('leg_length', 0.9)
             )
+            # CRITICAL: v2システムでは'total_score'を'score'にマッピング
+            score = evaluation_result.get('total_score', 0)
+            max_score = evaluation_result.get('max_possible', 80)
         else:
             # v1: 既存システム（7原則・12点満点）
             evaluator = self.evaluators[test_type]
@@ -199,8 +221,10 @@ class VideoProcessingWorker:
                 shoulder_width=representative_values.get('shoulder_width', 0.4),
                 leg_length=representative_values.get('leg_length', 1.0)
             )
+            score = evaluation_result.get('total', 0)
+            max_score = 12
 
-        print(f"✅ 評価完了: スコア {evaluation_result.get('total', 0)}/{12 if self.scoring_version == 'v1' else 237}")
+        print(f"✅ 評価完了: スコア {score:.1f}/{max_score}")
 
         # 5. 結果をまとめる
         result = {
@@ -208,7 +232,8 @@ class VideoProcessingWorker:
             'test_type': test_type,
             'athlete_id': athlete_id,
             'session_id': session_id,
-            'score': evaluation_result.get('total', evaluation_result.get('score', 0)),
+            'score': score,  # v1: 'total', v2: 'total_score'
+            'max_score': max_score,  # v1: 12, v2: 80
             'evaluation': evaluation_result,
             'video_info': {
                 'fps': extraction_result['fps'],
