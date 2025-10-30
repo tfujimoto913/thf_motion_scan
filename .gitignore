@@ -35,6 +35,7 @@ test_videos/**/*.mov
 tests/output/
 output_test/
 output/
+output_*/
 warnings.json
 .coverage
 htmlcov/
