@@ -524,8 +524,8 @@ def show_result_detail(df: pd.DataFrame, video_id: str):
                 principle_name = PRINCIPLE_NAMES.get(principle_num, f"P{principle_num}")
                 warning = " ⚠️" if score < 2.0 else ""
 
-                # プログレスバー表示
-                progress = score / max_principle_score if max_principle_score > 0 else 0
+                # プログレスバー表示（0.0-1.0の範囲内に制限）
+                progress = min(score / max_principle_score, 1.0) if max_principle_score > 0 else 0
                 st.write(f"**P{principle_num} {principle_name}**: {score:.1f}/{max_principle_score:.1f}点{warning}")
                 st.progress(progress)
                 st.write("")

@@ -253,6 +253,7 @@ def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str)
         'result_s3_key': result_key,
         'video_info': result['video_info'],
         'health_check': result['health_check'],
+        'evaluation': result.get('evaluation', {}),  # CRITICAL: Dashboard表示用に評価詳細も保存
         'ttl': int(datetime.now().timestamp()) + (90 * 24 * 60 * 60)  # 90日後に削除
     }
 
