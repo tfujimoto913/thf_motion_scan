@@ -252,8 +252,40 @@ def results_list_page(dynamodb, resources, demo_mode=False):
             st.warning("評価結果がありません。動画をアップロードしてください。")
             return
 
+        # CRITICAL: DynamoDBのDecimal型をfloatに変換（DataFrame作成前）
+        from decimal import Decimal
+
+        def convert_decimals(obj):
+            """DynamoDB Decimal型をfloatに再帰的に変換"""
+            if isinstance(obj, list):
+                return [convert_decimals(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {key: convert_decimals(value) for key, value in obj.items()}
+            elif isinstance(obj, Decimal):
+                return float(obj)
+            return obj
+
+        # 全てのDecimal型をfloatに変換
+        items_converted = [convert_decimals(item) for item in items]
+
         # DataFrame変換
-        df = pd.DataFrame(items)
+        df = pd.DataFrame(items_converted)
+
+        # CRITICAL: メタデータ項目を除外
+        # - video_idが"METADATA"で始まる項目を除外
+        # - 必須カラムが存在する行のみ残す
+        df = df[
+            ~df['video_id'].astype(str).str.startswith('METADATA') &
+            df['video_id'].notna() &
+            df['processed_at'].notna() &
+            df['test_type'].notna() &
+            df['score'].notna()
+        ]
+
+        # 空チェック
+        if df.empty:
+            st.warning("評価結果がありません。動画をアップロードしてください。")
+            return
 
         # 列選択と並び替え
         display_columns = ['video_id', 'test_type', 'score', 'processed_at']
@@ -262,8 +294,16 @@ def results_list_page(dynamodb, resources, demo_mode=False):
         # クライアントID表示用カラム追加
         df_display['client'] = df_display['video_id'].apply(format_client_id_display)
 
-        df_display['processed_at'] = pd.to_datetime(df_display['processed_at'])
-        df_display = df_display.sort_values('processed_at', ascending=False)
+        # processed_atをdatetimeに変換（エラーハンドリング付き）
+        try:
+            df_display['processed_at'] = pd.to_datetime(df_display['processed_at'], errors='coerce')
+            # 変換できなかった行（NaT）を除外
+            df_display = df_display[df_display['processed_at'].notna()]
+            df_display = df_display.sort_values('processed_at', ascending=False)
+        except Exception as e:
+            st.warning(f"⚠️ 日時データの解析に失敗しました: {str(e)}")
+            # 変換失敗時はprocessed_atでソートせずそのまま表示
+            pass
 
         # 表示用に列を並び替え（client, test_type, score, processed_at）
         df_display = df_display[['client', 'test_type', 'score', 'processed_at', 'video_id']]
@@ -330,8 +370,12 @@ def get_previous_result(df: pd.DataFrame, video_id: str, test_type: str) -> Opti
         return None
 
     # processed_at で降順ソート（最新の過去データ）
-    df_same_client['processed_at'] = pd.to_datetime(df_same_client['processed_at'])
-    df_same_client = df_same_client.sort_values('processed_at', ascending=False)
+    try:
+        df_same_client['processed_at'] = pd.to_datetime(df_same_client['processed_at'])
+        df_same_client = df_same_client.sort_values('processed_at', ascending=False)
+    except Exception:
+        # datetime変換失敗時はソートせずそのまま使用
+        pass
 
     # 最新の過去データを返す
     return df_same_client.iloc[0].to_dict()

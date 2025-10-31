@@ -55,24 +55,24 @@ def get_resource_names():
     }
 
 
-# テストタイプ定義
+# テストタイプ定義（T01-T07の正式順序）
 TEST_TYPES = [
-    'single_leg_squat',
-    'upper_body_swing',
-    'skater_lunge',
-    'cross_step',
-    'stride_mimic',
-    'push_pull',
-    'jump_landing'
+    'single_leg_squat',    # T01
+    'skater_lunge',        # T02
+    'stride_mimic',        # T03
+    'jump_landing',        # T04
+    'upper_body_swing',    # T05
+    'push_pull',           # T06
+    'cross_step'           # T07
 ]
 
 # テストタイプ表示名（日本語）
 TEST_TYPE_DISPLAY = {
     'single_leg_squat': '片脚スタンススクワット',
-    'upper_body_swing': '上体スイング',
     'skater_lunge': 'スケーターランジ',
-    'cross_step': 'クロスステップ模倣',
     'stride_mimic': 'スケートストライド模倣',
+    'jump_landing': 'ミニジャンプ＆着地',
+    'upper_body_swing': '上体スイング',
     'push_pull': 'プッシュプル動作',
-    'jump_landing': 'ミニジャンプ＆着地'
+    'cross_step': 'クロスステップ模倣'
 }

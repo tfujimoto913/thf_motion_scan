@@ -393,13 +393,13 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub '${AWS::StackName}-Lambda-Duration'
-      AlarmDescription: 'Lambda実行時間が150秒を超過（v2.1想定: 140秒）'
+      AlarmDescription: 'Lambda実行時間が300秒を超過（v2.1システム: 最大5分想定）'
       MetricName: Duration
       Namespace: AWS/Lambda
       Statistic: Average
       Period: 300  # 5分
       EvaluationPeriods: 2
-      Threshold: 150000  # 150秒（ミリ秒）
+      Threshold: 300000  # 300秒（ミリ秒）= 5分
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
         - Name: FunctionName
