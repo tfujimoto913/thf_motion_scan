@@ -13,6 +13,9 @@ env/
 # OS / Editor
 .DS_Store
 .vscode/
+.cursor/
+.codex/
+.cursorignore
 
 # Large artifacts
 *.onnx
@@ -40,6 +43,8 @@ warnings.json
 .coverage
 htmlcov/
 .pytest_cache/
+test_b1_*.py
+test_b1_*.json
 
 # AWS SAM
 .aws-sam/
@@ -49,6 +54,7 @@ packaged.yaml
 
 # Docker
 .docker/
+*.patch
 
 # Temporary files
 *.tmp
