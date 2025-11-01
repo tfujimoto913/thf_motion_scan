@@ -123,3 +123,16 @@ TEST_TYPE_DISPLAY = {
     'push_pull': 'プッシュプル動作',
     'cross_step': 'クロスステップ模倣'
 }
+
+# レーダーチャート用短縮名（日本語）
+# Purpose: レーダーチャート軸ラベルを短縮表示（可読性向上）
+# Design Decision: 6文字以内に省略（ADR-023 Stage 3）
+TEST_SHORT_MAP = {
+    'single_leg_squat': '片脚SQ',
+    'skater_lunge': 'ランジ',
+    'stride_mimic': 'ストライド',
+    'jump_landing': 'ジャンプ',
+    'upper_body_swing': '上体SW',
+    'push_pull': 'Push/Pull',
+    'cross_step': 'クロスS'
+}

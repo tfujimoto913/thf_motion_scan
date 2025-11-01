@@ -34,13 +34,14 @@ from config import (
     get_resource_names,
 )
 from demo_data import get_demo_results
+from data_loader import cached_scan_results, load_results_items
 from utils import (  # type: ignore[import-untyped]
     VideoValidator,
     configure_structured_logging,
-    emit_structured_log,
+    log_dashboard_event,
 )
 from session_dao import group_tests_by_session, get_latest_sessions
-from session_pages import session_list_page
+from session_pages import session_list_page, session_detail_page
 
 
 # 種目名マッピング（内部コード→日本語名）
@@ -75,27 +76,6 @@ PRINCIPLE_NAMES = {
     6: "背面筋群",
     7: "上下分離"
 }
-
-
-def log_dashboard_event(event_type: str, level: int = logging.INFO, **payload: Any) -> None:
-    """Emit a structured log enriched with dashboard metadata."""
-
-    request_id = st.session_state.get('request_id')
-    environment = st.session_state.get('selected_env', DEFAULT_ENV)
-    base_payload: Dict[str, Any] = {
-        'event_type': event_type,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        'request_id': request_id,
-        'environment': environment,
-    }
-
-    for key, value in payload.items():
-        if isinstance(value, (dict, list, tuple, str, int, float, bool)) or value is None:
-            base_payload[key] = value
-        else:
-            base_payload[key] = str(value)
-
-    emit_structured_log(base_payload, level=level)
 
 
 def parse_semver(version_str: Optional[str]) -> Optional[Tuple[int, int, int]]:
@@ -383,24 +363,6 @@ def summarize_scores(record: Dict[str, Any]) -> Dict[str, Any]:
 
     return summary
 
-
-@st.cache_data(ttl=PERFORMANCE_LIMITS["cache_ttl_seconds"], show_spinner=False)
-def cached_scan_results(table_name: str) -> List[Dict[str, Any]]:
-    """Scan the DynamoDB results table with caching and pagination handling."""
-
-    table = boto3.resource('dynamodb').Table(table_name)
-    items: List[Dict[str, Any]] = []
-
-    response = table.scan()
-    items.extend(response.get('Items', []))
-
-    while response.get('LastEvaluatedKey'):
-        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
-        items.extend(response.get('Items', []))
-
-    return items
-
-
 def extract_principle_radar_scores(evaluation: Dict[str, Any]) -> Dict[int, float]:
     """
     What: v2.1評価のB_principlesから原則単位のスコアを抽出
@@ -438,9 +400,6 @@ def extract_principle_radar_scores(evaluation: Dict[str, Any]) -> Dict[int, floa
     for pid, values in principle_scores.items():
         if values:
             aggregated[pid] = sum(values) / len(values)
-
-    return aggregated
-
 
 def parse_client_id(video_id: str) -> Optional[Dict[str, str]]:
     """
@@ -695,44 +654,20 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
     """
     st.header("📊 評価結果一覧")
 
-    # デモモード時の表示
     if demo_mode:
         st.info("🎭 **デモモード**: サンプルデータを表示中")
-        items = get_demo_results()
-        log_dashboard_event(
-            "data_fetch",
-            source="demo",
-            item_count=len(items),
-        )
-    else:
-        if not resources:
-            st.error("❌ AWS設定エラー: AccountIdが取得できません")
-            log_dashboard_event("data_fetch_error", level=logging.ERROR, reason="missing_resources")
-            return
 
-        try:
-            table = dynamodb.Table(resources['table_name'])
-            response = table.scan()
-            items = response['Items']
-            log_dashboard_event(
-                "data_fetch",
-                source="dynamodb",
-                table=resources['table_name'],
-                item_count=len(items),
-            )
-        except Exception as e:
-            st.error("❌ 評価結果を取得できませんでした")
-            st.caption("ネットワークやAWS権限を確認し、ページを再読み込みしてください")
-            with st.expander("技術情報 (サポート向け)"):
-                st.code(str(e))
-            log_dashboard_event(
-                "data_fetch_error",
-                level=logging.ERROR,
-                source="dynamodb",
-                table=resources['table_name'] if resources else None,
-                error=str(e),
-            )
-            return
+    try:
+        items = load_results_items(resources, demo_mode)
+    except ValueError:
+        st.error("❌ AWS設定エラー: AccountIdが取得できません")
+        return
+    except Exception as e:
+        st.error("❌ 評価結果を取得できませんでした")
+        st.caption("ネットワークやAWS権限を確認し、ページを再読み込みしてください")
+        with st.expander("技術情報 (サポート向け)"):
+            st.code(str(e))
+        return
 
     # 共通処理（デモモード・通常モード両対応）
     try:
@@ -1555,6 +1490,12 @@ def main():
             max_months=max_months,
         )
 
+    if st.sidebar.button("キャッシュをクリア", help="保存済みのデータキャッシュを手動で削除します"):
+        cached_scan_results.clear()
+        st.session_state.pop('cache_metadata', None)
+        log_dashboard_event("cache_clear", scope="all")
+        st.sidebar.success("キャッシュをクリアしました")
+
     # サイドバーでページ選択
     st.sidebar.markdown("---")
     page = st.sidebar.radio(
@@ -1573,7 +1514,12 @@ def main():
     if page == "📤 動画アップロード":
         upload_video_page(s3_client, resources, demo_mode)
     elif page == "📊 セッション一覧（560点満点）":
-        session_list_page(dynamodb, resources, demo_mode)
+        # Stage 3: セッション詳細画面のナビゲーション
+        # session_state['selected_session'] が存在する場合は詳細画面を表示
+        if 'selected_session' in st.session_state:
+            session_detail_page(dynamodb, resources, demo_mode)
+        else:
+            session_list_page(dynamodb, resources, demo_mode)
     elif page == "📋 評価結果一覧（種目別）":
         results_list_page(dynamodb, resources, demo_mode, coach_mode)
 
