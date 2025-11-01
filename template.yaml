@@ -129,7 +129,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ProcessingFunction'
       PackageType: Image
-      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/thf-motion-scan:latest'
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/thf-motion-scan:v2.1-b1-feedback'
       Architectures:
         - x86_64
       Events:
