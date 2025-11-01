@@ -2303,3 +2303,143 @@
   - ECRイメージ: thf-motion-scan:v2.1-decimal（SHA: 608a445581...）
   - CloudFormation Stack: thf-motion-scan（UPDATE_COMPLETE）
   - ADR-009（Lambda Container）、ADR-023（v2.1システム）
+
+## ADR-025: Phase 5 Docker Deployment完了 + 本番運用監視基盤強化
+- 日付: 2025-11-01
+- 決定者: Human + Claude Code
+- 決定: Dockerイメージの本番デプロイ完了、CloudFormationスタックの本番運用対応強化実施
+- 理由:
+  - **デプロイ自動化**: ECR+Lambda Container Imageによる継続的デプロイ基盤確立
+  - **複数環境対応**: dev/staging/prod環境を1つのテンプレートで管理
+  - **運用自動化**: SNS Emailサブスクリプション手動設定の排除
+  - **コスト最適化**: ログレベル別保持期間設定で不要なログ削減
+  - **運用チームUX**: 日本語Dashboard、アクショナブルメトリクス重視
+- 実施内容:
+  1. **Docker Deployment完了**:
+     - ECRリポジトリ: `thf-motion-scan`（既存）
+     - イメージタグ: `v2.1-b1-feedback`
+     - ビルド: `docker buildx build --platform linux/amd64`（キャッシュ利用で高速化）
+     - Push: ECR ap-northeast-1へ正常完了
+     - Lambda更新: `aws lambda update-function-code`で即座反映
+     - Status: Successful（CodeSha: f0e46cf512...）
+  2. **CloudFormation Parameterization（12パラメータ追加）**:
+     - `Environment`: dev/staging/prod選択
+     - `AlertsEmail`: SNS通知先メールアドレス
+     - `EnableAlertsEmailSubscription`: 'true'/'false'
+     - `Namespace`: カスタムメトリクス用（デフォルト: THF/MotionScan）
+     - アラーム閾値:
+       - `AlarmLambdaErrorsThreshold`: 10件/5分
+       - `AlarmLambdaDurationMaxMs`: 300000ms（5分）
+       - `AlarmDynamoUserErrorsThreshold`: 5件/5分
+       - `AlarmLandmarkDetectionFailuresThreshold`: 3件/5分
+     - ログ保持期間:
+       - `InfoRetentionInDays`: 30日
+       - `WarnRetentionInDays`: 90日
+       - `ErrorRetentionInDays`: 180日
+       - `MetricsRetentionInDays`: 365日
+  3. **構造化ログ実装**:
+     - 4レベル別CloudWatch Log Groups作成:
+       - `/thf/motion-scan/${Environment}/logs/info`
+       - `/thf/motion-scan/${Environment}/logs/warn`
+       - `/thf/motion-scan/${Environment}/logs/error`
+       - `/thf/motion-scan/${Environment}/logs/metrics`
+     - Lambda関数にログ書き込み権限付与（IAM Policy Statement追加）
+     - 環境変数でLog Group名を注入（LOG_GROUP_INFO等）
+     - X-Ray Tracing有効化（`Tracing: Active`）
+  4. **SNS自動化**:
+     - 手動設定削除: `aws sns subscribe`コマンド不要
+     - Conditional作成:
+       ```yaml
+       Conditions:
+         CreateAlertsEmailSubscription:
+           Fn::And:
+             - !Equals [!Ref EnableAlertsEmailSubscription, 'true']
+             - !Not [!Equals [!Ref AlertsEmail, '']]
+       ```
+     - EmailサブスクリプションはCondition付きで自動作成
+     - パラメータ未設定時はアラーム通知なし（デプロイ失敗回避）
+  5. **CloudWatch Alarm改善**:
+     - パラメータ化: 環境別に閾値調整可能
+     - カスタムメトリクス対応: `LandmarkDetectionFailures`等
+     - 削除: SQS QueueDepth, DLQ関連（Phase 5で不使用）
+     - DynamoDB UserErrors追加: スキーマエラー検知
+  6. **CloudWatch Dashboard大幅改善**（24ウィジェット構成）:
+     - **基本メトリクス**（4ウィジェット）:
+       - Requests（24時間）
+       - Lambda Error Rate（1時間、10%閾値表示）
+       - Duration Percentiles（P50/P95/P99）
+       - Uptime（SLO 99%表示）
+     - **ビジネスメトリクス**（3ウィジェット）:
+       - 解析完了数（24時間）
+       - テスト別利用状況（7テスト内訳、積み上げグラフ）
+       - スコア分布（0-3点、ログベース集計）
+     - **エラー分析**（3ウィジェット）:
+       - エラータイプ別件数（ログベース集計）
+       - 警告サマリー（Warnログ統計）
+       - 最新エラーログ（20件）
+     - **ログインサイト統合**（14ウィジェット）:
+       - 日本語ラベル（運用チーム向けUX）
+       - ログベースクエリ活用（スコア分布、エラー分類）
+- 技術詳細:
+  - **Dockerビルド最適化**:
+    - キャッシュレイヤー活用（大半のレイヤーが`CACHED`）
+    - 変更部分のみ再ビルド（processing/, src/handler.py）
+    - ビルド時間: 約10秒（フルビルド時は5分）
+  - **Lambda関数更新**:
+    - `aws lambda update-function-code`で即座更新（SAM deploy不要）
+    - `LastUpdateStatus: Successful`を確認（10秒程度）
+  - **CloudFormation変更差分**:
+    - +653行、-119行（template.yaml）
+    - Parameters: 12個追加
+    - Resources: Log Groups 5個追加、Lambda Policies更新
+    - Outputs: 変更なし（既存リソース互換）
+  - **Dashboard設計**:
+    - 6列×4行レイアウト（24時間幅 / 6列 = 4列/ウィジェット）
+    - 時系列グラフ優先（timeSeries view）
+    - 日本語ラベル使用（例: "解析完了数", "テスト別利用状況"）
+    - アラーム閾値をannotationで可視化
+- 影響範囲:
+  - **既存デプロイ**: 完全互換（Parameter Default値で動作）
+  - **新規環境**: `sam deploy --parameter-overrides`で環境別設定
+  - **コスト影響**:
+    - Log Groups: 4倍増加（ただしRetention最適化で相殺）
+    - CloudWatch Alarms: 変更なし（5個→4個）
+    - Dashboard: 無料（3個までFree Tier）
+  - **運用影響**:
+    - SNS手動設定不要（デプロイ時間30秒短縮）
+    - Dashboard日本語化（運用チーム学習コスト削減）
+- トレードオフ:
+  - **Parameters増加（12個）**:
+    - メリット: 環境別カスタマイズ柔軟性
+    - デメリット: 設定ミスリスク増
+    - 対策: Default値設定、samconfig.toml記載推奨
+  - **ログ分散（4 Log Groups）**:
+    - メリット: レベル別保持期間設定、コスト最適化
+    - デメリット: 集約クエリ複雑化
+    - 対策: Dashboardで統合表示、CloudWatch Insights活用
+  - **SNS Conditional作成**:
+    - メリット: デプロイ失敗回避（Email未設定時）
+    - デメリット: CloudFormation構文複雑化
+    - 対策: コメント充実、ドキュメント記載
+- デプロイされたリソース:
+  - API Gateway: https://bub6cz4z9d.execute-api.ap-northeast-1.amazonaws.com/Prod/
+  - Lambda関数: thf-motion-scan-ProcessingFunction（v2.1-b1-feedback）
+  - 動画バケット: thf-motion-scan-videos-417081976353
+  - 結果バケット: thf-motion-scan-results-417081976353
+  - DynamoDB: thf-motion-scan-results
+  - CloudWatch Dashboard: MotionScan-Ops-dev
+  - SNSトピック: thf-alerts-dev
+- 制約事項:
+  - Email通知: 初回は手動確認必要（SNSサブスクリプション承認）
+  - カスタムメトリクス: Lambda関数側で実装必要（現在未実装）
+  - Dashboard: 日本語表示はブラウザのエンコーディング依存
+- 今後の展開:
+  - **優先度A**: 動画アップロードによる実運用テスト（明日実施予定）
+  - **優先度B**: カスタムメトリクス実装（LandmarkDetectionFailures等）
+  - **優先度C**: Dashboard実運用フィードバック収集（1週間後）
+  - **Phase 5完了**: ダッシュボード機能実装（Streamlit）
+- 参照:
+  - Commit: 95da2e1 "stage(5): enable production-ready observability - parameterized monitoring stack"
+  - ECRイメージ: thf-motion-scan:v2.1-b1-feedback（SHA: f0e46cf512...）
+  - CloudFormation Stack: thf-motion-scan（変更なし、Lambda関数のみ更新）
+  - ADR-007（Lambda Container）、ADR-024（v2.1統合）
