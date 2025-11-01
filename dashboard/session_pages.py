@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import plotly.graph_objects as go
 from session_dao import get_latest_sessions, get_session_by_id
 from data_loader import load_results_items
+from utils import record_error
 from config import TEST_TYPES, TEST_TYPE_DISPLAY, TEST_SHORT_MAP
 
 
@@ -45,9 +46,11 @@ def session_list_page(dynamodb, resources, demo_mode=False):
         items = load_results_items(resources, demo_mode)
     except ValueError:
         st.error("❌ AWS設定エラー: AccountIdが取得できません")
+        record_error("session_list_page", "missing resources")
         return
     except Exception as e:
         st.error(f"❌ データ取得エラー: {str(e)}")
+        record_error("session_list_page", str(e))
         return
 
     # データチェック
@@ -231,9 +234,11 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         items = load_results_items(resources, demo_mode)
     except ValueError:
         st.error("❌ AWS設定エラー: AccountIdが取得できません")
+        record_error("session_detail_page", "missing resources")
         return
     except Exception as e:
         st.error(f"❌ データ取得エラー: {str(e)}")
+        record_error("session_detail_page", str(e))
         return
 
     # Decimal型をfloat型に変換

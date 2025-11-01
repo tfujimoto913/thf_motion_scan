@@ -11,6 +11,7 @@ Decision Log: ADR-014（Phase 5: Dashboard実装）
 CRITICAL: AWS認証情報は環境変数または~/.aws/credentialsから取得
 """
 import logging
+import time
 import streamlit as st
 import boto3
 import pandas as pd
@@ -38,6 +39,8 @@ from data_loader import cached_scan_results, load_results_items
 from utils import (  # type: ignore[import-untyped]
     VideoValidator,
     configure_structured_logging,
+    execution_timer,
+    record_error,
     log_dashboard_event,
 )
 from session_dao import group_tests_by_session, get_latest_sessions
@@ -401,6 +404,62 @@ def extract_principle_radar_scores(evaluation: Dict[str, Any]) -> Dict[int, floa
         if values:
             aggregated[pid] = sum(values) / len(values)
 
+    return aggregated
+
+
+def perform_health_checks(s3_client, dynamodb, resources: Optional[Dict[str, Any]], demo_mode: bool = False) -> List[Dict[str, Any]]:
+    """Run lightweight health checks for dependent services."""
+
+    if demo_mode or not resources:
+        return []
+
+    results: List[Dict[str, Any]] = []
+
+    try:
+        start = time.perf_counter()
+        dynamodb.meta.client.describe_table(TableName=resources['table_name'])
+        duration_ms = (time.perf_counter() - start) * 1000
+        results.append({
+            'name': 'DynamoDB',
+            'status': 'ok',
+            'duration_ms': round(duration_ms, 2),
+            'resource': resources['table_name'],
+        })
+    except Exception as exc:
+        record_error("health_check_dynamodb", str(exc))
+        results.append({
+            'name': 'DynamoDB',
+            'status': 'error',
+            'message': str(exc),
+            'resource': resources.get('table_name'),
+        })
+
+    bucket_name = resources.get('results_bucket')
+    if bucket_name:
+        try:
+            start = time.perf_counter()
+            s3_client.head_bucket(Bucket=bucket_name)
+            duration_ms = (time.perf_counter() - start) * 1000
+            results.append({
+                'name': 'S3',
+                'status': 'ok',
+                'duration_ms': round(duration_ms, 2),
+                'resource': bucket_name,
+            })
+        except Exception as exc:
+            record_error("health_check_s3", str(exc))
+            results.append({
+                'name': 'S3',
+                'status': 'error',
+                'message': str(exc),
+                'resource': bucket_name,
+            })
+
+    log_dashboard_event("health_check", checks=results)
+
+    return results
+
+
 def parse_client_id(video_id: str) -> Optional[Dict[str, str]]:
     """
     What: video_idからクライアントID情報を抽出
@@ -637,6 +696,7 @@ def upload_video_page(s3_client, resources, demo_mode=False):
                         status="error",
                         error=str(e),
                     )
+                    record_error("video_upload", str(e))
 
 
 def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
@@ -737,6 +797,14 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
         except Exception as e:
             st.warning(f"⚠️ 期間フィルタ適用に失敗しました: {str(e)}")
 
+        stats_total = int(len(df))
+        stats_mismatch = int((df['version_warning'] != "").sum()) if not df.empty else 0
+        st.session_state['version_mismatch_stats'] = {
+            'total': stats_total,
+            'mismatch': stats_mismatch,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+
         if len(df) > max_records:
             st.info(f"最新 {max_records}件のみ表示しています。サイドバーで上限を調整できます。")
             df = df.head(int(max_records))
@@ -836,13 +904,23 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
 
         if selected_client:
             selected_video = client_to_video_id[selected_client]
-            show_result_detail(df, selected_video, coach_mode)
+            detail_row = df[df['video_id'] == selected_video]
+            selected_test_type = detail_row['test_type'].iloc[0] if not detail_row.empty else None
+            with execution_timer(
+                "view_detail_processing",
+                video_id=selected_video,
+                test_type=selected_test_type,
+            ) as detail_stats:
+                show_result_detail(df, selected_video, coach_mode)
+            if st.session_state.get('debug_mode') and detail_stats.duration_ms is not None:
+                st.caption(f"⏱ 詳細表示処理時間: {detail_stats.duration_ms:.0f} ms")
 
     except Exception as e:
         st.error("❌ 評価結果の表示中に予期せぬエラーが発生しました")
         st.caption("時間をおいて再度アクセスするか、サポートチームへご連絡ください")
         with st.expander("技術情報 (サポート向け)"):
             st.code(str(e))
+        record_error("results_list_page", str(e))
 
 
 def get_previous_result(df: pd.DataFrame, video_id: str, test_type: str) -> Optional[Dict]:
@@ -1169,50 +1247,58 @@ def show_result_detail(df: pd.DataFrame, video_id: str, coach_mode: bool = False
             if prev_summary.get('message'):
                 st.caption(f"ℹ️ {prev_summary['message']}")
         else:
-            curr_pct = percentage
-            try:
-                prev_pct = (prev_total / prev_max_score) * 100
-            except ZeroDivisionError:
-                prev_pct = None
+            with execution_timer(
+                "compare_processing",
+                rules_version=version_info.get('rules_version'),
+                previous_rules_version=prev_version_info.get('rules_version') if prev_version_info else None,
+            ) as compare_stats:
+                curr_pct = percentage
+                try:
+                    prev_pct = (prev_total / prev_max_score) * 100
+                except ZeroDivisionError:
+                    prev_pct = None
 
-            if curr_pct is None or prev_pct is None:
-                st.info("達成率が算出できなかったため比較をスキップします")
-            else:
-                diff = total_score - prev_total
-                pct_diff = curr_pct - prev_pct
-                use_percentage_only = prev_max_score != max_score
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    if use_percentage_only:
-                        st.metric("達成率（今回）", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
-                    else:
-                        st.metric("総合スコア", f"{total_score:.1f}/{int(max_score)}", f"{diff:+.1f}")
-                with col2:
-                    if use_percentage_only:
-                        st.info(f"前回システム: {int(prev_max_score)}点満点、今回: {int(max_score)}点満点")
-                    else:
-                        st.metric("達成率", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
-
-                st.write("")
-
-                if pct_diff > 5:
-                    st.success(f"✅ **{pct_diff:.1f}% 改善しました！**")
-                elif pct_diff < -5:
-                    st.warning(f"⚠️ **{abs(pct_diff):.1f}% 低下しています**")
+                if curr_pct is None or prev_pct is None:
+                    st.info("達成率が算出できなかったため比較をスキップします")
                 else:
-                    st.info("📊 前回とほぼ同じ水準です")
+                    diff = total_score - prev_total
+                    pct_diff = curr_pct - prev_pct
+                    use_percentage_only = prev_max_score != max_score
 
-                if use_percentage_only:
-                    st.caption("ℹ️ スコアシステムが異なるため、達成率での比較を表示しています")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if use_percentage_only:
+                            st.metric("達成率（今回）", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
+                        else:
+                            st.metric("総合スコア", f"{total_score:.1f}/{int(max_score)}", f"{diff:+.1f}")
+                    with col2:
+                        if use_percentage_only:
+                            st.info(f"前回システム: {int(prev_max_score)}点満点、今回: {int(max_score)}点満点")
+                        else:
+                            st.metric("達成率", f"{curr_pct:.0f}%", f"{pct_diff:+.0f}%")
 
-                log_dashboard_event(
-                    "compare",
-                    rules_version=version_info.get('rules_version'),
-                    previous_rules_version=prev_version_info.get('rules_version') if prev_version_info else None,
-                    pct_diff=pct_diff,
-                    use_percentage_only=use_percentage_only,
-                )
+                    st.write("")
+
+                    if pct_diff > 5:
+                        st.success(f"✅ **{pct_diff:.1f}% 改善しました！**")
+                    elif pct_diff < -5:
+                        st.warning(f"⚠️ **{abs(pct_diff):.1f}% 低下しています**")
+                    else:
+                        st.info("📊 前回とほぼ同じ水準です")
+
+                    if use_percentage_only:
+                        st.caption("ℹ️ スコアシステムが異なるため、達成率での比較を表示しています")
+
+                    log_dashboard_event(
+                        "compare",
+                        rules_version=version_info.get('rules_version'),
+                        previous_rules_version=prev_version_info.get('rules_version') if prev_version_info else None,
+                        pct_diff=pct_diff,
+                        use_percentage_only=use_percentage_only,
+                    )
+
+            if st.session_state.get('debug_mode') and compare_stats.duration_ms is not None:
+                st.caption(f"⏱ 比較処理時間: {compare_stats.duration_ms:.0f} ms")
 
     # === レーダーチャート ===
     st.markdown("---")
@@ -1228,95 +1314,102 @@ def show_result_detail(df: pd.DataFrame, video_id: str, coach_mode: bool = False
             reason="missing_current_scores",
         )
     else:
-        previous_radar_scores: Dict[int, float] = {}
-        overlay_previous = False
-        radar_compatibility = compatibility
+        with execution_timer(
+            "radar_chart_processing",
+            rules_version=version_info.get('rules_version'),
+        ) as radar_stats:
+            previous_radar_scores: Dict[int, float] = {}
+            overlay_previous = False
+            radar_compatibility = compatibility
 
-        if previous and isinstance(previous.get('evaluation'), dict):
-            prev_eval = previous['evaluation']
-            if prev_eval.get('version') == 'v2.1':
-                previous_radar_scores = extract_principle_radar_scores(prev_eval)
-                if previous_radar_scores:
-                    if radar_compatibility is None:
-                        prev_version_info = extract_version_info(previous)
-                        radar_compatibility = evaluate_rules_compatibility(version_info, prev_version_info)
+            if previous and isinstance(previous.get('evaluation'), dict):
+                prev_eval = previous['evaluation']
+                if prev_eval.get('version') == 'v2.1':
+                    previous_radar_scores = extract_principle_radar_scores(prev_eval)
+                    if previous_radar_scores:
+                        if radar_compatibility is None:
+                            prev_version_info = extract_version_info(previous)
+                            radar_compatibility = evaluate_rules_compatibility(version_info, prev_version_info)
 
-                    override_key = f"radar_override_{video_id}_{radar_compatibility['status']}"
-                    if radar_compatibility['status'] == 'incompatible':
-                        st.warning(f"⚠️ レーダーチャート比較無効: {radar_compatibility['reason']}")
-                        overlay_previous = st.checkbox(
-                            "リスクを理解した上で前回データを重ねて表示する",
-                            value=False,
-                            key=override_key,
-                        )
-                    elif radar_compatibility['status'] == 'unknown':
-                        st.info(f"ℹ️ レーダーチャート比較: {radar_compatibility['reason']}")
-                        overlay_previous = st.checkbox(
-                            "不明なバージョンを含めてレーダーチャートを重ねる",
-                            value=False,
-                            key=override_key,
-                        )
-                    else:
-                        overlay_previous = True
+                        override_key = f"radar_override_{video_id}_{radar_compatibility['status']}"
+                        if radar_compatibility['status'] == 'incompatible':
+                            st.warning(f"⚠️ レーダーチャート比較無効: {radar_compatibility['reason']}")
+                            overlay_previous = st.checkbox(
+                                "リスクを理解した上で前回データを重ねて表示する",
+                                value=False,
+                                key=override_key,
+                            )
+                        elif radar_compatibility['status'] == 'unknown':
+                            st.info(f"ℹ️ レーダーチャート比較: {radar_compatibility['reason']}")
+                            overlay_previous = st.checkbox(
+                                "不明なバージョンを含めてレーダーチャートを重ねる",
+                                value=False,
+                                key=override_key,
+                            )
+                        else:
+                            overlay_previous = True
 
-                    if not overlay_previous:
-                        previous_radar_scores = {}
+                        if not overlay_previous:
+                            previous_radar_scores = {}
+                else:
+                    st.caption("ℹ️ 前回データがv2.1形式ではないためレーダーチャートの比較対象になりません")
+
+            combined_principles = sorted(set(current_radar_scores.keys()) | set(previous_radar_scores.keys()))
+
+            if not combined_principles:
+                st.info("レーダーチャートに必要な原則スコアが取得できませんでした")
+                log_dashboard_event(
+                    "radar_chart_unavailable",
+                    rules_version=version_info.get('rules_version'),
+                    reason="missing_principle_scores",
+                )
             else:
-                st.caption("ℹ️ 前回データがv2.1形式ではないためレーダーチャートの比較対象になりません")
+                categories = [f"B{pid} {PRINCIPLE_NAMES.get(pid, '')}".strip() for pid in combined_principles]
+                current_values = [current_radar_scores.get(pid, 0.0) for pid in combined_principles]
+                current_values.append(current_values[0])
+                categories_closed = categories + [categories[0]]
 
-        combined_principles = sorted(set(current_radar_scores.keys()) | set(previous_radar_scores.keys()))
-
-        if not combined_principles:
-            st.info("レーダーチャートに必要な原則スコアが取得できませんでした")
-            log_dashboard_event(
-                "radar_chart_unavailable",
-                rules_version=version_info.get('rules_version'),
-                reason="missing_principle_scores",
-            )
-        else:
-            categories = [f"B{pid} {PRINCIPLE_NAMES.get(pid, '')}".strip() for pid in combined_principles]
-            current_values = [current_radar_scores.get(pid, 0.0) for pid in combined_principles]
-            current_values.append(current_values[0])
-            categories_closed = categories + [categories[0]]
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatterpolar(
-                r=current_values,
-                theta=categories_closed,
-                fill='toself',
-                name='今回',
-                line=dict(color='#1f77b4'),
-                fillcolor='rgba(31, 119, 180, 0.3)'
-            ))
-
-            if overlay_previous and previous_radar_scores:
-                previous_values = [previous_radar_scores.get(pid, 0.0) for pid in combined_principles]
-                previous_values.append(previous_values[0])
+                fig = go.Figure()
                 fig.add_trace(go.Scatterpolar(
-                    r=previous_values,
+                    r=current_values,
                     theta=categories_closed,
                     fill='toself',
-                    name='前回',
-                    line=dict(color='#ff7f0e'),
-                    fillcolor='rgba(255, 127, 14, 0.3)'
+                    name='今回',
+                    line=dict(color='#1f77b4'),
+                    fillcolor='rgba(31, 119, 180, 0.3)'
                 ))
 
-            fig.update_layout(
-                polar=dict(
-                    radialaxis=dict(visible=True, range=[0, 15])
-                ),
-                showlegend=True,
-                margin=dict(l=60, r=60, t=40, b=40)
-            )
+                if overlay_previous and previous_radar_scores:
+                    previous_values = [previous_radar_scores.get(pid, 0.0) for pid in combined_principles]
+                    previous_values.append(previous_values[0])
+                    fig.add_trace(go.Scatterpolar(
+                        r=previous_values,
+                        theta=categories_closed,
+                        fill='toself',
+                        name='前回',
+                        line=dict(color='#ff7f0e'),
+                        fillcolor='rgba(255, 127, 14, 0.3)'
+                    ))
 
-            st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(visible=True, range=[0, 15])
+                    ),
+                    showlegend=True,
+                    margin=dict(l=60, r=60, t=40, b=40)
+                )
 
-            log_dashboard_event(
-                "radar_chart",
-                rules_version=version_info.get('rules_version'),
-                overlay_previous=overlay_previous,
-                principle_count=len(combined_principles),
-            )
+                st.plotly_chart(fig, use_container_width=True)
+
+                log_dashboard_event(
+                    "radar_chart",
+                    rules_version=version_info.get('rules_version'),
+                    overlay_previous=overlay_previous,
+                    principle_count=len(combined_principles),
+                )
+
+        if st.session_state.get('debug_mode') and radar_stats.duration_ms is not None:
+            st.caption(f"⏱ レーダーチャート処理時間: {radar_stats.duration_ms:.0f} ms")
 
     # === Health Check ===
     st.markdown("---")
@@ -1415,6 +1508,7 @@ def main():
         st.error(f"❌ AWS接続エラー: {str(e)}")
         st.info("AWS認証情報を確認してください（~/.aws/credentials または環境変数）")
         log_dashboard_event("aws_connection_error", level=logging.ERROR, error=str(e))
+        record_error("aws_connection", str(e))
         return
 
     # デモモードトグル
@@ -1496,6 +1590,52 @@ def main():
         log_dashboard_event("cache_clear", scope="all")
         st.sidebar.success("キャッシュをクリアしました")
 
+    st.sidebar.markdown("---")
+    debug_mode = st.sidebar.checkbox(
+        "デバッグモード",
+        value=st.session_state.get('debug_mode', False),
+        help="オンにすると主要操作の実行時間を画面に表示します",
+    )
+    st.session_state['debug_mode'] = debug_mode
+    if debug_mode:
+        st.sidebar.info("⏱ 実行時間が画面下部に表示されます")
+
+    st.sidebar.markdown("---")
+    admin_mode = st.sidebar.checkbox(
+        "管理者モード",
+        value=st.session_state.get('admin_mode', False),
+        help="接続ヘルス情報とエラーログを表示します",
+    )
+    st.session_state['admin_mode'] = admin_mode
+    log_dashboard_event("admin_mode", enabled=admin_mode)
+
+    if admin_mode:
+        health_results = perform_health_checks(s3_client, dynamodb, resources, demo_mode)
+        with st.sidebar.expander("システム状態", expanded=True):
+            if not health_results:
+                st.write("デモモードのためヘルスチェックはスキップされました")
+            else:
+                for result in health_results:
+                    status_icon = "✅" if result['status'] == 'ok' else "⚠️"
+                    label = result['name']
+                    if result['status'] == 'ok':
+                        st.write(f"{status_icon} {label} ({result.get('duration_ms', 0):.0f} ms)")
+                    else:
+                        st.write(f"{status_icon} {label}: {result.get('message', '詳細不明')}")
+
+        mismatch_stats = st.session_state.get('version_mismatch_stats')
+        if mismatch_stats and mismatch_stats.get('total'):
+            mismatch_rate = mismatch_stats['mismatch'] / mismatch_stats['total'] * 100
+            st.sidebar.info(
+                f"バージョン不整合率: {mismatch_stats['mismatch']}/{mismatch_stats['total']} ({mismatch_rate:.1f}%)"
+            )
+
+        error_log = st.session_state.get('error_log', [])
+        if error_log:
+            with st.sidebar.expander("エラーログ (最新5件)"):
+                for entry in error_log[-5:][::-1]:
+                    st.write(f"{entry['timestamp']}\n{entry['context']}: {entry['error']}")
+
     # サイドバーでページ選択
     st.sidebar.markdown("---")
     page = st.sidebar.radio(
@@ -1512,16 +1652,31 @@ def main():
 
     # ページ表示
     if page == "📤 動画アップロード":
-        upload_video_page(s3_client, resources, demo_mode)
+        with execution_timer("upload_page_render") as stats:
+            upload_video_page(s3_client, resources, demo_mode)
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ アップロード画面処理時間: {stats.duration_ms:.0f} ms")
     elif page == "📊 セッション一覧（560点満点）":
-        # Stage 3: セッション詳細画面のナビゲーション
-        # session_state['selected_session'] が存在する場合は詳細画面を表示
         if 'selected_session' in st.session_state:
-            session_detail_page(dynamodb, resources, demo_mode)
+            selected = st.session_state['selected_session']
+            with execution_timer(
+                "session_detail_processing",
+                athlete_id=selected.get('athlete_id'),
+                session_id=selected.get('session_id'),
+            ) as stats:
+                session_detail_page(dynamodb, resources, demo_mode)
+            if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+                st.caption(f"⏱ セッション詳細処理時間: {stats.duration_ms:.0f} ms")
         else:
-            session_list_page(dynamodb, resources, demo_mode)
+            with execution_timer("session_list_processing") as stats:
+                session_list_page(dynamodb, resources, demo_mode)
+            if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+                st.caption(f"⏱ セッション一覧処理時間: {stats.duration_ms:.0f} ms")
     elif page == "📋 評価結果一覧（種目別）":
-        results_list_page(dynamodb, resources, demo_mode, coach_mode)
+        with execution_timer("view_list_processing") as stats:
+            results_list_page(dynamodb, resources, demo_mode, coach_mode)
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ 評価結果一覧処理時間: {stats.duration_ms:.0f} ms")
 
 
 if __name__ == "__main__":
