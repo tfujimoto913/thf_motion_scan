@@ -545,91 +545,273 @@ def get_aws_clients(selected_env: str):
 
 def upload_video_page(s3_client, resources, demo_mode=False):
     """
-    What: 動画アップロードページ
-    Why: S3 VideosBucketへの動画アップロード機能
-    Design Decision: Streamlit file_uploader使用（ADR-014）
+    What: 動画アップロードページ（ウィザード形式）
+    Why: 7種目を順番にアップロードする流れを提供
+    Design Decision: st.session_stateでウィザードフロー管理（Stage 4改善）
 
     Args:
         s3_client: S3クライアント
         resources: AWSリソース名
         demo_mode: デモモードフラグ
 
-    CRITICAL: videos/{test_type}/ パス構造でアップロード
+    ウィザードフロー:
+    Step 1: ランディング（アップロード開始ボタン）
+    Step 2: 選手情報入力（名前+生年月日→athlete_id生成）
+    Step 3: セッション選択（新規/既存）
+    Step 4-10: 種目①-⑦アップロード
+    Step 11: 完了画面
+
+    CRITICAL: session_stateでathlete_id, session_id, uploaded_testsを管理
     """
+    # セッション状態の初期化
+    if 'wizard_step' not in st.session_state:
+        st.session_state.wizard_step = 1
+    if 'athlete_name' not in st.session_state:
+        st.session_state.athlete_name = None
+    if 'birth_date' not in st.session_state:
+        st.session_state.birth_date = None
+    if 'athlete_id' not in st.session_state:
+        st.session_state.athlete_id = None
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = None
+    if 'uploaded_tests' not in st.session_state:
+        st.session_state.uploaded_tests = []
+
+    # ステップごとの画面表示
+    if st.session_state.wizard_step == 1:
+        render_landing_page(demo_mode)
+    elif st.session_state.wizard_step == 2:
+        render_athlete_info_page()
+    elif st.session_state.wizard_step == 3:
+        render_session_select_page(resources, demo_mode)
+    elif 4 <= st.session_state.wizard_step <= 10:
+        test_index = st.session_state.wizard_step - 4
+        render_test_upload_page(s3_client, resources, test_index, demo_mode)
+    elif st.session_state.wizard_step == 11:
+        render_completion_page()
+
+
+def render_landing_page(demo_mode):
+    """Step 1: ランディングページ"""
     st.header("📤 動画アップロード")
 
     # デモモード時の表示
     if demo_mode:
         st.info("🎭 **デモモード**: 動画アップロードは無効です")
         st.success("✅ デモデータは「📊 評価結果一覧」ページで確認できます")
-        st.markdown("---")
-        st.markdown("""
-        ### デモモードについて
-        - AWS環境なしでUIを確認できます
-        - サンプルデータ（5件）を表示します
-        - 実際のアップロードを行うには、デモモードをOFFにしてください
-        """)
         return
 
-    if not resources:
-        st.error("❌ AWS設定エラー: AccountIdが取得できません")
-        return
+    st.markdown("""
+    ### 7種目アップロードウィザード
 
-    # テストタイプ選択
-    test_type = st.selectbox(
-        "テストタイプを選択",
-        TEST_TYPES,
-        format_func=lambda x: TEST_TYPE_DISPLAY.get(x, x)
+    このウィザードでは、以下の流れで7種目の動画をアップロードします：
+
+    1. **選手情報入力** - 名前と生年月日を入力
+    2. **セッション選択** - 新規セッションまたは既存セッション
+    3. **種目アップロード** - 7種目を順番にアップロード
+
+    途中で中断しても、既存セッションに追加することで続きからアップロードできます。
+    """)
+
+    st.markdown("---")
+
+    if st.button("📋 アップロード開始", type="primary", use_container_width=True):
+        st.session_state.wizard_step = 2
+        st.rerun()
+
+
+def render_athlete_info_page():
+    """Step 2: 選手情報入力ページ"""
+    st.header("📝 選手情報入力")
+
+    st.markdown("### Step 1/3: 選手情報")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        athlete_name = st.text_input(
+            "選手名（英語表記）",
+            value=st.session_state.athlete_name or "",
+            placeholder="例: Taro Yamada",
+            help="名前と苗字をスペース区切りで入力（例: Taro Yamada）"
+        )
+
+    with col2:
+        birth_date = st.date_input(
+            "生年月日",
+            value=st.session_state.birth_date,
+            help="選手の生年月日を選択してください"
+        )
+
+    # athlete_id自動生成
+    if athlete_name and birth_date:
+        # "Taro Yamada" → "TaroYamada"
+        name_camel = athlete_name.replace(" ", "").replace("-", "")
+        # 生年月日 → "100315" (2010-03-15 → 100315)
+        birth_str = birth_date.strftime('%y%m%d')
+        athlete_id = f"{name_camel}-{birth_str}"
+
+        st.info(f"📋 生成された選手ID: **{athlete_id}**")
+        st.caption("この選手IDは自動生成されます。セッション比較機能で使用されます。")
+
+        col_btn1, col_btn2 = st.columns(2)
+
+        with col_btn1:
+            if st.button("← 戻る", use_container_width=True):
+                st.session_state.wizard_step = 1
+                st.rerun()
+
+        with col_btn2:
+            if st.button("次へ →", type="primary", use_container_width=True):
+                st.session_state.athlete_name = athlete_name
+                st.session_state.birth_date = birth_date
+                st.session_state.athlete_id = athlete_id
+                st.session_state.wizard_step = 3
+                st.rerun()
+    else:
+        st.warning("⚠️ 選手名と生年月日を入力してください")
+
+
+def render_session_select_page(resources, demo_mode):
+    """Step 3: セッション選択ページ"""
+    st.header("📋 セッション選択")
+
+    st.markdown("### Step 2/3: セッション選択")
+
+    st.info(f"選手ID: **{st.session_state.athlete_id}**")
+
+    session_mode = st.radio(
+        "セッションを選択してください",
+        ["新規セッションを開始", "既存セッションに追加"],
+        help="7種目を同じセッションにまとめるには「既存セッションに追加」を選択してください"
     )
+
+    session_id = None
+
+    if session_mode == "新規セッションを開始":
+        # 新規session_id自動生成
+        new_session_id = datetime.now().strftime('%Y%m%d-%H%M')
+        st.success(f"📋 新規セッションID: **{new_session_id}**")
+        st.caption("このセッションIDで7種目をまとめて管理します")
+        session_id = new_session_id
+
+    else:  # 既存セッションに追加
+        try:
+            items = load_results_items(resources, demo_mode=False)
+            from session_dao import get_latest_sessions
+            items_converted = [convert_decimals(item) for item in items]
+            items_filtered = [
+                item for item in items_converted
+                if not str(item.get('video_id', '')).startswith('METADATA')
+            ]
+            sessions = get_latest_sessions(items_filtered, limit=20)
+            athlete_sessions = [s for s in sessions if s.get('athlete_id') == st.session_state.athlete_id]
+
+            if athlete_sessions:
+                session_options = {}
+                for s in athlete_sessions:
+                    sid = s['session_id']
+                    test_count = len(s.get('tests', []))
+                    label = f"{sid} ({test_count}/7種目完了)"
+                    session_options[label] = sid
+
+                selected_label = st.selectbox(
+                    "既存セッションを選択",
+                    list(session_options.keys()),
+                    help="過去20セッションから選択できます"
+                )
+                session_id = session_options[selected_label]
+                st.success(f"✅ セッション「{session_id}」に追加します")
+            else:
+                st.warning(f"⚠️ 選手ID「{st.session_state.athlete_id}」の過去セッションが見つかりません")
+                st.info("「新規セッションを開始」を選択してください")
+                session_id = None
+
+        except Exception as e:
+            st.warning(f"⚠️ 過去セッション取得エラー: {str(e)}")
+            session_id = None
+
+    st.markdown("---")
+
+    col_btn1, col_btn2 = st.columns(2)
+
+    with col_btn1:
+        if st.button("← 戻る", use_container_width=True):
+            st.session_state.wizard_step = 2
+            st.rerun()
+
+    with col_btn2:
+        if session_id and st.button("アップロード開始 →", type="primary", use_container_width=True):
+            st.session_state.session_id = session_id
+            st.session_state.wizard_step = 4  # 種目①へ
+            st.rerun()
+
+
+def render_test_upload_page(s3_client, resources, test_index, demo_mode):
+    """Step 4-10: 種目別アップロードページ"""
+    test_type = TEST_TYPES[test_index]
+    test_name = TEST_TYPE_DISPLAY.get(test_type, test_type)
+
+    st.header(f"📹 種目{test_index + 1}: {test_name}")
+
+    # 進捗バー
+    progress = len(st.session_state.uploaded_tests) / 7
+    st.progress(progress, text=f"進捗: {len(st.session_state.uploaded_tests)}/7種目完了")
+
+    st.info(f"選手ID: **{st.session_state.athlete_id}** | セッションID: **{st.session_state.session_id}**")
+
+    # アップロード済みチェックリスト
+    with st.expander("📋 アップロード状況"):
+        for i, tt in enumerate(TEST_TYPES):
+            status = "✅" if tt in st.session_state.uploaded_tests else "⬜"
+            st.write(f"{status} 種目{i+1}: {TEST_TYPE_DISPLAY.get(tt, tt)}")
+
+    st.markdown("---")
 
     # 動画ファイルアップロード
     uploaded_file = st.file_uploader(
-        "動画ファイルを選択（MP4形式）",
+        f"種目{test_index + 1}の動画を選択（MP4形式）",
         type=['mp4'],
+        key=f"upload_{test_type}",
         help="S3にアップロードされ、自動的に処理が開始されます"
     )
 
     if uploaded_file is not None:
-        # セッション状態の初期化
-        if 'validation_result' not in st.session_state:
-            st.session_state.validation_result = None
-        if 'validated_file' not in st.session_state:
-            st.session_state.validated_file = None
+        # バリデーション機能
+        col_val, col_skip = st.columns(2)
 
-        # バリデーションボタン
-        if st.button("種目チェック（推奨）", type="secondary"):
-            with st.spinner("動画を解析中... (10-30秒程度かかります)"):
-                import tempfile
-                import os
+        with col_val:
+            if st.button("種目チェック（推奨）", type="secondary", use_container_width=True):
+                with st.spinner("動画を解析中... (10-30秒程度かかります)"):
+                    import tempfile
+                    import os
+                    from utils.video_validator import VideoValidator
 
-                # 一時ファイルに保存
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-                    tmp_file.write(uploaded_file.read())
-                    tmp_path = tmp_file.name
+                    # 一時ファイルに保存
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
+                        tmp_file.write(uploaded_file.read())
+                        tmp_path = tmp_file.name
 
-                # バリデーション実行
-                validator = VideoValidator()
-                is_valid, message, details = validator.validate(tmp_path, test_type)
+                    # バリデーション実行
+                    validator = VideoValidator()
+                    is_valid, message, details = validator.validate(tmp_path, test_type)
 
-                # 結果を保存
-                st.session_state.validation_result = {
-                    'is_valid': is_valid,
-                    'message': message,
-                    'details': details
-                }
-                st.session_state.validated_file = uploaded_file
+                    # 結果を保存
+                    st.session_state.validation_result = {
+                        'is_valid': is_valid,
+                        'message': message,
+                        'details': details
+                    }
 
-                # 一時ファイル削除
-                os.unlink(tmp_path)
+                    # 一時ファイル削除
+                    os.unlink(tmp_path)
 
-                log_dashboard_event(
-                    "video_validate",
-                    test_type=test_type,
-                    is_valid=is_valid,
-                )
+        with col_skip:
+            if st.button("スキップしてアップロード", use_container_width=True):
+                st.session_state.validation_result = {'is_valid': True, 'message': 'スキップ', 'details': {}}
 
         # バリデーション結果の表示
-        if st.session_state.validation_result:
+        if 'validation_result' in st.session_state and st.session_state.validation_result:
             result = st.session_state.validation_result
 
             if result['is_valid']:
@@ -643,60 +825,111 @@ def upload_video_page(s3_client, resources, demo_mode=False):
                     with st.expander("📊 詳細情報"):
                         st.json(result['details'])
 
-        # アップロードボタン（バリデーション結果に応じてラベル変更）
-        if st.session_state.validation_result and not st.session_state.validation_result['is_valid']:
-            upload_button_label = "⚠️ 無視してアップロード"
-            upload_button_type = "secondary"
-        else:
-            upload_button_label = "アップロード開始"
-            upload_button_type = "primary"
+        # アップロードボタン
+        if 'validation_result' in st.session_state and st.session_state.validation_result:
+            if st.button("✅ アップロード実行", type="primary", use_container_width=True):
+                with st.spinner("アップロード中..."):
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    s3_key = f"videos/{test_type}/{st.session_state.athlete_id}_{st.session_state.session_id}_{test_type}_{timestamp}.mp4"
 
-        if st.button(upload_button_label, type=upload_button_type):
-            with st.spinner("アップロード中..."):
-                # S3キー生成
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                s3_key = f"videos/{test_type}/{uploaded_file.name.replace('.mp4', '')}_{timestamp}.mp4"
+                    try:
+                        uploaded_file.seek(0)
+                        s3_client.upload_fileobj(
+                            uploaded_file,
+                            resources['videos_bucket'],
+                            s3_key,
+                            ExtraArgs={
+                                'Metadata': {
+                                    'athlete-id': st.session_state.athlete_id,
+                                    'session-id': st.session_state.session_id,
+                                    'test-type': test_type
+                                }
+                            }
+                        )
 
-                try:
-                    # ファイルポインタをリセット
-                    uploaded_file.seek(0)
+                        st.success(f"✅ アップロード成功: 種目{test_index + 1}")
+                        st.session_state.uploaded_tests.append(test_type)
+                        st.session_state.validation_result = None
 
-                    # S3アップロード
-                    s3_client.upload_fileobj(
-                        uploaded_file,
-                        resources['videos_bucket'],
-                        s3_key
-                    )
+                        # 次の種目へ
+                        if test_index < 6:  # まだ種目が残っている
+                            st.session_state.wizard_step += 1
+                            st.rerun()
+                        else:  # 全種目完了
+                            st.session_state.wizard_step = 11
+                            st.rerun()
 
-                    st.success(f"✅ アップロード成功: {s3_key}")
-                    st.info("🎬 Lambda関数による処理が開始されました。結果は「評価結果一覧」ページで確認できます。")
+                    except Exception as e:
+                        st.error(f"❌ アップロードに失敗しました: {str(e)}")
 
-                    # セッション状態クリア
-                    st.session_state.validation_result = None
-                    st.session_state.validated_file = None
+    st.markdown("---")
 
-                    log_dashboard_event(
-                        "video_upload",
-                        rules_version=None,
-                        s3_key=s3_key,
-                        test_type=test_type,
-                        status="success",
-                    )
+    col_btn1, col_btn2 = st.columns(2)
 
-                except Exception as e:
-                    st.error("❌ アップロードに失敗しました")
-                    st.caption("インターネット接続とAWS権限を確認し、再度お試しください")
-                    with st.expander("技術情報 (サポート向け)"):
-                        st.code(str(e))
-                    log_dashboard_event(
-                        "video_upload",
-                        level=logging.ERROR,
-                        rules_version=None,
-                        test_type=test_type,
-                        status="error",
-                        error=str(e),
-                    )
-                    record_error("video_upload", str(e))
+    with col_btn1:
+        if test_index > 0:
+            if st.button("← 前の種目", use_container_width=True):
+                st.session_state.wizard_step -= 1
+                st.rerun()
+
+    with col_btn2:
+        if test_index < 6 and test_type in st.session_state.uploaded_tests:
+            if st.button("次の種目 →", use_container_width=True):
+                st.session_state.wizard_step += 1
+                st.rerun()
+
+
+def render_completion_page():
+    """Step 11: 完了ページ"""
+    st.header("🎉 アップロード完了！")
+
+    st.balloons()
+
+    st.success(f"7種目すべてのアップロードが完了しました！")
+
+    st.info(f"選手ID: **{st.session_state.athlete_id}**\nセッションID: **{st.session_state.session_id}**")
+
+    st.markdown("### アップロードした種目")
+    for i, test_type in enumerate(TEST_TYPES):
+        status = "✅" if test_type in st.session_state.uploaded_tests else "⬜"
+        st.write(f"{status} 種目{i+1}: {TEST_TYPE_DISPLAY.get(test_type, test_type)}")
+
+    st.markdown("---")
+
+    st.markdown("""
+    ### 次のステップ
+
+    1. **評価結果を確認** - 「📋 評価結果一覧」ページで各種目の評価を確認
+    2. **セッション詳細を表示** - 「📊 セッション一覧」ページでセッション全体を確認
+    3. **セッション比較** - セッション詳細ページで過去セッションと比較
+    """)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("📊 セッション一覧を見る", type="primary", use_container_width=True):
+            # セッション状態をクリア
+            st.session_state.wizard_step = 1
+            st.session_state.athlete_name = None
+            st.session_state.birth_date = None
+            st.session_state.athlete_id = None
+            st.session_state.session_id = None
+            st.session_state.uploaded_tests = []
+            st.session_state.validation_result = None
+            # ページ切り替え（実装はmain()で処理）
+            st.info("サイドバーから「📊 セッション一覧」を選択してください")
+
+    with col2:
+        if st.button("🔄 新しいセッションを開始", use_container_width=True):
+            # セッション状態をクリア
+            st.session_state.wizard_step = 1
+            st.session_state.athlete_name = None
+            st.session_state.birth_date = None
+            st.session_state.athlete_id = None
+            st.session_state.session_id = None
+            st.session_state.uploaded_tests = []
+            st.session_state.validation_result = None
+            st.rerun()
 
 
 def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
@@ -801,14 +1034,6 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
         except Exception as e:
             st.warning(f"⚠️ 期間フィルタ適用に失敗しました: {str(e)}")
 
-        stats_total = int(len(df))
-        stats_mismatch = int((df['version_warning'] != "").sum()) if not df.empty else 0
-        st.session_state['version_mismatch_stats'] = {
-            'total': stats_total,
-            'mismatch': stats_mismatch,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-        }
-
         if len(df) > max_records:
             st.info(f"最新 {max_records}件のみ表示しています。サイドバーで上限を調整できます。")
             df = df.head(int(max_records))
@@ -819,6 +1044,15 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
         df['version_warning'] = version_info_series.apply(
             lambda info: "⚠️ バージョン不整合" if info.get('mismatch') else ""
         )
+
+        # CRITICAL: version_warningカラム作成後に集計（順序重要）
+        stats_total = int(len(df))
+        stats_mismatch = int((df['version_warning'] != "").sum()) if not df.empty else 0
+        st.session_state['version_mismatch_stats'] = {
+            'total': stats_total,
+            'mismatch': stats_mismatch,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
         df['client_display'] = df['video_id'].apply(format_client_id_display)
         df['rules_version_raw'] = version_info_series.apply(lambda info: info.get('rules_version'))
 

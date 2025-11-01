@@ -80,10 +80,30 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # テストタイプをキーから抽出（例: videos/single_leg_squat/xxx.mp4）
         test_type = extract_test_type(key)
 
+        # S3オブジェクトのメタデータからathlete_id, session_idを取得
+        try:
+            obj_metadata = s3_client.head_object(Bucket=bucket, Key=key)
+            metadata = obj_metadata.get('Metadata', {})
+            athlete_id = metadata.get('athlete-id', None)
+            session_id = metadata.get('session-id', None)
+        except Exception as e:
+            log_warning(
+                "Failed to retrieve S3 object metadata",
+                test_type=test_type,
+                context={"error": str(e)}
+            )
+            athlete_id = None
+            session_id = None
+
         log_info(
             "Processing target identified",
             test_type=test_type,
-            context={"bucket": bucket, "key": key}
+            context={
+                "bucket": bucket,
+                "key": key,
+                "athlete_id": athlete_id,
+                "session_id": session_id
+            }
         )
         
         # 動画をダウンロード
@@ -122,7 +142,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
         # DynamoDBに記録
-        save_to_dynamodb(result, bucket, key, result_key)
+        save_to_dynamodb(result, bucket, key, result_key, athlete_id, session_id)
         log_info(
             "Results saved to DynamoDB",
             test_type=test_type,
@@ -225,7 +245,14 @@ def convert_float_to_decimal(obj):
     return obj
 
 
-def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str):
+def save_to_dynamodb(
+    result: Dict,
+    bucket: str,
+    video_key: str,
+    result_key: str,
+    athlete_id: str = None,
+    session_id: str = None
+):
     """
     処理結果をDynamoDBに保存
 
@@ -234,8 +261,11 @@ def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str)
         bucket: 元のバケット名
         video_key: 動画のS3キー
         result_key: 結果のS3キー
+        athlete_id: 選手ID（オプション）
+        session_id: セッションID（オプション）
 
     PHASE B: v2.1対応 - max_scoreとscoring_versionを記録
+    Stage 4: athlete_id, session_idを記録（セッション比較機能対応）
     CRITICAL: DynamoDBはfloat型を受け付けないため、Decimal変換必須
     """
     from datetime import datetime
@@ -243,6 +273,7 @@ def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str)
     table = dynamodb.Table(TABLE_NAME)
 
     # PHASE B: v2.1システム対応（max_scoreとversionを追加）
+    # Stage 4: athlete_id, session_idを追加
     item = {
         'video_id': f"{bucket}/{video_key}",
         'processed_at': result['processed_at'],
@@ -256,6 +287,12 @@ def save_to_dynamodb(result: Dict, bucket: str, video_key: str, result_key: str)
         'evaluation': result.get('evaluation', {}),  # CRITICAL: Dashboard表示用に評価詳細も保存
         'ttl': int(datetime.now().timestamp()) + (90 * 24 * 60 * 60)  # 90日後に削除
     }
+
+    # athlete_id, session_idが存在する場合のみ追加
+    if athlete_id:
+        item['athlete_id'] = athlete_id
+    if session_id:
+        item['session_id'] = session_id
 
     # DynamoDB用にfloatをDecimalに変換
     item = convert_float_to_decimal(item)
