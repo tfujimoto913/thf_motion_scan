@@ -15,7 +15,7 @@ from typing import Dict, Any, List
 from decimal import Decimal
 from datetime import datetime, timezone
 import plotly.graph_objects as go
-from session_dao import get_latest_sessions, get_session_by_id
+from session_dao import get_latest_sessions, get_session_by_id, get_previous_sessions
 from data_loader import load_results_items
 from utils import record_error
 from config import TEST_TYPES, TEST_TYPE_DISPLAY, TEST_SHORT_MAP
@@ -329,6 +329,79 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
     else:
         st.warning("レーダーチャート表示に必要なデータがありません。")
 
+    st.markdown("---")
+
+    # ========== セッション比較（Stage 4） ==========
+    st.subheader("📊 セッション比較")
+
+    # 過去セッション一覧取得
+    previous_sessions = get_previous_sessions(items_filtered, athlete_id, session_id, limit=12)
+
+    if not previous_sessions:
+        st.info("比較可能な過去セッションがありません。次回撮影後に比較できるようになります。")
+    else:
+        # セッションB選択用のドロップダウン
+        session_options = {}
+        for prev_session in previous_sessions:
+            prev_id = prev_session['session_id']
+            prev_total = prev_session['grand_total']
+            prev_pct = prev_session['percentage']
+            prev_processed = prev_session.get('processed_at', 'N/A')
+
+            # ドロップダウン表示用ラベル
+            label = f"{prev_id} | {prev_total:.1f}/560点 ({prev_pct:.1f}%) | {prev_processed}"
+            session_options[label] = prev_session
+
+        # セッションB選択（初期値: 直近セッション）
+        if session_options:
+            selected_label = st.selectbox(
+                "比較対象セッションを選択",
+                list(session_options.keys()),
+                index=0,  # 直近セッションを初期選択
+                help="同一選手の過去セッションから比較対象を選択できます"
+            )
+
+            session_b = session_options[selected_label]
+
+            # rules_version整合性チェック
+            rules_a = session.get('rules_version', 'unknown')
+            rules_b = session_b.get('rules_version', 'unknown')
+
+            if rules_a != rules_b:
+                # 比較不可バッジ表示
+                st.markdown(
+                    """
+                    <div style="
+                        background-color: #dc3545;
+                        color: white;
+                        padding: 15px;
+                        border-radius: 5px;
+                        font-weight: bold;
+                        text-align: center;
+                        margin: 10px 0;">
+                        ⚠️ 比較不可：異なるルールバージョン
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                st.info(f"セッションA（現在）: {rules_a}")
+                st.info(f"セッションB（比較対象）: {rules_b}")
+                st.caption("異なるルールバージョン間での比較は正確性を保証できないため、表示を無効化しています。")
+            else:
+                # 比較可能 - レーダーチャート重ね合わせと差分表示
+                st.success(f"✅ 比較可能：同一ルールバージョン（{rules_a}）")
+
+                # セッションBのスコアを抽出
+                test_scores_b = _extract_test_scores(session_b)
+
+                # レーダーチャート重ね合わせ
+                st.markdown("### レーダーチャート重ね合わせ")
+                _render_comparison_radar_chart(test_scores, test_scores_b)
+
+                # 差分表示
+                st.markdown("### スコア差分")
+                _render_score_diff(session, session_b, test_scores, test_scores_b)
+
 
 def _calculate_data_freshness(processed_at: str) -> str:
     """
@@ -509,3 +582,199 @@ def _render_radar_chart(test_scores: List[Dict[str, Any]]):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_comparison_radar_chart(
+    test_scores_a: List[Dict[str, Any]],
+    test_scores_b: List[Dict[str, Any]]
+):
+    """
+    What: 2セッション重ね合わせレーダーチャートを描画
+    Why: セッション比較機能（Stage 4）で進捗を可視化
+    Design Decision: Plotly使用、セッションA（青）とセッションB（オレンジ）を重ね表示
+
+    Args:
+        test_scores_a: セッションA（現在）のスコア
+        test_scores_b: セッションB（比較対象）のスコア
+
+    CRITICAL:
+      - セッションA: 青色（rgba 0,123,255）、透明度0.5
+      - セッションB: オレンジ色（rgba 255,165,0）、透明度0.25
+      - 欠測種目（score=0）: 点線表示（dash='dot'）
+      - ツールチップ: 種目名 + 達成率 + 実得点
+    """
+    # レーダーチャートデータ作成
+    labels = []
+    values_a = []
+    values_b = []
+    hover_text_a = []
+    hover_text_b = []
+
+    for item_a, item_b in zip(test_scores_a, test_scores_b):
+        test_type = item_a['test_type']
+        short_name = TEST_SHORT_MAP.get(test_type, test_type)
+
+        percentage_a = item_a['percentage']
+        percentage_b = item_b['percentage']
+        score_a = item_a['score']
+        score_b = item_b['score']
+
+        labels.append(short_name)
+        values_a.append(percentage_a)
+        values_b.append(percentage_b)
+
+        # 欠測種目（score=0）の場合は「データなし」と表示
+        if score_a == 0:
+            hover_text_a.append(f"<b>{short_name}</b><br>データなし（0点）")
+        else:
+            hover_text_a.append(f"<b>{short_name}</b><br>達成率: {percentage_a:.1f}%<br>実得点: {score_a:.1f}/80")
+
+        if score_b == 0:
+            hover_text_b.append(f"<b>{short_name}</b><br>データなし（0点）")
+        else:
+            hover_text_b.append(f"<b>{short_name}</b><br>達成率: {percentage_b:.1f}%<br>実得点: {score_b:.1f}/80")
+
+    # Plotlyレーダーチャート
+    fig = go.Figure()
+
+    # セッションA（現在）: 青色、透明度0.5
+    fig.add_trace(go.Scatterpolar(
+        r=values_a,
+        theta=labels,
+        fill='toself',
+        fillcolor='rgba(0, 123, 255, 0.5)',
+        line=dict(color='rgb(0, 123, 255)', width=2),
+        name='セッションA（現在）',
+        hovertext=hover_text_a,
+        hoverinfo='text'
+    ))
+
+    # セッションB（比較対象）: オレンジ色、透明度0.25
+    fig.add_trace(go.Scatterpolar(
+        r=values_b,
+        theta=labels,
+        fill='toself',
+        fillcolor='rgba(255, 165, 0, 0.25)',
+        line=dict(color='rgb(255, 165, 0)', width=2),
+        name='セッションB（比較対象）',
+        hovertext=hover_text_b,
+        hoverinfo='text'
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                ticksuffix='%'
+            )
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.15,
+            xanchor="center",
+            x=0.5
+        ),
+        title="2セッション重ね合わせ（0-100%）",
+        height=500
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_score_diff(
+    session_a: Dict[str, Any],
+    session_b: Dict[str, Any],
+    test_scores_a: List[Dict[str, Any]],
+    test_scores_b: List[Dict[str, Any]]
+):
+    """
+    What: 2セッション間のスコア差分を表示
+    Why: セッション比較機能（Stage 4）で進捗を定量評価
+    Design Decision: 総合スコア差のバッジ + 種目別差分テーブル（色分け）
+
+    Args:
+        session_a: セッションA（現在）のデータ
+        session_b: セッションB（比較対象）のデータ
+        test_scores_a: セッションAのスコア
+        test_scores_b: セッションBのスコア
+
+    CRITICAL:
+      - 差分プラス: 緑色表示
+      - 差分マイナス: 赤色表示
+      - 差分±0: 灰色表示
+    """
+    # 総合スコア差
+    grand_total_a = session_a.get('grand_total', 0)
+    grand_total_b = session_b.get('grand_total', 0)
+    grand_diff = grand_total_a - grand_total_b
+
+    percentage_a = session_a.get('percentage', 0)
+    percentage_b = session_b.get('percentage', 0)
+    percentage_diff = percentage_a - percentage_b
+
+    # 総合スコア差のバッジ
+    if grand_diff > 0:
+        badge_color = "#28a745"  # 緑
+        badge_icon = "📈"
+        badge_text = f"{badge_icon} 総合スコア: +{grand_diff:.1f}点 (+{percentage_diff:.1f}%)"
+    elif grand_diff < 0:
+        badge_color = "#dc3545"  # 赤
+        badge_icon = "📉"
+        badge_text = f"{badge_icon} 総合スコア: {grand_diff:.1f}点 ({percentage_diff:.1f}%)"
+    else:
+        badge_color = "#6c757d"  # 灰色
+        badge_icon = "➖"
+        badge_text = f"{badge_icon} 総合スコア: ±0点 (変化なし)"
+
+    st.markdown(
+        f"""
+        <div style="
+            background-color: {badge_color};
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;">
+            {badge_text}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # 種目別差分テーブル
+    st.markdown("#### 種目別差分")
+
+    table_data = []
+    for item_a, item_b in zip(test_scores_a, test_scores_b):
+        test_name = item_a['test_name']
+        score_a = item_a['score']
+        score_b = item_b['score']
+        pct_a = item_a['percentage']
+        pct_b = item_b['percentage']
+
+        score_diff = score_a - score_b
+        pct_diff = pct_a - pct_b
+
+        # 差分の色分け
+        if pct_diff > 0:
+            diff_display = f"🟢 +{pct_diff:.1f}%"
+        elif pct_diff < 0:
+            diff_display = f"🔴 {pct_diff:.1f}%"
+        else:
+            diff_display = f"⚪ ±0%"
+
+        table_data.append({
+            '種目名': test_name,
+            'セッションA': f"{score_a:.1f}点 ({pct_a:.1f}%)",
+            'セッションB': f"{score_b:.1f}点 ({pct_b:.1f}%)",
+            '差分': diff_display,
+            '実得点差': f"{score_diff:+.1f}点"
+        })
+
+    # Streamlit dataframe表示
+    st.dataframe(table_data, use_container_width=True)

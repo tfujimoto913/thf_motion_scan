@@ -193,36 +193,105 @@ class VideoValidator:
         else:
             return (False, "左右への大きな動きが検出されませんでした", details)
 
+    def _calculate_angle(self, point1: dict, point2: dict, point3: dict) -> float:
+        """
+        What: 3点から角度を計算
+        Why: 膝や肘の屈曲角度を計算するため
+
+        Args:
+            point1, point2, point3: ランドマーク座標（{'x': float, 'y': float}）
+            point2が頂点（例: 膝の角度なら、point1=腰、point2=膝、point3=足首）
+
+        Returns:
+            float: 角度（度）
+
+        CRITICAL: point2が頂点
+        """
+        # ベクトル計算
+        v1 = np.array([point1['x'] - point2['x'], point1['y'] - point2['y']])
+        v2 = np.array([point3['x'] - point2['x'], point3['y'] - point2['y']])
+
+        # 内積とノルム
+        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+        cos_angle = np.clip(cos_angle, -1.0, 1.0)  # 数値誤差対策
+        angle = np.arccos(cos_angle) * 180 / np.pi
+
+        return angle
+
     def _check_stride_mimic(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
-        What: スケートストライド模倣の特徴チェック
-        Why: 前後への足の移動
+        What: スケートストライド模倣の特徴チェック（姿勢ベース）
+        Why: 撮影角度に依存しない姿勢の特徴で検出
+        Design Decision: 膝屈曲 + 片足荷重切り替え + 低い姿勢をチェック（2025-11-01修正v3）
+
+        CRITICAL:
+        - スケーティング姿勢の特徴を検出（動きの方向に依存しない）
+        - 1. 膝の屈曲（90-140度のスクワット姿勢）
+        - 2. 片足荷重の切り替え（左右足首のy座標差が変化）
+        - 3. 低い姿勢（腰の平均高さが低い）
         """
-        ankle_z_positions = []
+        knee_angles = []
+        ankle_y_diffs = []
+        hip_y_positions = []
 
         for lm in landmarks_list:
+            # 1. 膝の屈曲角度（左膝）
+            if 'LEFT_HIP' in lm and 'LEFT_KNEE' in lm and 'LEFT_ANKLE' in lm:
+                angle = self._calculate_angle(lm['LEFT_HIP'], lm['LEFT_KNEE'], lm['LEFT_ANKLE'])
+                knee_angles.append(angle)
+
+            # 2. 片足荷重の切り替え（左右足首のy座標差）
             if 'LEFT_ANKLE' in lm and 'RIGHT_ANKLE' in lm:
-                # z座標（奥行き）の差で前後動を検出
-                z_diff = abs(lm['LEFT_ANKLE']['z'] - lm['RIGHT_ANKLE']['z'])
-                ankle_z_positions.append(z_diff)
+                y_diff = abs(lm['LEFT_ANKLE']['y'] - lm['RIGHT_ANKLE']['y'])
+                ankle_y_diffs.append(y_diff)
 
-        if len(ankle_z_positions) < 10:
-            return (True, "足首検出不可", {})
+            # 3. 低い姿勢（腰の高さ）
+            if 'LEFT_HIP' in lm and 'RIGHT_HIP' in lm:
+                hip_y = (lm['LEFT_HIP']['y'] + lm['RIGHT_HIP']['y']) / 2
+                hip_y_positions.append(hip_y)
 
-        max_z_diff = max(ankle_z_positions)
+        if len(knee_angles) < 10 or len(ankle_y_diffs) < 10 or len(hip_y_positions) < 10:
+            return (True, "ランドマーク検出不可", {})
 
-        # 前後動の判定：z座標差が0.3以上
-        is_forward_backward = max_z_diff > 0.3
+        # 姿勢チェック1: 膝の屈曲（スケーティングは90-140度）
+        avg_knee_angle = np.mean(knee_angles)
+        min_knee_angle = min(knee_angles)
+        is_knee_bent = 90 <= avg_knee_angle <= 140 or min_knee_angle < 120
+
+        # 姿勢チェック2: 片足荷重の切り替え（y座標差の変化）
+        ankle_y_diff_range = max(ankle_y_diffs) - min(ankle_y_diffs)
+        is_weight_shift = ankle_y_diff_range > 0.08  # 画面高さの8%以上変化
+
+        # 姿勢チェック3: 低い姿勢（腰の平均高さが0.6以上 = 画面下半分）
+        avg_hip_y = np.mean(hip_y_positions)
+        is_low_posture = avg_hip_y > 0.5  # y座標は上が0、下が1
 
         details = {
-            'max_z_diff': float(max_z_diff),
-            'threshold': 0.3
+            'avg_knee_angle': float(avg_knee_angle),
+            'min_knee_angle': float(min_knee_angle),
+            'ankle_y_diff_range': float(ankle_y_diff_range),
+            'avg_hip_y': float(avg_hip_y),
+            'is_knee_bent': is_knee_bent,
+            'is_weight_shift': is_weight_shift,
+            'is_low_posture': is_low_posture,
+            'note': '姿勢ベース検出（撮影角度非依存）'
         }
 
-        if is_forward_backward:
+        # スケーティング姿勢判定（3つのうち2つ以上満たせばOK）
+        posture_score = sum([is_knee_bent, is_weight_shift, is_low_posture])
+
+        if posture_score >= 2:
             return (True, "", details)
         else:
-            return (False, "前後への大きな動きが検出されませんでした", details)
+            reasons = []
+            if not is_knee_bent:
+                reasons.append(f"膝の屈曲不足（平均{avg_knee_angle:.1f}度）")
+            if not is_weight_shift:
+                reasons.append("片足荷重の切り替えが検出されませんでした")
+            if not is_low_posture:
+                reasons.append("低い姿勢（スクワット）が検出されませんでした")
+
+            return (False, "スケーティング姿勢が検出されませんでした: " + "、".join(reasons), details)
 
     def _check_jump_landing(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
@@ -319,31 +388,63 @@ class VideoValidator:
     def _check_cross_step(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
         What: クロスステップ模倣の特徴チェック
-        Why: 足のクロス（x座標の逆転）
+        Why: 足が接近・交差する動き
+        Design Decision: 左右足の接近度 + フレーム間での交差をチェック（2025-11-01修正）
+
+        CRITICAL:
+        - クロスステップ = 足が接近する（x座標の差が小さい）瞬間がある
+        - 静的な位置関係ではなく、動的な接近を検出
         """
-        cross_count = 0
+        ankle_x_diffs = []
+        cross_transitions = 0
+        prev_left_is_left = None  # 前フレームでの左右関係
 
         for lm in landmarks_list:
             if 'LEFT_ANKLE' in lm and 'RIGHT_ANKLE' in lm:
-                # 通常は LEFT_ANKLE.x < RIGHT_ANKLE.x
-                # クロス時は逆転
-                if lm['LEFT_ANKLE']['x'] > lm['RIGHT_ANKLE']['x']:
-                    cross_count += 1
+                left_x = lm['LEFT_ANKLE']['x']
+                right_x = lm['RIGHT_ANKLE']['x']
 
-        if len(landmarks_list) < 10:
+                # 左右足のx座標の差（接近度）
+                x_diff = abs(left_x - right_x)
+                ankle_x_diffs.append(x_diff)
+
+                # フレーム間での左右関係の逆転（交差）を検出
+                current_left_is_left = left_x < right_x
+                if prev_left_is_left is not None and prev_left_is_left != current_left_is_left:
+                    cross_transitions += 1
+                prev_left_is_left = current_left_is_left
+
+        if len(ankle_x_diffs) < 10:
             return (True, "足首検出不可", {})
 
-        cross_ratio = cross_count / len(landmarks_list)
+        # 足の接近度（最小値が小さいほど接近）
+        min_x_diff = min(ankle_x_diffs)
+        avg_x_diff = np.mean(ankle_x_diffs)
 
-        # クロスの判定：フレームの20%以上でクロス状態
-        is_cross = cross_ratio > 0.20
+        # クロスステップ判定条件（いずれかを満たせばOK）:
+        # 1. 左右足が接近する瞬間がある（x座標差 < 0.15 = 画面幅の15%）
+        is_close_approach = min_x_diff < 0.15
+
+        # 2. フレーム間で左右の足が入れ替わる（交差）がある
+        has_cross_transition = cross_transitions >= 1
+
+        # 3. 平均的に左右足が近い（横方向の動きが大きい）
+        is_narrow_stance = avg_x_diff < 0.25
+
+        is_cross_step = is_close_approach or has_cross_transition or is_narrow_stance
 
         details = {
-            'cross_ratio': float(cross_ratio),
-            'threshold': 0.20
+            'min_x_diff': float(min_x_diff),
+            'avg_x_diff': float(avg_x_diff),
+            'cross_transitions': cross_transitions,
+            'close_approach_threshold': 0.15,
+            'narrow_stance_threshold': 0.25,
+            'is_close_approach': is_close_approach,
+            'has_cross_transition': has_cross_transition,
+            'is_narrow_stance': is_narrow_stance
         }
 
-        if is_cross:
+        if is_cross_step:
             return (True, "", details)
         else:
-            return (False, "クロスステップ動作が検出されませんでした", details)
+            return (False, "クロスステップ動作（足の接近・交差）が検出されませんでした", details)

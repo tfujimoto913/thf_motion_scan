@@ -151,3 +151,51 @@ def get_latest_sessions(
     """
     sessions = group_tests_by_session(test_results)
     return sessions[:limit]
+
+
+def get_previous_sessions(
+    test_results: List[Dict[str, Any]],
+    athlete_id: str,
+    current_session_id: str,
+    limit: int = 12
+) -> List[Dict[str, Any]]:
+    """
+    What: 同一athlete_idの過去セッション一覧を取得
+    Why: セッション比較機能（Stage 4）で比較対象セッションを選択するため
+    Design Decision: 現在セッションを除外し、processed_at降順でソート（ADR-023 Stage 4）
+
+    Args:
+        test_results: DynamoDBから取得したテスト結果のリスト
+        athlete_id: 選手ID
+        current_session_id: 現在のセッションID（比較元、除外対象）
+        limit: 最大取得件数（デフォルト12）
+
+    Returns:
+        List[Dict]: 過去N件のセッションデータ（現在セッション除外済み）
+        [
+            {
+                'athlete_id': 'athlete_001',
+                'session_id': '20251030-1200-X',
+                'grand_total': 450.0,
+                'percentage': 80.4,
+                'rules_version': 'v2.1',
+                ...
+            },
+            ...
+        ]
+
+    CRITICAL:
+      - 現在セッション（current_session_id）は除外
+      - 同一athlete_idのみフィルタ
+      - processed_at降順でソート済み
+    """
+    sessions = group_tests_by_session(test_results)
+
+    # 同一athlete_idかつ現在セッション以外をフィルタ
+    previous_sessions = [
+        s for s in sessions
+        if s['athlete_id'] == athlete_id and s['session_id'] != current_session_id
+    ]
+
+    # 上位N件を返す（既にprocessed_at降順でソート済み）
+    return previous_sessions[:limit]

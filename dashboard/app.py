@@ -792,7 +792,11 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
         max_records = st.session_state.get('max_records', PERFORMANCE_LIMITS['max_records'])
 
         try:
-            cutoff = pd.Timestamp.now(tz=timezone.utc) - pd.DateOffset(months=int(max_months))
+            # CRITICAL: タイムゾーンなしのTimestampで比較（processed_at_dtはdatetime64[ns]）
+            cutoff = pd.Timestamp.now() - pd.DateOffset(months=int(max_months))
+            # タイムゾーン情報を除去して比較
+            if cutoff.tz is not None:
+                cutoff = cutoff.tz_localize(None)
             df = df[df['processed_at_dt'].isna() | (df['processed_at_dt'] >= cutoff)]
         except Exception as e:
             st.warning(f"⚠️ 期間フィルタ適用に失敗しました: {str(e)}")
