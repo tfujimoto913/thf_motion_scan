@@ -27,6 +27,8 @@ from processing.pose_extractor import PoseExtractor
 from processing.normalizer import BodyNormalizer
 from processing.evaluators_v2.single_leg_squat_v2 import SingleLegSquatEvaluatorV2
 import numpy as np
+import json
+import csv
 
 
 def parse_args(args: Optional[list] = None):
@@ -216,6 +218,53 @@ def select_representative_frames(frame_scores: List[Dict]) -> Dict:
     }
 
 
+def export_result_json(result: Dict, output_path: str) -> None:
+    """
+    What: result.json を出力
+    Why: MVP必須出力ファイル（scores, class, versions含む）
+    Design Decision: JSON形式、indent=2で可読性確保
+
+    Args:
+        result: パイプライン実行結果
+        output_path: 出力ファイルパス
+
+    CRITICAL: versions フィールド必須
+    """
+    # evaluation_detail は internal なのでファイル出力から除外
+    output_data = {k: v for k, v in result.items() if k != 'evaluation_detail'}
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+
+def export_trace_csv(trace_data: List[Dict], output_path: str) -> None:
+    """
+    What: trace.csv を出力（時系列データ）
+    Why: フレームごとの角度・イベント・判定を記録
+    Design Decision: CSV形式、ヘッダー付き
+
+    Args:
+        trace_data: フレームごとのトレースデータ
+            [{'time': float, 'angle_x': float, ...}, ...]
+        output_path: 出力ファイルパス
+
+    CRITICAL: スキーマ固定（time, angle_x, angle_y, angle_z, events, class_trace）
+    """
+    if not trace_data:
+        # データがない場合は空ファイル作成
+        with open(output_path, 'w', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['time', 'angle_x', 'angle_y', 'angle_z', 'events', 'class_trace'])
+        return
+
+    fieldnames = ['time', 'angle_x', 'angle_y', 'angle_z', 'events', 'class_trace']
+
+    with open(output_path, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(trace_data)
+
+
 def generate_versions() -> Dict[str, str]:
     """
     What: versions フィールド生成
@@ -394,8 +443,38 @@ def main():
         result = run_pipeline(landmarks_data=landmarks_data)
         print("  ✅ 評価完了")
 
-        # ステップ3: 結果表示
-        print("  [3/3] 結果生成中...")
+        # ステップ3: ファイル出力
+        print("  [3/4] ファイル出力中...")
+
+        # 出力ディレクトリ作成
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # result.json 出力
+        result_json_path = out_dir / "result.json"
+        export_result_json(result, str(result_json_path))
+        print(f"  ✅ {result_json_path}")
+
+        # trace.csv 出力（--dump-trace true の場合）
+        if args.dump_trace:
+            # MVP段階：トレースデータは evaluation_detail から抽出
+            trace_data = []
+            if 'evaluation_detail' in result and 'frame_data' in result['evaluation_detail']:
+                for frame in result['evaluation_detail']['frame_data']:
+                    trace_data.append({
+                        'time': frame.get('time', 0.0),
+                        'angle_x': frame.get('angle_x', 0.0),
+                        'angle_y': frame.get('angle_y', 0.0),
+                        'angle_z': frame.get('angle_z', 0.0),
+                        'events': frame.get('events', ''),
+                        'class_trace': frame.get('class_trace', 'pending')
+                    })
+
+            trace_csv_path = out_dir / "trace.csv"
+            export_trace_csv(trace_data, str(trace_csv_path))
+            print(f"  ✅ {trace_csv_path}")
+
+        # ステップ4: 結果表示
+        print("  [4/4] 完了")
         print("=" * 60)
         print("✨ 処理完了")
         print("=" * 60)
@@ -406,6 +485,11 @@ def main():
         print(f"📝 flags: {result['flags']}")
         print(f"🆔 session_id: {result['session_id']}")
         print(f"🆔 rep_id: {result['rep_id']}")
+        print()
+        print("📁 出力ファイル:")
+        print(f"   - {result_json_path}")
+        if args.dump_trace:
+            print(f"   - {trace_csv_path}")
         print("=" * 60)
 
         return 0

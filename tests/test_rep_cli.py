@@ -240,3 +240,72 @@ class TestRepresentativeFrames:
         assert result['best']['frame_idx'] == 0
         assert result['worst']['frame_idx'] == 0
         assert result['median']['frame_idx'] == 0
+
+
+class TestJSONCSVOutput:
+    """
+    What: JSON/CSV出力機能テスト
+    Why: result.json と trace.csv の正しい出力を保証
+    Design Decision: スキーマ準拠、--dump-trace フラグで制御
+    """
+
+    def test_export_result_json_creates_file(self, tmp_path):
+        """
+        What: result.json を正しく出力
+        Why: MVP必須出力ファイル
+        """
+        from cli.rep_cli import export_result_json
+
+        result = {
+            'session_id': 'test-session',
+            'rep_id': 'test-rep',
+            'scores': {'overall': 75.0},
+            'class': 'pass',
+            'class_prob': 0.9,
+            'uncertainty': 0.1,
+            'flags': [],
+            'versions': {
+                'rules_version': '0.1.0',
+                'normalization_version': 'none',
+                'artifact_sha': 'local-dev'
+            }
+        }
+
+        output_file = tmp_path / "result.json"
+        export_result_json(result, str(output_file))
+
+        # ファイル存在確認
+        assert output_file.exists()
+
+        # 内容確認
+        import json
+        with open(output_file) as f:
+            loaded = json.load(f)
+
+        assert loaded['session_id'] == 'test-session'
+        assert loaded['versions']['rules_version'] == '0.1.0'
+
+    def test_export_trace_csv_creates_file(self, tmp_path):
+        """
+        What: trace.csv を正しく出力
+        Why: 時系列データの可視化・分析用
+        """
+        from cli.rep_cli import export_trace_csv
+
+        trace_data = [
+            {'time': 0.0, 'angle_x': 10.0, 'angle_y': 20.0, 'angle_z': 30.0, 'events': '', 'class_trace': 'pending'},
+            {'time': 0.1, 'angle_x': 15.0, 'angle_y': 25.0, 'angle_z': 35.0, 'events': 'squat_start', 'class_trace': 'pending'},
+        ]
+
+        output_file = tmp_path / "trace.csv"
+        export_trace_csv(trace_data, str(output_file))
+
+        # ファイル存在確認
+        assert output_file.exists()
+
+        # 内容確認（ヘッダー + データ行）
+        with open(output_file) as f:
+            lines = f.readlines()
+
+        assert len(lines) == 3  # header + 2 data rows
+        assert 'time,angle_x,angle_y,angle_z,events,class_trace' in lines[0]
