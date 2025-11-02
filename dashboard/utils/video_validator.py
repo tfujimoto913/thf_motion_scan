@@ -358,14 +358,14 @@ class VideoValidator:
     def _check_push_pull(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
         What: プッシュプル動作の特徴チェック
-        Why: 手首の前後動（z座標）または横動き（x座標）+ 肩の回転が小さい
-        Design Decision: アームスイングとの区別のため肩回転チェック追加（ADR-026）
+        Why: 手首の前後動（z座標）または横動き（x座標）+ 肩の回旋が小さい
+        Design Decision: アームスイングとの区別のため肩回旋チェック追加（ADR-026）
 
         CRITICAL:
-        - プッシュプル = 肩を固定して腕を伸ばす動き
-        - アームスイング = 肩が回転する動き
-        - 肩の前後動（z軸）はプッシュプルで発生するのでOK
-        - 肩の回転（xy平面での角度変化）が小さいことを確認
+        - プッシュプル = 上体を捻らず腕を伸ばす動き（両肩が同じように前後に動く）
+        - アームスイング = 上体を捻る動き（片方の肩が前、片方が後ろ）
+        - 肩の回旋 = 左右肩のz座標の差（上体の捻り具合）
+        - 肩ラインの傾き（高さの違い）はプッシュプルでもOK
         """
         wrist_x_positions = []
         wrist_z_positions = []
@@ -381,36 +381,39 @@ class VideoValidator:
                 avg_z = (lm['LEFT_WRIST']['z'] + lm['RIGHT_WRIST']['z']) / 2
                 wrist_z_positions.append(avg_z)
 
-            # 肩の回転角度（アームスイングとの区別）
+            # 肩の回旋（アームスイングとの区別）
+            # 左右肩のz座標の差 = 上体の捻り具合
             if 'LEFT_SHOULDER' in lm and 'RIGHT_SHOULDER' in lm:
-                dx = lm['RIGHT_SHOULDER']['x'] - lm['LEFT_SHOULDER']['x']
-                dy = lm['RIGHT_SHOULDER']['y'] - lm['LEFT_SHOULDER']['y']
-                # xy平面での角度（z方向の前後動は影響しない）
-                angle = np.arctan2(dy, dx) * 180 / np.pi
-                shoulder_angles.append(angle)
+                z_diff = abs(lm['RIGHT_SHOULDER']['z'] - lm['LEFT_SHOULDER']['z'])
+                shoulder_angles.append(z_diff)
 
         if len(wrist_z_positions) < 10 or len(shoulder_angles) < 10:
             return (True, "手首または肩の検出不可", {})
 
         wrist_x_range = max(wrist_x_positions) - min(wrist_x_positions)
         wrist_z_range = max(wrist_z_positions) - min(wrist_z_positions)
-        shoulder_rotation = max(shoulder_angles) - min(shoulder_angles)
+
+        # 肩の回旋の最大値（左右肩のz座標差）
+        # プッシュプル: 両肩が同じように動く → z差が小さい
+        # アームスイング: 片方の肩が前、片方が後ろ → z差が大きい
+        max_shoulder_twist = max(shoulder_angles)
 
         # プッシュプルの判定:
         # 1. 手首が動く（x または z方向で0.2以上）
-        # 2. 肩の回転が小さい（10度未満）
-        #    ※ 肩の前後動（z軸）は考慮しない（プッシュプルで正常）
+        # 2. 肩の回旋が小さい（左右肩のz座標差が0.15未満）
+        #    ※ プッシュプルでは両肩が同じように前後に動く
+        #    ※ アームスイングでは上体を捻るので左右肩のz座標差が大きい
         wrist_moves = (wrist_x_range > 0.2) or (wrist_z_range > 0.2)
-        shoulder_stable = shoulder_rotation < 10  # アームスイングは15度以上
+        shoulder_stable = max_shoulder_twist < 0.15  # 閾値0.15 = 画面深度の15%
 
         is_push_pull = wrist_moves and shoulder_stable
 
         details = {
             'wrist_x_range': float(wrist_x_range),
             'wrist_z_range': float(wrist_z_range),
-            'shoulder_rotation': float(shoulder_rotation),
+            'shoulder_twist': float(max_shoulder_twist),
             'wrist_threshold': 0.2,
-            'shoulder_threshold': 10,
+            'shoulder_threshold': 0.15,
             'detected_axis': 'x' if wrist_x_range > wrist_z_range else 'z'
         }
 
@@ -420,7 +423,7 @@ class VideoValidator:
             if not wrist_moves:
                 return (False, f"手首の動きが不足（x変化:{wrist_x_range:.2f}, z変化:{wrist_z_range:.2f}）", details)
             else:
-                return (False, f"肩の回転が大きすぎます（{shoulder_rotation:.1f}度）。アームスイングの可能性があります", details)
+                return (False, f"肩の回旋が大きすぎます（左右差:{max_shoulder_twist:.2f}）。アームスイングの可能性があります", details)
 
     def _check_cross_step(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
