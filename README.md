@@ -585,7 +585,7 @@ GitHub UIでPull Request作成時、以下を含めてください：
 
 ---
 
-![CI](https://github.com/<owner>/<repo>/actions/workflows/validate.yml/badge.svg)
+![CI](https://github.com/tfujimoto913/thf_motion_scan/actions/workflows/validate.yml/badge.svg)
 
 ## 📋 Logging Standards
 
