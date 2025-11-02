@@ -4,7 +4,7 @@ Structured logging adapters for the motion scan processing pipeline.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from common.structured_logging import get_logger
 
@@ -141,6 +141,20 @@ def log_quality_check(
     if video_id:
         payload["videoId"] = video_id
     log_info("Quality check evaluated", test_type=test_type, context=payload)
+
+
+def log_qc_gate(
+    *,
+    test_type: str,
+    passed: bool,
+    violations: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    context: Dict[str, Any] = {"passed": passed}
+    if violations:
+        context["violations"] = violations
+        log_warning("QC gate violation detected", test_type=test_type, context=context)
+    else:
+        log_info("QC gate passed", test_type=test_type, context=context)
 
 
 def emit_metric(

@@ -15,13 +15,16 @@ CRITICAL:
 import sys
 import argparse
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import uuid
 from datetime import datetime
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# In-memory cache for thresholds metadata (avoids repeated disk reads)
+_THRESHOLDS_CACHE: Optional[Dict[str, Any]] = None
 
 from processing.pose_extractor import PoseExtractor
 from processing.normalizer import BodyNormalizer
@@ -30,6 +33,9 @@ import numpy as np
 import json
 import csv
 import cv2
+
+from src.config.loader import load_thresholds
+from src.validation_engine import apply_rep, apply_session
 
 
 def parse_args(args: Optional[list] = None):
@@ -342,6 +348,43 @@ def export_result_json(result: Dict, output_path: str) -> None:
         json.dump(output_data, f, indent=2, ensure_ascii=False)
 
 
+def _load_thresholds_data() -> Dict[str, Any]:
+    """
+    What: Load thresholds_v2 JSON once and cache it.
+    Why: Version metadata and validation thresholds are reused across exports.
+    """
+    global _THRESHOLDS_CACHE
+
+    if _THRESHOLDS_CACHE is not None:
+        return _THRESHOLDS_CACHE
+
+    thresholds_path = project_root / "config" / "thresholds_v2.json"
+    if thresholds_path.exists():
+        thresholds = load_thresholds(str(thresholds_path))
+    else:
+        thresholds = {
+            "versions": {
+                "rules_version": "0.1.0",
+                "thresholds_version": "0.1.0",
+                "normalization_version": "none",
+                "artifact_sha": "local-dev",
+            },
+            "tests": [],
+        }
+
+    tests = thresholds.get("tests", [])
+    if isinstance(tests, dict):
+        normalized_tests = []
+        for code, entry in tests.items():
+            merged = {"code": code}
+            merged.update(entry)
+            normalized_tests.append(merged)
+        thresholds["tests"] = normalized_tests
+
+    _THRESHOLDS_CACHE = thresholds
+    return thresholds
+
+
 def export_trace_csv(trace_data: List[Dict], output_path: str) -> None:
     """
     What: trace.csv を出力（時系列データ）
@@ -373,22 +416,113 @@ def export_trace_csv(trace_data: List[Dict], output_path: str) -> None:
 def generate_versions() -> Dict[str, str]:
     """
     What: versions フィールド生成
-    Why: result.json の必須フィールド
-    Design Decision: MVP段階は固定値、将来 CI で artifact_sha 自動埋め込み
-
-    Returns:
-        Dict: {
-            'rules_version': str,
-            'normalization_version': str,
-            'artifact_sha': str
-        }
-
-    CRITICAL: 3キー必須（rules_version, normalization_version, artifact_sha）
+    Why: result.json 及び rep/session exports の必須フィールド
+    Design Decision: thresholds_v2.json の versions セクションを単一の真実源とする
     """
+    thresholds = _load_thresholds_data()
+    versions = thresholds.get("versions", {})
+
     return {
-        'rules_version': '0.1.0',
-        'normalization_version': 'none',
-        'artifact_sha': 'local-dev'
+        'rules_version': versions.get('rules_version', '0.1.0'),
+        'thresholds_version': versions.get('thresholds_version', '0.1.0'),
+        'normalization_version': versions.get('normalization_version', 'none'),
+        'artifact_sha': versions.get('artifact_sha', 'local-dev'),
+    }
+
+
+def build_rep_result_record(result: Dict[str, Any], rep_index: int = 0) -> Dict[str, Any]:
+    """
+    Construct a rep_result entry that aligns with schema/rep_result.schema.jsonl.
+    """
+    evaluation = result.get('evaluation_detail') or result.get('evaluation', {})
+    test_code = evaluation.get('test_id') if isinstance(evaluation, dict) else None
+
+    metrics_source = {
+        'overall_score': result['scores']['overall'],
+        'A_execution_score': result['scores'].get('A_execution'),
+        'B_total': result['scores'].get('B_total'),
+    }
+    metrics = {k: v for k, v in metrics_source.items() if v is not None}
+
+    return {
+        'rep_index': rep_index,
+        'rep_id': result.get('rep_id'),
+        'session_id': result.get('session_id'),
+        'test_code': test_code or result.get('test_type'),
+        'metrics': metrics,
+        'flags': result.get('flags', []),
+        'versions': result['versions'],
+        'validation': result['validation'],
+    }
+
+
+def build_session_result_record(
+    result: Dict[str, Any],
+    rep_records: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Construct a session_result entry that aligns with schema/session_result.schema.json.
+    """
+    total_reps = len(rep_records)
+    scores = [
+        rep['metrics'].get('overall_score')
+        for rep in rep_records
+        if rep['metrics'].get('overall_score') is not None
+    ]
+    best_score = max(scores) if scores else 0.0
+    average_score = sum(scores) / len(scores) if scores else 0.0
+    qc_pass_count = sum(1 for rep in rep_records if rep['validation']['state'] != 'ERROR')
+
+    thresholds = _load_thresholds_data()
+    versions = result['versions']
+    session_validation = apply_session(
+        {'overall_score': average_score} if scores else {},
+        versions,
+        thresholds
+    )['validation']
+
+    aggregates: Dict[str, Any] = {
+        'best_score': round(best_score, 1) if scores else 0.0,
+        'average_score': round(average_score, 1) if scores else 0.0,
+        'rep_states': [rep['validation']['state'] for rep in rep_records],
+    }
+
+    session_test_code = result.get('evaluation_detail', {}).get('test_id')
+    athlete_id = result.get('athlete_id') or 'Unknown'
+
+    return {
+        'session_id': result.get('session_id'),
+        'athlete_id': athlete_id,
+        'test_code': session_test_code or result.get('test_type'),
+        'qc_pass_count': qc_pass_count,
+        'total_reps': total_reps,
+        'aggregates': aggregates,
+        'versions': versions,
+        'validation': session_validation,
+    }
+
+
+def export_rep_session_results(result: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
+    """
+    Export rep_result.jsonl and session_result.json documents for downstream consumers.
+    Returns a dict of created file paths for convenience.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rep_record = build_rep_result_record(result, rep_index=0)
+    rep_result_path = output_dir / 'rep_result.jsonl'
+    with open(rep_result_path, 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(rep_record, ensure_ascii=False) + '\n')
+
+    session_record = build_session_result_record(result, [rep_record])
+    session_result_path = output_dir / 'session_result.json'
+    with open(session_result_path, 'w', encoding='utf-8') as fh:
+        json.dump(session_record, fh, indent=2, ensure_ascii=False)
+
+    return {
+        'rep_result': rep_result_path,
+        'session_result': session_result_path,
     }
 
 
@@ -486,9 +620,17 @@ def run_pipeline(
 
     representative_frames = select_representative_frames(frame_scores)
 
-    return {
+    thresholds = _load_thresholds_data()
+    rep_validation = apply_rep(
+        {'overall_score': overall},
+        versions,
+        thresholds
+    )['validation']
+
+    result = {
         'session_id': session_id,
         'rep_id': rep_id,
+        'test_type': test_type,
         'scores': scores,
         'class': classification,
         'class_prob': class_prob,
@@ -496,8 +638,11 @@ def run_pipeline(
         'flags': flags,
         'versions': versions,
         'representative_frames': representative_frames,  # 代表フレーム3枚
-        'evaluation_detail': eval_result  # デバッグ用詳細情報
+        'evaluation_detail': eval_result,  # デバッグ用詳細情報
+        'validation': rep_validation,
     }
+
+    return result
 
 
 def main():
@@ -616,6 +761,11 @@ def main():
         export_result_json(result, str(result_json_path))
         print(f"  ✅ {result_json_path}")
 
+        # rep/session スキーマ準拠の出力
+        rep_session_paths = export_rep_session_results(result, out_dir)
+        print(f"  ✅ {rep_session_paths['rep_result']}")
+        print(f"  ✅ {rep_session_paths['session_result']}")
+
         # trace.csv 出力（--dump-trace true の場合）
         if args.dump_trace:
             # MVP段階：トレースデータは evaluation_detail から抽出
@@ -650,6 +800,8 @@ def main():
         print()
         print("📁 出力ファイル:")
         print(f"   - {result_json_path}")
+        print(f"   - {rep_session_paths['rep_result']}")
+        print(f"   - {rep_session_paths['session_result']}")
         if args.dump_trace:
             print(f"   - {trace_csv_path}")
         if args.overlay and image_paths:

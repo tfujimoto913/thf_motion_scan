@@ -1,0 +1,21 @@
+{
+  "versions": {
+    "rules_version": "0.2.0",
+    "thresholds_version": "2.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "abc1234"
+  },
+  "tests": [
+    {
+      "code": "T04_B1",
+      "metric": "trunk_rotation_norm",
+      "unit": "norm",
+      "primary": {
+        "bands": [
+          {"name": "pass", "op": "range_inc", "value": [0.0, 0.1, 0.2]},
+          {"name": "fail", "op": "gt", "value": 0.2}
+        ]
+      }
+    }
+  ]
+}

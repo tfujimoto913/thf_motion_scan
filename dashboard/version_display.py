@@ -66,7 +66,7 @@ def display_versions() -> None:
         # Load thresholds and required versions
         thresholds_path = Path(__file__).parent.parent / "config" / "thresholds.json"
         data = load_thresholds(str(thresholds_path))
-        versions = get_versions(data)
+        versions = get_versions(data) or {}
         metadata = data.get('metadata', {})
 
         required = load_required_versions()
@@ -86,32 +86,44 @@ def display_versions() -> None:
         with st.sidebar:
             st.markdown(f"### 📊 {t('version_info')}")
 
-            # Version fields
-            st.text(f"{t('rules')}: {versions.get('rules_version', 'N/A')}")
-            st.text(f"{t('normalization')}: {versions.get('normalization_version', 'N/A')}")
+            rules_version = versions.get('rules_version', 'N/A')
+            thresholds_version = versions.get('thresholds_version', 'N/A')
+            normalization_version = versions.get('normalization_version')
+
+            st.text(f"{t('rules')}: {rules_version}")
+            st.text(f"{t('thresholds')}: {thresholds_version}")
+            if normalization_version is not None:
+                st.text(f"{t('normalization')}: {normalization_version}")
 
             # Updated date (format: YYYY-MM-DD)
             updated_at = metadata.get('updated_at', 'N/A')
-            if updated_at != 'N/A' and len(updated_at) >= 10:
-                updated_at = updated_at[:10]
-            st.text(f"{t('updated')}: {updated_at}")
+            if isinstance(updated_at, str) and updated_at and updated_at != 'N/A':
+                updated_at_display = updated_at[:10]
+            else:
+                updated_at_display = 'N/A'
+            st.text(f"{t('updated')}: {updated_at_display}")
 
             # Build hash (first 7 chars)
             artifact_sha = versions.get('artifact_sha', 'N/A')
-            if artifact_sha != 'N/A' and len(artifact_sha) >= 7:
+            display_sha = artifact_sha
+            if isinstance(artifact_sha, str) and len(artifact_sha) >= 7:
                 display_sha = artifact_sha[:7]
-            else:
-                display_sha = artifact_sha
 
-            if st.button(f"📋 {t('build')}: {display_sha}"):
-                st.write(f"✅ {artifact_sha}")
+            if isinstance(artifact_sha, str) and artifact_sha and artifact_sha != 'N/A':
+                if st.button(f"📋 {t('build')}: {display_sha}"):
+                    st.info(f"{t('copied')}: {artifact_sha}")
+            else:
+                st.text(f"{t('build')}: {artifact_sha}")
 
             st.markdown("---")
 
-            # Compatibility status
-            if compat_result['status'] == 'ERROR':
+            status = compat_result.get('status', 'UNKNOWN')
+            reason = compat_result.get('reason', '')
+
+            if status == 'ERROR':
                 st.error(f"⚠️ {t('compat_error')}")
-                st.error(compat_result['reason'])
+                if reason:
+                    st.error(reason)
 
                 if not st.session_state.force_override:
                     if st.button(t('force_proceed')):
@@ -121,9 +133,32 @@ def display_versions() -> None:
                 else:
                     st.warning(t('force_active'))
 
-            elif compat_result['status'] == 'WARN':
+            elif status == 'WARN':
                 st.warning(f"ℹ️ {t('compat_warning')}")
-                st.warning(compat_result['reason'])
+                if reason:
+                    st.warning(reason)
+
+            elif status == 'OK':
+                st.success(f"✅ {t('compat_ok')}")
+                if reason:
+                    st.caption(reason)
+            else:
+                # Unknown status fallback
+                if reason:
+                    st.info(reason)
+
+            details = compat_result.get('details') or {}
+            if details:
+                with st.expander(t('compat_details')):
+                    for field, detail in details.items():
+                        detail_status = (detail.get('status') or '').lower()
+                        status_label = {
+                            'ok': t('status_ok'),
+                            'warn': t('status_warn'),
+                            'error': t('status_error'),
+                        }.get(detail_status, detail.get('status', 'N/A'))
+                        reason_text = detail.get('reason', '')
+                        st.markdown(f"- **{field}**: {status_label} — {reason_text}")
 
     except Exception as e:
         st.error(f"❌ {t('version_load_error')}: {e}")

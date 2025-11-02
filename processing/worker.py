@@ -21,6 +21,7 @@ from .logger import (
     log_processing_start,
     log_processing_complete,
     log_quality_check,
+    log_qc_gate,
     emit_metric,
     set_processing_context,
 )
@@ -44,6 +45,7 @@ from .evaluators_v2.push_pull_v2 import PushPullEvaluatorV2
 from .evaluators_v2.jump_landing_v2 import JumpLandingEvaluatorV2
 from .health_check import HealthChecker, apply_random_seed
 from .quality_monitor import QualityMonitor
+from .qc_gate import QCGate
 from .exporters import CSVExporter, PNGPlotter, PDFReporter
 
 
@@ -106,6 +108,7 @@ class VideoProcessingWorker:
 
         self.health_checker = HealthChecker(config_path)
         self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
+        self.qc_gate = QCGate(Path("config") / "qc_gate.json")
         self.config_path = config_path
 
     def process_video(self,
@@ -271,6 +274,15 @@ class VideoProcessingWorker:
         )
 
         # 5. 結果をまとめる
+        qc_gate_result = None
+        if self.qc_gate:
+            qc_gate_result = self.qc_gate.evaluate(test_type, evaluation_result)
+            log_qc_gate(
+                test_type=test_type,
+                passed=qc_gate_result["passed"],
+                violations=qc_gate_result.get("violations"),
+            )
+
         result = {
             'video_path': str(video_path),
             'test_type': test_type,
@@ -279,6 +291,7 @@ class VideoProcessingWorker:
             'score': score,  # v1: 'total', v2: 'total_score'
             'max_score': max_score,  # v1: 12, v2: 80
             'evaluation': evaluation_result,
+            'qc_gate': qc_gate_result or {"passed": True, "violations": []},
             'video_info': {
                 'fps': extraction_result['fps'],
                 'frame_count': extraction_result['frame_count'],

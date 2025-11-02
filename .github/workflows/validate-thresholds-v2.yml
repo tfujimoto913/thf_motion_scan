@@ -1,0 +1,197 @@
+name: Validate Thresholds v2
+
+on:
+  pull_request:
+    paths:
+      - "schema/thresholds_v2.schema.json"
+      - "tools/build_thresholds.py"
+      - "tests/fixtures/thresholds_v2/**"
+      - "config/thresholds_v2.json"
+      - ".github/workflows/validate-thresholds-v2.yml"
+  push:
+    branches:
+      - main
+      - "feature/**"
+    paths:
+      - "schema/thresholds_v2.schema.json"
+      - "tools/build_thresholds.py"
+      - "tests/fixtures/thresholds_v2/**"
+      - "config/thresholds_v2.json"
+      - ".github/workflows/validate-thresholds-v2.yml"
+
+jobs:
+  schema-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('schema/thresholds_v2.schema.json', 'tools/build_thresholds.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-
+            ${{ runner.os }}-pip-
+
+      - name: Install jsonschema
+        run: python -m pip install --upgrade pip && pip install jsonschema
+
+      - name: Validate valid fixtures
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import validate
+
+          schema_path = Path("schema/thresholds_v2.schema.json")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+          for fixture in sorted(Path("tests/fixtures/thresholds_v2/valid").glob("*.json")):
+              data = json.loads(fixture.read_text(encoding="utf-8"))
+              validate(instance=data, schema=schema)
+              print(f"✔ valid fixture passed: {fixture}")
+          PY
+
+      - name: Ensure invalid fixtures fail
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import ValidationError, validate
+
+          schema_path = Path("schema/thresholds_v2.schema.json")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+          failures = []
+          for fixture in sorted(Path("tests/fixtures/thresholds_v2/invalid").glob("*.json")):
+              data = json.loads(fixture.read_text(encoding="utf-8"))
+              try:
+                  validate(instance=data, schema=schema)
+              except ValidationError:
+                  print(f"✔ invalid fixture rejected: {fixture}")
+              else:
+                  failures.append(str(fixture))
+
+          if failures:
+              raise SystemExit(f"Unexpected schema pass for: {failures}")
+          PY
+
+      - name: Validate rep/session result schemas
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft7Validator
+
+          def load_schema(path: Path) -> Draft7Validator:
+              raw = path.read_text(encoding="utf-8")
+              try:
+                  payload = json.loads(raw)
+              except json.JSONDecodeError:
+                  lines = [json.loads(line) for line in raw.splitlines() if line.strip()]
+                  if len(lines) != 1:
+                      raise
+                  payload = lines[0]
+              return Draft7Validator(payload)
+
+          def iter_docs(path: Path):
+              if path.suffix == ".jsonl":
+                  for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                      if not line.strip():
+                          continue
+                      yield line_no, json.loads(line)
+              else:
+                  yield 1, json.loads(path.read_text(encoding="utf-8"))
+
+          fixtures_root = Path("tests/fixtures/schemas")
+          schemas = {
+              "rep_result": load_schema(Path("schema/rep_result.schema.jsonl")),
+              "session_result": load_schema(Path("schema/session_result.schema.json")),
+          }
+
+          # Validate known-good fixtures
+          for name, validator in schemas.items():
+              for fixture in sorted((fixtures_root / name / "valid").glob("*.json*")):
+                  for line_no, document in iter_docs(fixture):
+                      errors = list(validator.iter_errors(document))
+                      if errors:
+                          raise SystemExit(f"{fixture}:{line_no} {errors[0].message}")
+                      if name == "session_result":
+                          qc = document.get("qc_pass_count")
+                          total = document.get("total_reps")
+                          if isinstance(qc, int) and isinstance(total, int) and qc > total:
+                              raise SystemExit(
+                                  f"{fixture}:{line_no} qc_pass_count ({qc}) cannot exceed total_reps ({total})"
+                              )
+
+          # Ensure invalid fixtures fail
+          for name, validator in schemas.items():
+              for fixture in sorted((fixtures_root / name / "invalid").glob("*.json*")):
+                  seen_error = False
+                  for line_no, document in iter_docs(fixture):
+                      errors = list(validator.iter_errors(document))
+                      if errors:
+                          seen_error = True
+                          break
+                      if name == "session_result":
+                          qc = document.get("qc_pass_count")
+                          total = document.get("total_reps")
+                          if isinstance(qc, int) and isinstance(total, int) and qc > total:
+                              seen_error = True
+                              break
+                  if not seen_error:
+                      raise SystemExit(f"{fixture} unexpectedly passed schema validation")
+
+          # Validate published examples as smoke test
+          examples = {
+              "rep_result": Path("examples/rep_result.sample.jsonl"),
+              "session_result": Path("examples/session_result.sample.json"),
+          }
+          for name, path in examples.items():
+              validator = schemas[name]
+              for line_no, document in iter_docs(path):
+                  errors = list(validator.iter_errors(document))
+                  if errors:
+                      raise SystemExit(f"{path}:{line_no} {errors[0].message}")
+          PY
+
+  build-example:
+    runs-on: ubuntu-latest
+    needs: schema-fixtures
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-build-${{ hashFiles('tools/build_thresholds.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-build-
+            ${{ runner.os }}-pip-
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip && pip install jsonschema
+
+      - name: Dry-run thresholds build
+        run: |
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/templates_minimal.json \
+            --out config/thresholds_v2.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD) \
+            --dry-run

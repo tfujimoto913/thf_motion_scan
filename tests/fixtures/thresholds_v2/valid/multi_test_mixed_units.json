@@ -1,0 +1,33 @@
+{
+  "versions": {
+    "rules_version": "0.3.0",
+    "thresholds_version": "2.1.0",
+    "normalization_version": "none",
+    "artifact_sha": "feed123"
+  },
+  "tests": [
+    {
+      "code": "T05_B3",
+      "metric": "rep_repetition_count",
+      "unit": "count",
+      "primary": {
+        "bands": [
+          {"name": "pass", "op": "gte", "value": 12},
+          {"name": "fail", "op": "lt", "value": 12}
+        ]
+      }
+    },
+    {
+      "code": "T06_B1",
+      "metric": "trunk_forward_lean_norm",
+      "unit": "norm",
+      "primary": {
+        "bands": [
+          {"name": "pass", "op": "range_inc", "value": [0.0, 0.2]},
+          {"name": "border", "op": "range_inc", "value": [0.2, 0.3]},
+          {"name": "fail", "op": "gt", "value": 0.3}
+        ]
+      }
+    }
+  ]
+}

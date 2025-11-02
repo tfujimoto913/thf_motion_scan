@@ -1,0 +1,22 @@
+{
+  "versions": {
+    "rules_version": "0.2.0",
+    "thresholds_version": "2.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "abc1234"
+  },
+  "tests": [
+    {
+      "code": "T2_B10",
+      "metric": "bos_mediolateral_excursion_norm",
+      "unit": "norm",
+      "primary": {
+        "bands": [
+          {"name": "pass", "op": "lt", "value": 0.1},
+          {"name": "border", "op": "range_inc", "value": [0.1, 0.2]},
+          {"name": "fail", "op": "gt", "value": 0.2}
+        ]
+      }
+    }
+  ]
+}

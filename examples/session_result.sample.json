@@ -1,0 +1,30 @@
+{
+  "session_id": "sess-001",
+  "athlete_id": "athlete-999",
+  "test_code": "T02_B2",
+  "qc_pass_count": 3,
+  "total_reps": 4,
+  "aggregates": {
+    "best_score": 78.5,
+    "average_score": 70.1,
+    "rep_states": ["pass", "warn", "pass", "fail"]
+  },
+  "versions": {
+    "rules_version": "0.2.0",
+    "thresholds_version": "2.0.0",
+    "normalization_version": "1.0.0",
+    "artifact_sha": "cde3456"
+  },
+  "validation": {
+    "state": "WARN",
+    "violations": [
+      {
+        "category": "compatibility",
+        "field": "thresholds_version",
+        "status": "WARN",
+        "current": "2.1.0",
+        "expected": "2.0.0"
+      }
+    ]
+  }
+}

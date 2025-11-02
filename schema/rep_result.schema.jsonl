@@ -1,0 +1,190 @@
+{
+  "$id": "https://thf-motion-scan.dev/schema/rep_result/draft-01",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rep Result (Draft 01)",
+  "description": "Schema for per-repetition validation output emitted as JSON Lines (one object per rep).",
+  "type": "object",
+  "required": ["rep_index", "metrics", "versions", "validation"],
+  "additionalProperties": true,
+  "properties": {
+    "rep_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based index of the repetition inside the session."
+    },
+    "rep_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier for the evaluated repetition."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the parent motion capture session."
+    },
+    "test_code": {
+      "type": "string",
+      "pattern": "^T\\d{2}(?:_[A-Za-z0-9]+)+$",
+      "description": "Short code for the evaluated test (e.g., T02_B2 or T01_single_leg_squat)."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 timestamp when the evaluation was produced."
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Key-value map of numeric metrics calculated for the repetition.",
+      "additionalProperties": {
+        "anyOf": [
+          {"type": "number"},
+          {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["number", "string", "boolean", "null"]
+            }
+          },
+          {"type": "array"},
+          {"type": "string"},
+          {"type": "boolean"},
+          {"type": "null"}
+        ]
+      }
+    },
+    "flags": {
+      "type": "array",
+      "description": "Optional set of qualitative flags emitted by the evaluation pipeline.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "versions": {
+      "type": "object",
+      "description": "Version metadata for compatibility checks.",
+      "required": ["rules_version", "thresholds_version", "normalization_version", "artifact_sha"],
+      "additionalProperties": false,
+      "properties": {
+        "rules_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the evaluation rules used to score the repetition."
+        },
+        "thresholds_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the thresholds package that provides validation limits."
+        },
+        "normalization_version": {
+          "description": "Normalization pipeline version or 'none' when normalization is disabled.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["none"]
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+$"
+            }
+          ]
+        },
+        "artifact_sha": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{7,40}|local-dev)$",
+          "description": "Git commit sha for traceability (short or full)."
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "description": "Outcome of validation_engine checks for this repetition.",
+      "required": ["state", "violations"],
+      "additionalProperties": true,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["OK", "WARN", "ERROR"],
+          "description": "Overall compatibility status (ValidationEngine aggregate)."
+        },
+        "violations": {
+          "type": "array",
+          "description": "List of validation issues that prevented an OK state.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["category", "field", "status", "current", "expected"],
+                "additionalProperties": false,
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "const": "compatibility"
+                  },
+                  "field": {
+                    "type": "string",
+                    "enum": ["rules_version", "thresholds_version", "normalization_version"]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["WARN", "ERROR"]
+                  },
+                  "current": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "expected": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["test_code", "metric", "threshold", "actual", "band"],
+                "additionalProperties": true,
+                "properties": {
+                  "test_code": {
+                    "type": "string",
+                    "pattern": "^T\\d{2}_B\\d{1,2}$"
+                  },
+                  "metric": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "threshold": {
+                    "oneOf": [
+                      {"type": "number"},
+                      {"type": "boolean"},
+                      {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {"type": "number"}
+                      }
+                    ]
+                  },
+                  "actual": {
+                    "type": ["number", "boolean"]
+                  },
+                  "band": {
+                    "type": "string",
+                    "enum": ["pass", "border", "fail"]
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["pass", "border", "fail"]
+                  },
+                  "op": {
+                    "type": "string",
+                    "enum": ["lt", "lte", "gt", "gte", "eq", "range_inc", "range_exc"]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
