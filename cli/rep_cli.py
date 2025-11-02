@@ -29,6 +29,7 @@ from processing.evaluators_v2.single_leg_squat_v2 import SingleLegSquatEvaluator
 import numpy as np
 import json
 import csv
+import cv2
 
 
 def parse_args(args: Optional[list] = None):
@@ -216,6 +217,110 @@ def select_representative_frames(frame_scores: List[Dict]) -> Dict:
         'worst': worst,
         'median': median
     }
+
+
+def check_visibility(landmarks: List[Dict], threshold: float = 0.5) -> bool:
+    """
+    What: ランドマークの可視性をチェック
+    Why: 描画に必要なランドマークが十分に見えているか確認
+    Design Decision: 肩・hip・鼻の可視性をチェック（MVP簡易版）
+
+    Args:
+        landmarks: ランドマークリスト（33個想定）
+        threshold: 可視性閾値（デフォルト0.5）
+
+    Returns:
+        bool: 全ての必要ランドマークが閾値以上ならTrue
+
+    CRITICAL: MediaPipeインデックス（NOSE=0, LEFT_SHOULDER=11, RIGHT_SHOULDER=12, LEFT_HIP=23, RIGHT_HIP=24）
+    """
+    # 必要なランドマークのインデックス
+    required_indices = [0, 11, 12, 23, 24]  # NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP
+
+    for idx in required_indices:
+        if idx >= len(landmarks):
+            return False
+        if landmarks[idx].get('visibility', 0.0) < threshold:
+            return False
+
+    return True
+
+
+def draw_overlay(frame: np.ndarray, landmarks: List[Dict], overlay_info: Dict) -> np.ndarray:
+    """
+    What: フレームに骨格オーバーレイを描画
+    Why: 視覚的な評価結果を提供
+    Design Decision: 肩線・骨盤線・体幹軸・class注記（MVP簡易版）
+
+    Args:
+        frame: 元フレーム画像（BGR形式）
+        landmarks: ランドマークリスト（33個想定）
+        overlay_info: オーバーレイ情報（class, class_prob, scores）
+
+    Returns:
+        np.ndarray: 注釈付き画像
+
+    CRITICAL:
+    - 座標は正規化（0-1）→ピクセル座標に変換
+    - MediaPipeインデックス使用
+    - 可視性チェックは呼び出し側で実施
+    """
+    # コピーして元画像を保護
+    annotated = frame.copy()
+    h, w = frame.shape[:2]
+
+    # MediaPipeランドマークインデックス
+    NOSE = 0
+    LEFT_SHOULDER = 11
+    RIGHT_SHOULDER = 12
+    LEFT_HIP = 23
+    RIGHT_HIP = 24
+
+    def to_pixel(landmark):
+        """正規化座標→ピクセル座標"""
+        x = int(landmark['x'] * w)
+        y = int(landmark['y'] * h)
+        return (x, y)
+
+    # 肩線描画
+    if len(landmarks) > RIGHT_SHOULDER:
+        left_shoulder = to_pixel(landmarks[LEFT_SHOULDER])
+        right_shoulder = to_pixel(landmarks[RIGHT_SHOULDER])
+        cv2.line(annotated, left_shoulder, right_shoulder, (0, 255, 0), 2)  # 緑
+
+    # 骨盤線描画
+    if len(landmarks) > RIGHT_HIP:
+        left_hip = to_pixel(landmarks[LEFT_HIP])
+        right_hip = to_pixel(landmarks[RIGHT_HIP])
+        cv2.line(annotated, left_hip, right_hip, (255, 0, 0), 2)  # 青
+
+    # 体幹軸描画（首〜骨盤中心）
+    if len(landmarks) > RIGHT_HIP:
+        # 首の位置（肩の中点で近似）
+        left_shoulder_pt = to_pixel(landmarks[LEFT_SHOULDER])
+        right_shoulder_pt = to_pixel(landmarks[RIGHT_SHOULDER])
+        neck_x = (left_shoulder_pt[0] + right_shoulder_pt[0]) // 2
+        neck_y = (left_shoulder_pt[1] + right_shoulder_pt[1]) // 2
+        neck = (neck_x, neck_y)
+
+        # 骨盤中心
+        left_hip_pt = to_pixel(landmarks[LEFT_HIP])
+        right_hip_pt = to_pixel(landmarks[RIGHT_HIP])
+        pelvis_x = (left_hip_pt[0] + right_hip_pt[0]) // 2
+        pelvis_y = (left_hip_pt[1] + right_hip_pt[1]) // 2
+        pelvis = (pelvis_x, pelvis_y)
+
+        cv2.line(annotated, neck, pelvis, (0, 255, 255), 2)  # 黄
+
+    # Class注記（左上）
+    class_text = f"{overlay_info['class']} (p={overlay_info['class_prob']:.2f})"
+    cv2.putText(annotated, class_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    # スコア注記（左上、2行目）
+    score_text = f"Score: {overlay_info['scores']['overall']:.1f}"
+    cv2.putText(annotated, score_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    return annotated
 
 
 def export_result_json(result: Dict, output_path: str) -> None:
@@ -439,9 +544,66 @@ def main():
         print(f"  ✅ {landmarks_result['detected_frames']}/{landmarks_result['frame_count']} フレーム検出")
 
         # ステップ2: 評価実行
-        print("  [2/3] 評価実行中...")
+        print("  [2/4] 評価実行中...")
         result = run_pipeline(landmarks_data=landmarks_data)
         print("  ✅ 評価完了")
+
+        # ステップ2.5: 代表フレーム画像生成（--overlay true の場合）
+        image_paths = []
+        if args.overlay:
+            print("  [2.5/4] 代表フレーム画像生成中...")
+
+            # 出力ディレクトリ作成
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            # 代表フレーム情報
+            rep_frames = result.get('representative_frames', {})
+
+            # 動画を再度開いて代表フレームを取得
+            cap = cv2.VideoCapture(str(video_path))
+
+            for frame_type in ['best', 'worst', 'median']:
+                if frame_type not in rep_frames:
+                    continue
+
+                frame_idx = rep_frames[frame_type]['frame_idx']
+
+                # フレーム位置設定
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+
+                if not ret:
+                    print(f"  ⚠️  {frame_type} フレーム取得失敗（idx={frame_idx}）")
+                    continue
+
+                # ランドマーク取得
+                if frame_idx < len(landmarks_data) and 'landmarks' in landmarks_data[frame_idx]:
+                    landmarks = landmarks_data[frame_idx]['landmarks']
+
+                    # 可視性チェック
+                    if check_visibility(landmarks):
+                        # オーバーレイ情報
+                        overlay_info = {
+                            'class': result['class'],
+                            'class_prob': result['class_prob'],
+                            'scores': result['scores']
+                        }
+
+                        # オーバーレイ描画
+                        annotated = draw_overlay(frame, landmarks, overlay_info)
+
+                        # 画像保存
+                        image_path = out_dir / f"{frame_type}.png"
+                        cv2.imwrite(str(image_path), annotated)
+                        image_paths.append(image_path)
+                        print(f"  ✅ {image_path}")
+                    else:
+                        # 可視性不足
+                        if 'low_visibility' not in result['flags']:
+                            result['flags'].append('low_visibility')
+                        print(f"  ⚠️  {frame_type} フレーム：可視性不足（描画スキップ）")
+
+            cap.release()
 
         # ステップ3: ファイル出力
         print("  [3/4] ファイル出力中...")
@@ -490,6 +652,9 @@ def main():
         print(f"   - {result_json_path}")
         if args.dump_trace:
             print(f"   - {trace_csv_path}")
+        if args.overlay and image_paths:
+            for img_path in image_paths:
+                print(f"   - {img_path}")
         print("=" * 60)
 
         return 0

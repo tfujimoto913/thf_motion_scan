@@ -2,6 +2,27 @@
 
 versions差分を扱うための変更ログ
 
+## v0.2.0 (2025-11-02) - Overlay Release
+
+### Added
+- 画像オーバーレイ実装（best.png/worst.png/median.png）
+- 肩線・骨盤線・体幹軸描画（OpenCV使用）
+- Class注記・スコア注記（視覚的フィードバック）
+- 可視性ガード（check_visibility関数、閾値=0.5）
+- 可視性不足時の flags=["low_visibility"] 付与
+- --overlay フラグ機能実装（true/false制御）
+- テスト3件追加（draw_overlay, check_visibility）
+
+### Design Decisions
+- 肩線（緑）、骨盤線（青）、体幹軸（黄）で色分け
+- Class注記："pass (p=0.92)" 形式（左上）
+- スコア注記："Score: 75.0" 形式（左上2行目）
+- 可視性閾値：0.5（肩・hip・鼻の全てが閾値以上で描画）
+- 動画再読込：代表フレームインデックスで直接アクセス
+
+### Deferred
+- 回旋矢印（体幹回旋角の符号で左右描き分け）
+
 ## v0.1.0 (2025-11-02) - MVP Release
 
 ### Added

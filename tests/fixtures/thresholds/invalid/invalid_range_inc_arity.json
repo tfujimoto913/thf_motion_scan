@@ -1,0 +1,37 @@
+{
+  "versions": {
+    "rules_version": "v1.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "abcdef4"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-01-01T00:00:00Z"
+  },
+  "tests": {
+    "stride_mimic": {
+      "code": "stride_mimic",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "range_inc",
+              "value": [60, 80, 90]
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [45, 59]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 45
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -47,7 +47,7 @@ class Change:
         self.description = description
 
     def __repr__(self):
-        return f"[{self.severity.value}] {self.test_code}: {self.description}"
+        return f"[{self.severity.label}] {self.test_code}: {self.description}"
 
 
 def load_json(file_path: Path) -> Dict[str, Any]:
@@ -219,7 +219,7 @@ def format_output(changes: List[Change], format: str = "list") -> str:
         lines.append("| Severity | Test Code | Description |")
         lines.append("|----------|-----------|-------------|")
         for change in changes:
-            lines.append(f"| {change.severity.value} | {change.test_code} | {change.description} |")
+            lines.append(f"| {change.severity.label} | {change.test_code} | {change.description} |")
         return "\n".join(lines)
     else:
         # List format (default)
@@ -227,7 +227,7 @@ def format_output(changes: List[Change], format: str = "list") -> str:
         for severity in [Severity.MAJOR, Severity.MINOR, Severity.PATCH]:
             severity_changes = [c for c in changes if c.severity == severity]
             if severity_changes:
-                lines.append(f"\n{severity.value} changes:")
+                lines.append(f"\n{severity.label} changes:")
                 for change in severity_changes:
                     lines.append(f"  [{change.test_code}] {change.description}")
         return "\n".join(lines)

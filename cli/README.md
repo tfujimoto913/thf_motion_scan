@@ -34,12 +34,16 @@ python cli/rep_cli.py --video test.mp4 --dump-trace false
 | `--video PATH` | 入力動画ファイルパス | - | ✅ |
 | `--out-dir PATH` | 出力ディレクトリ | 入力動画と同階層 | - |
 | `--dump-trace {true,false}` | CSV出力ON/OFF | `true` | - |
+| `--overlay {true,false}` | 画像出力ON/OFF | `true` | - |
 | `--help` | ヘルプ表示 | - | - |
 
 ## 出力ファイル
 
 - **`result.json`**: scores, class, versions, representative_frames含む
 - **`trace.csv`**: 時系列データ（time, angle_x/y/z, events, class_trace）
+- **`best.png`**: 最高スコアフレーム＋骨格オーバーレイ（--overlay true時）
+- **`worst.png`**: 最低スコアフレーム＋骨格オーバーレイ（--overlay true時）
+- **`median.png`**: 中央値スコアフレーム＋骨格オーバーレイ（--overlay true時）
 
 ### result.json 例
 ```json
@@ -67,11 +71,22 @@ python cli/rep_cli.py --video non_existent.mp4
 # 期待: "動画ファイルが見つかりません" エラー + 次アクション提示
 ```
 
+## オーバーレイ仕様
+
+代表フレーム3枚（best/worst/median）に以下を描画：
+- **肩線**：両肩ランドマークを結ぶ直線（緑）
+- **骨盤線**：左右hip ランドマークを結ぶ直線（青）
+- **体幹軸**：首〜骨盤中心のベクトル（黄）
+- **Class注記**：class（p付き）、例："pass (p=0.92)"
+- **スコア注記**：overall score、例："Score: 75.0"
+
+可視性不足時は描画スキップ＋ flags=["low_visibility"] 付与
+
 ## 制約・今後の改善
 
 - MVP段階：`single_leg_squat` のみ対応
-- 画像オーバーレイ未実装（将来対応）
 - トレースデータ：evaluator が frame_data 提供時のみ出力
+- オーバーレイ：回旋矢印未実装（将来対応）
 
 ---
 

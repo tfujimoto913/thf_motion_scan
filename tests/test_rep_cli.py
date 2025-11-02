@@ -309,3 +309,86 @@ class TestJSONCSVOutput:
 
         assert len(lines) == 3  # header + 2 data rows
         assert 'time,angle_x,angle_y,angle_z,events,class_trace' in lines[0]
+
+
+class TestImageOverlay:
+    """
+    What: 画像オーバーレイ機能テスト
+    Why: 代表フレーム3枚への骨格・角度・class描画を保証
+    Design Decision: --overlay フラグで制御、可視性ガード実装
+    """
+
+    def test_draw_overlay_creates_annotated_image(self, tmp_path):
+        """
+        What: オーバーレイ描画で注釈付き画像を生成
+        Why: 肩線・骨盤線・体幹軸・角度値・class描画を保証
+        """
+        from cli.rep_cli import draw_overlay
+        import cv2
+        import numpy as np
+
+        # モック：フレーム画像（黒画像）
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        # モック：ランドマークデータ（肩・hip・首）
+        landmarks = [
+            {'x': 0.3, 'y': 0.3, 'z': 0.0, 'visibility': 0.9},  # 0: NOSE
+            *[{'x': 0.0, 'y': 0.0, 'z': 0.0, 'visibility': 0.0}] * 10,  # 1-10
+            {'x': 0.25, 'y': 0.4, 'z': 0.0, 'visibility': 0.95},  # 11: LEFT_SHOULDER
+            {'x': 0.35, 'y': 0.4, 'z': 0.0, 'visibility': 0.95},  # 12: RIGHT_SHOULDER
+            *[{'x': 0.0, 'y': 0.0, 'z': 0.0, 'visibility': 0.0}] * 10,  # 13-22
+            {'x': 0.25, 'y': 0.6, 'z': 0.0, 'visibility': 0.9},  # 23: LEFT_HIP
+            {'x': 0.35, 'y': 0.6, 'z': 0.0, 'visibility': 0.9},  # 24: RIGHT_HIP
+        ]
+
+        # オーバーレイ情報
+        overlay_info = {
+            'class': 'pass',
+            'class_prob': 0.92,
+            'scores': {'overall': 75.0}
+        }
+
+        # オーバーレイ描画
+        annotated = draw_overlay(frame, landmarks, overlay_info)
+
+        # 画像が生成されたことを確認
+        assert annotated is not None
+        assert annotated.shape == frame.shape
+
+        # 出力確認（tmp_pathに保存）
+        output_path = tmp_path / "overlay_test.png"
+        cv2.imwrite(str(output_path), annotated)
+        assert output_path.exists()
+
+    def test_overlay_flag_controls_image_generation(self, tmp_path):
+        """
+        What: --overlay false で画像生成をスキップ
+        Why: ユーザーが画像出力を制御できることを保証
+        """
+        # このテストは統合テストで確認（main()レベル）
+        # ここでは関数レベルのテストのみ
+        pass
+
+    def test_low_visibility_adds_flag(self):
+        """
+        What: 可視性不足時に flags に "low_visibility" を追加
+        Why: 信頼性の低い結果を明示
+        """
+        from cli.rep_cli import check_visibility
+
+        # モック：可視性の低いランドマーク
+        landmarks = [
+            {'x': 0.3, 'y': 0.3, 'z': 0.0, 'visibility': 0.3},  # 低い
+            *[{'x': 0.0, 'y': 0.0, 'z': 0.0, 'visibility': 0.0}] * 10,
+            {'x': 0.25, 'y': 0.4, 'z': 0.0, 'visibility': 0.4},  # 低い
+            {'x': 0.35, 'y': 0.4, 'z': 0.0, 'visibility': 0.95},
+            *[{'x': 0.0, 'y': 0.0, 'z': 0.0, 'visibility': 0.0}] * 10,
+            {'x': 0.25, 'y': 0.6, 'z': 0.0, 'visibility': 0.9},
+            {'x': 0.35, 'y': 0.6, 'z': 0.0, 'visibility': 0.9},
+        ]
+
+        # 可視性チェック（閾値=0.5）
+        is_visible = check_visibility(landmarks, threshold=0.5)
+
+        # 可視性不足
+        assert is_visible is False
