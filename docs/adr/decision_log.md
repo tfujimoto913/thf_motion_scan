@@ -1365,572 +1365,189 @@
 - 決定者: Human + Claude Code
 - 状態: ✅ Accepted
 - 関連ADR: ADR-018（チーム一括受付システム）
-- コンテキスト:
-  - **Week 1デプロイ後の問題発覚**:
-    1. **DynamoDBキー構造エラー**: "The provided key element does not match the schema"
-       - Lambda関数が`PK/SK`を期待、実際のテーブルは`video_id/processed_at`
-       - 原因: ADR-018の初期設計でGSI1（PK/SK）を先行実装と仮定、実際はメインテーブルがvideo_id/processed_at
-    2. **選手情報フィールド不足**: Kana名と身体特性（利き手・利き足・シュートハンド）が未実装
-       - 要求: firstNameKana, lastNameKana, dominantHand, dominantFoot, shootingHand
-- 決定内容:
-  - **Part 1: DynamoDBキー構造修正（緊急対応）**:
-    - Lambda関数の内部実装を修正し、`PK/SK`抽象化レイヤーを`video_id/processed_at`にマッピング
-    - メインテーブル使用時: `video_id/processed_at`
-    - GSI2（TeamIndex）使用時: `GSI2PK/GSI2SK`
-    - Team/Athleteエンティティのキー構造を`video_id/processed_at`に変更
-  - **Part 2: 選手登録フィールド拡張**:
-    - Kana名バリデーター追加: ひらがな・カタカナのみ（1-20文字）
-    - 身体特性バリデーター追加: "right"/"left"のみ（大文字自動正規化）
-    - player_auth/handler.py拡張: personalInfo + bodyCharacteristics追加
-    - テストケース追加: 8つの新規バリデーションテスト
-- 技術詳細:
-  - **1. dynamodb_utils.py修正**（lambda/common/dynamodb_utils.py:39-176）:
-    ```python
-    def query_items(pk: str, sk_prefix: Optional[str] = None,
-                    index_name: Optional[str] = None) -> List[Dict]:
-        """
-        内部的にvideo_id/processed_atにマッピング
-        GSI2使用時はGSI2PK/GSI2SK使用
-        """
-        if index_name == 'GSI2-index':
-            # GSI2: TeamIndex
-            if sk_prefix:
-                key_condition = Key('GSI2PK').eq(pk) & Key('GSI2SK').begins_with(sk_prefix)
-            else:
-                key_condition = Key('GSI2PK').eq(pk)
-        else:
-            # メインテーブル: video_id/processed_at
-            if sk_prefix:
-                key_condition = Key('video_id').eq(pk) & Key('processed_at').begins_with(sk_prefix)
-            else:
-                key_condition = Key('video_id').eq(pk)
 
-    def get_item(pk: str, sk: str) -> Optional[Dict]:
-        response = table.get_item(Key={'video_id': pk, 'processed_at': sk})
-        return response.get('Item')
+### Context（背景）
+Week 1デプロイ後に2つの問題が発覚：
+1. **DynamoDBキー構造エラー**: "The provided key element does not match the schema"
+   - Lambda関数が`PK/SK`を期待、実際のテーブルは`video_id/processed_at`
+   - 原因: ADR-018の初期設計でGSI1（PK/SK）を先行実装と仮定、実際はメインテーブルがvideo_id/processed_at
+2. **選手情報フィールド不足**: Kana名と身体特性（利き手・利き足・シュートハンド）が未実装
 
-    def update_item(pk: str, sk: str, update_expression: str, ...) -> bool:
-        update_kwargs = {
-            'Key': {'video_id': pk, 'processed_at': sk},
-            'UpdateExpression': update_expression,
-            ...
-        }
-    ```
-  - **2. Team/Athleteエンティティ構造変更**:
-    ```python
-    # team_management/handler.py
-    team_item = {
-        'video_id': f"TEAM#{team_id}",      # メインテーブルのHASHキー
-        'processed_at': 'METADATA',          # メインテーブルのRANGEキー
-        'teamId': team_id,
-        'teamSlug': team_slug,
-        'teamName': team_name,
-        'registrationUrl': registration_url,
-        'qrCodeS3Key': qr_code_s3_key,
-        'createdAt': created_at
-    }
+### Decision（決定）
+**Part 1: DynamoDBキー構造修正（緊急対応）**
+- Lambda関数の内部実装を修正し、`PK/SK`抽象化レイヤーを`video_id/processed_at`にマッピング
+- メインテーブル使用時: `video_id/processed_at`
+- GSI2（TeamIndex）使用時: `GSI2PK/GSI2SK`
+- Team/Athleteエンティティのキー構造を`video_id/processed_at`に変更
 
-    # player_auth/handler.py（拡張前）
-    athlete_item = {
-        'video_id': f"ATHLETE#{player_id}",   # メインテーブルのHASHキー
-        'processed_at': 'METADATA',            # メインテーブルのRANGEキー
-        'playerId': player_id,
-        'teamInfo': {...},
-        'personalInfo': {
-            'firstName': first_name,
-            'lastName': last_name,
-            'birthDate': birth_date
-        },
-        'auth': {'passwordHash': hashed_password},
-        'GSI2PK': f"TEAM#{team_id}",
-        'GSI2SK': f"JERSEY#{jersey_number:02d}",
-        'createdAt': created_at
-    }
-    ```
-  - **3. 選手登録フィールド拡張**（player_auth/handler.py:107-282）:
-    ```python
-    # 追加フィールド
-    athlete_item = {
-        'video_id': f"ATHLETE#{player_id}",
-        'processed_at': 'METADATA',
-        'playerId': player_id,
-        'teamInfo': {...},
-        'personalInfo': {
-            'firstName': first_name,
-            'lastName': last_name,
-            'firstNameKana': first_name_kana,      # 新規
-            'lastNameKana': last_name_kana,        # 新規
-            'birthDate': birth_date
-        },
-        'bodyCharacteristics': {                    # 新規セクション
-            'dominantHand': dominant_hand,          # "right" or "left"
-            'dominantFoot': dominant_foot,          # "right" or "left"
-            'shootingHand': shooting_hand           # "right" or "left"
-        },
-        'auth': {...},
-        'GSI2PK': f"TEAM#{team_id}",
-        'GSI2SK': f"JERSEY#{jersey_number:02d}",
-        'createdAt': created_at
-    }
-    ```
-  - **4. バリデーター追加**（lambda/common/validators.py:179-237）:
-    ```python
-    def validate_kana_name(kana_name: str, field_name: str) -> Tuple[bool, Optional[str]]:
-        """
-        ひらがな（ぁ-んー）またはカタカナ（ァ-ヴー）のみ許可
-        1-20文字、全角のみ
-        """
-        kana_pattern = r'^[ぁ-んァ-ヴー]+$'
-        if not re.match(kana_pattern, kana_name):
-            return False, f"{field_name} must contain only hiragana or katakana characters"
-        return True, None
+**Part 2: 選手登録フィールド拡張**
+- Kana名バリデーター追加: ひらがな・カタカナのみ（1-20文字）
+- 身体特性バリデーター追加: "right"/"left"のみ（大文字自動正規化）
+- personalInfo拡張: firstNameKana, lastNameKana 追加
+- bodyCharacteristics新設: dominantHand, dominantFoot, shootingHand
 
-    def validate_lateral_characteristic(value: str, field_name: str) -> Tuple[bool, Optional[str]]:
-        """
-        "right" or "left" のみ許可
-        大文字・小文字は正規化（自動lower()）
-        """
-        normalized_value = value.lower().strip()
-        if normalized_value not in ['right', 'left']:
-            return False, f"{field_name} must be either 'right' or 'left'"
-        return True, None
-    ```
-- 影響範囲:
-  - **lambda/common/dynamodb_utils.py**: 3関数修正（query_items, get_item, update_item）
-  - **lambda/common/validators.py**: 2関数追加（validate_kana_name, validate_lateral_characteristic）
-  - **lambda/team_management/handler.py**: team_itemキー構造変更
-  - **lambda/player_auth/handler.py**: athlete_itemキー構造変更 + フィールド拡張
-  - **tests/lambda/test_common.py**: 8テストケース追加（30テスト → 全合格）
-  - **template.yaml**: GSI1コメントアウト（DynamoDB 1 GSI制限対応）
-- DynamoDB構造の共存:
-  - **動画処理データ**: `video_id = S3パス`, `processed_at = タイムスタンプ`
-  - **Team/Athleteデータ**: `video_id = TEAM#/ATHLETE#`, `processed_at = METADATA`
-  - プレフィックスで識別可能（衝突なし）
-- テスト結果:
-  - ✅ test_common.py: 30/30 passed
-    - Kana検証: 4テスト（hiragana, katakana, 漢字検出, 英字検出）
-    - 身体特性検証: 4テスト（right, left, 大文字正規化, 不正値検出）
-  - ✅ sam build: Build Succeeded
-  - ✅ DynamoDBキー構造: メインテーブル・GSI2両対応
-- API変更:
-  - **POST /player/register** リクエスト:
-    ```json
-    {
-      "teamId": "tm_sakae",
-      "jerseyNumber": 19,
-      "firstName": "太郎",
-      "lastName": "山田",
-      "firstNameKana": "たろう",        // 新規必須
-      "lastNameKana": "やまだ",          // 新規必須
-      "birthDate": "2010-03-15",
-      "dominantHand": "right",          // 新規必須
-      "dominantFoot": "left",           // 新規必須
-      "shootingHand": "right",          // 新規必須
-      "password": "secure123"
-    }
-    ```
-  - **POST /player/register** レスポンス:
-    ```json
-    {
-      "success": true,
-      "data": {
-        "playerId": "plr_sakae_19",
-        "teamId": "tm_sakae",
-        "jerseyNumber": 19,
-        "firstName": "太郎",
-        "lastName": "山田",
-        "firstNameKana": "たろう",
-        "lastNameKana": "やまだ",
-        "birthDate": "2010-03-15",
-        "bodyCharacteristics": {
-          "dominantHand": "right",
-          "dominantFoot": "left",
-          "shootingHand": "right"
-        },
-        "createdAt": "2025-10-27T12:00:00Z"
-      },
-      "message": "Player registered successfully"
-    }
-    ```
-- エラーハンドリング例:
-  - **Kana名に漢字を含む**:
-    ```json
-    {
-      "success": false,
-      "error": "First name kana must contain only hiragana or katakana characters",
-      "errorCode": "VALIDATION_ERROR"
-    }
-    ```
-  - **身体特性が不正**:
-    ```json
-    {
-      "success": false,
-      "error": "Dominant hand must be either 'right' or 'left'",
-      "errorCode": "VALIDATION_ERROR"
-    }
-    ```
-- 将来的な改善点:
-  - **GSI1追加予定**:
-    - DynamoDB制限: 一度に1つのGSIしか追加不可
-    - Week 1: GSI2（TeamIndex）のみ実装
-    - Week 2以降: GSI1（PK/SK）追加予定
-    - 追加方法: template.yamlのコメント解除 + `sam deploy`、または`aws dynamodb update-table`
-    - 追加時の対応: Team/AthleteエンティティにPK/SK属性追加
-      ```python
-      team_item = {
-          'video_id': f"TEAM#{team_id}",
-          'processed_at': 'METADATA',
-          'PK': f"TEAM#{team_id}",      # GSI1用（追加）
-          'SK': 'METADATA',              # GSI1用（追加）
-          ...
-      }
-      ```
-  - **動画処理エンティティとの統合**:
-    - 現在: メインテーブルに動画処理データ + Team/Athleteデータを共存
-    - 将来: GSI1追加により、動画処理データもGSI1経由でクエリ可能
-    - 利点: 統一的なアクセスパターン（メインテーブルはS3パスベース、GSI1はエンティティタイプベース）
-- Lessons Learned:
-  - **DynamoDBキー設計の重要性**:
-    - 問題: 設計書とインフラ実装の不一致（PK/SK vs video_id/processed_at）
-    - 教訓: template.yaml作成時にメインテーブルのキー名を確認必須
-    - 対策: ADR記録時にキースキーマを明記
-  - **抽象化レイヤーの利点**:
-    - dynamodb_utils.pyが抽象化レイヤーとして機能
-    - 内部実装変更でも呼び出し側（handler.py）は無変更
-    - 推奨: 全DynamoDB操作をユーティリティ関数経由にする
-  - **段階的デプロイの重要性**:
-    - Week 1でGSI2のみ実装、GSI1は後日追加
-    - 理由: DynamoDB制限（1 GSI/デプロイ）
-    - 利点: 問題発生時の影響範囲を最小化
-- セキュリティ:
-  - パスワードハッシュ: bcrypt（rounds=12）継続使用
-  - JWT: HS256、60分有効、Secrets Manager管理（継続）
-  - 個人情報保護: firstNameKana/lastNameKanaはログ出力禁止
-  - 身体特性: dominantHand等はログ出力可能（個人識別不可）
-- パフォーマンス:
-  - バリデーション追加: +0.001秒/リクエスト（正規表現マッチング）
-  - DynamoDB読み込み: 変化なし（キー構造のみ変更、クエリ効率同等）
-- 参照:
-  - ADR-018（チーム一括受付システム）
-  - template.yaml:285-320（DynamoDB GSI定義）
-  - lambda/common/dynamodb_utils.py:39-176（キー構造マッピング）
-  - lambda/common/validators.py:179-237（新規バリデーター）
-  - lambda/player_auth/handler.py:107-282（選手登録エンドポイント）
-  - tests/lambda/test_common.py:244-329（新規テスト）
-  - /tmp/dynamodb_key_fix_report.txt（修正レポート）
-  - /tmp/gsi_modification_report.txt（GSI1コメントアウトレポート）
-- 破壊的変更:
-  - **player_auth/handler.py POST /player/register**:
-    - 新規必須フィールド: firstNameKana, lastNameKana, dominantHand, dominantFoot, shootingHand
-    - 影響: 既存フロントエンドは登録フォーム更新必須
-    - 緩和策: Week 1で初回デプロイのため実ユーザー影響なし
-  - **DynamoDBキー構造**:
-    - Team/Athleteエンティティが`video_id/processed_at`を使用
-    - 影響: 既存データがある場合はmigration必要
-    - 緩和策: Week 1で初回デプロイのため既存データなし
+### Rationale（理由）
+**抽象化レイヤー採用**:
+- dynamodb_utils.pyが抽象化レイヤーとして機能
+- 内部実装変更でも呼び出し側（handler.py）は無変更
+- 全DynamoDB操作をユーティリティ関数経由に統一
+
+**DynamoDB構造の共存**:
+- 動画処理データ: `video_id = S3パス`, `processed_at = タイムスタンプ`
+- Team/Athleteデータ: `video_id = TEAM#/ATHLETE#`, `processed_at = METADATA`
+- プレフィックスで識別可能（衝突なし）
+
+**段階的デプロイ**:
+- Week 1でGSI2のみ実装、GSI1は後日追加
+- 理由: DynamoDB制限（1 GSI/デプロイ）
+- 利点: 問題発生時の影響範囲を最小化
+
+### Consequences（影響）
+**影響範囲**:
+- lambda/common/dynamodb_utils.py: 3関数修正（query_items, get_item, update_item）
+- lambda/common/validators.py: 2関数追加（validate_kana_name, validate_lateral_characteristic）
+- lambda/team_management/handler.py: team_itemキー構造変更
+- lambda/player_auth/handler.py: athlete_itemキー構造変更 + フィールド拡張
+- tests/lambda/test_common.py: 8テストケース追加（30テスト全合格）
+- template.yaml: GSI1コメントアウト（DynamoDB 1 GSI制限対応）
+
+**API変更**:
+- POST /player/register: 新規必須フィールド追加
+  - firstNameKana, lastNameKana（ひらがな/カタカナのみ）
+  - dominantHand, dominantFoot, shootingHand（"right" or "left"）
+- 詳細なリクエスト/レスポンス仕様は lambda/player_auth/handler.py:107-282 参照
+
+**エラーコード**:
+- VALIDATION_ERROR: Kana名に漢字を含む、身体特性が不正
+
+**テスト結果**:
+- test_common.py: 30/30 passed
+  - Kana検証: 4テスト（hiragana, katakana, 漢字検出, 英字検出）
+  - 身体特性検証: 4テスト（right, left, 大文字正規化, 不正値検出）
+- sam build: Build Succeeded
+- DynamoDBキー構造: メインテーブル・GSI2両対応
+
+**セキュリティ**:
+- パスワードハッシュ: bcrypt（rounds=12）継続使用
+- JWT: HS256、60分有効、Secrets Manager管理
+- 個人情報保護: firstNameKana/lastNameKanaはログ出力禁止
+- 身体特性: dominantHand等はログ出力可能（個人識別不可）
+
+**パフォーマンス**:
+- バリデーション追加: +0.001秒/リクエスト
+- DynamoDB読み込み: 変化なし（キー構造のみ変更）
+
+**破壊的変更**:
+- POST /player/register: 新規必須フィールド追加（既存フロントエンド更新必須）
+- 緩和策: Week 1で初回デプロイのため実ユーザー影響なし
+- DynamoDBキー構造: Team/Athleteエンティティが`video_id/processed_at`を使用
+- 緩和策: Week 1で初回デプロイのため既存データなし
+
+**将来的な改善点**:
+- GSI1追加予定（Week 2以降）: PK/SK属性追加
+- 動画処理エンティティとの統合: GSI1経由でクエリ可能
+
+**Lessons Learned**:
+- DynamoDBキー設計: template.yaml作成時にメインテーブルのキー名確認必須
+- 抽象化レイヤー: 全DynamoDB操作をユーティリティ関数経由推奨
+- 段階的デプロイ: DynamoDB制限（1 GSI/デプロイ）に注意
+
+**参照**:
+- template.yaml:285-320（DynamoDB GSI定義）
+- lambda/common/dynamodb_utils.py:39-176（キー構造マッピング）
+- lambda/common/validators.py:179-237（新規バリデーター）
+- lambda/player_auth/handler.py:107-282（選手登録エンドポイント）
+- tests/lambda/test_common.py:244-329（新規テスト）
 
 ## ADR-021: Phase 2.5 Stage 1 - 管理者編集API + 身長フィールド
 - 日付: 2025-10-29
 - 決定者: Human + Claude Code
 - 状態: ✅ Accepted
 - 関連ADR: ADR-018（チーム一括受付システム）, ADR-020（選手登録フィールド拡張）
-- コンテキスト:
-  - **Week 1デプロイ後の追加要求**:
-    1. **身長フィールド**: 選手登録時に身長を記録（オプショナル、後方互換性必須）
-    2. **管理者用編集API**: チーム名・選手情報の修正機能（認証はStage 2以降）
-    3. **編集制限**: 重要フィールド（teamId, playerId, 認証情報等）は編集禁止
-- 決定内容:
-  - **Part 1: 身長フィールド追加（オプショナル）**:
-    - validate_height() 追加: 100-250cm、int型のみ
-    - player_auth/handler.py 拡張: bodyCharacteristics.height 追加
-    - 既存データとの互換性: height なしでも登録可能
-  - **Part 2: 管理者編集API（認証なし - Stage 1）**:
-    - PATCH /admin/teams/{teamId}: teamName のみ編集可能
-    - PATCH /admin/players/{playerId}: personalInfo, bodyCharacteristics のみ編集可能
-    - ホワイトリスト検証: 編集可能フィールドを明示的に定義
-    - 編集不可フィールド: teamId, teamSlug, playerId, teamInfo, auth 等
-- 技術詳細:
-  - **1. 身長バリデーター**（lambda/common/validators.py:240-262）:
-    ```python
-    def validate_height(height: int) -> Tuple[bool, Optional[str]]:
-        """
-        100-250cm、int型のみ許可
-        オプショナル（ADR-020との後方互換性）
-        """
-        if not isinstance(height, int):
-            return False, "Height must be an integer"
-        if height < 100 or height > 250:
-            return False, "Height must be between 100 and 250 cm"
-        return True, None
-    ```
-  - **2. チーム編集API**（lambda/admin_edit/handler.py:32-147）:
-    ```python
-    ALLOWED_TEAM_FIELDS = ['teamName']
-    FORBIDDEN_TEAM_FIELDS = ['teamId', 'teamSlug', 'teamCode',
-                             'registrationUrl', 'qrCodeS3Key']
 
-    def update_team(event, context):
-        """
-        PATCH /admin/teams/{teamId}
-        - teamName のみ編集可能
-        - 編集不可フィールドへのアクセスは400エラー
-        - DynamoDB UpdateExpression で部分更新
-        """
-        # ホワイトリスト検証
-        forbidden_fields = [field for field in body.keys()
-                           if field in FORBIDDEN_TEAM_FIELDS]
-        if forbidden_fields:
-            return error_response(
-                f"Fields not allowed to update: {', '.join(forbidden_fields)}",
-                400, 'FORBIDDEN_FIELD'
-            )
+### Context（背景）
+Week 1デプロイ後の追加要求として、以下3つの機能が必要となった：
+1. 身長フィールド（オプショナル、後方互換性必須）
+2. 管理者用編集API（チーム名・選手情報の修正、認証はStage 2以降）
+3. 編集制限（重要フィールド編集禁止）
 
-        # 許可されていないフィールドチェック
-        unknown_fields = [field for field in body.keys()
-                         if field not in ALLOWED_TEAM_FIELDS]
-        if unknown_fields:
-            return error_response(
-                f"Unknown fields: {', '.join(unknown_fields)}",
-                400, 'UNKNOWN_FIELD'
-            )
+### Decision（決定）
+**Part 1: 身長フィールド追加**
+- validate_height(): 100-250cm、int型のみ（lambda/common/validators.py:240-262）
+- bodyCharacteristics.height 追加（オプショナル）
+- 既存データとの互換性維持
 
-        # DynamoDB更新（updatedAt自動追加）
-        update_item(
-            pk=f"TEAM#{team_id}",
-            sk="METADATA",
-            update_expression="SET #teamName = :teamName, #updatedAt = :updatedAt",
-            expression_attribute_values={
-                ':teamName': body['teamName'],
-                ':updatedAt': datetime.utcnow().isoformat() + 'Z'
-            },
-            expression_attribute_names={
-                '#teamName': 'teamName',
-                '#updatedAt': 'updatedAt'
-            }
-        )
-    ```
-  - **3. 選手編集API**（lambda/admin_edit/handler.py:150-285）:
-    ```python
-    ALLOWED_PLAYER_FIELDS = ['personalInfo', 'bodyCharacteristics']
-    FORBIDDEN_PLAYER_FIELDS = ['playerId', 'teamInfo', 'auth']
+**Part 2: 管理者編集API（認証なし）**
+- PATCH /admin/teams/{teamId}: teamName のみ編集可能
+- PATCH /admin/players/{playerId}: personalInfo, bodyCharacteristics のみ編集可能
+- ホワイトリスト検証方式（ALLOWED_FIELDS定義）
+- 編集不可フィールド: teamId, teamSlug, playerId, auth 等
 
-    def update_player(event, context):
-        """
-        PATCH /admin/players/{playerId}
-        - personalInfo, bodyCharacteristics のみ編集可能
-        - ネストされたフィールドの部分更新対応
-        - jerseyNumber, passwordHash 等は編集禁止
-        """
-        # personalInfo更新（ネストフィールド対応）
-        if 'personalInfo' in body:
-            for key, value in body['personalInfo'].items():
-                placeholder_key = f'#pi_{key}'
-                placeholder_value = f':pi_{key}'
-                update_expression_parts.append(
-                    f'personalInfo.{placeholder_key} = {placeholder_value}'
-                )
-                expression_attribute_names[placeholder_key] = key
-                expression_attribute_values[placeholder_value] = value
+### Rationale（理由）
+**ホワイトリスト方式採用**:
+- セキュリティ強化（デフォルト拒否）
+- 新規フィールド追加時も安全（明示的許可まで編集不可）
 
-        # bodyCharacteristics更新（ネストフィールド対応）
-        if 'bodyCharacteristics' in body:
-            for key, value in body['bodyCharacteristics'].items():
-                placeholder_key = f'#bc_{key}'
-                placeholder_value = f':bc_{key}'
-                update_expression_parts.append(
-                    f'bodyCharacteristics.{placeholder_key} = {placeholder_value}'
-                )
-                expression_attribute_names[placeholder_key] = key
-                expression_attribute_values[placeholder_value] = value
-    ```
-  - **4. DecimalEncoder導入**（lambda/common/response_utils.py:16-28）:
-    ```python
-    class DecimalEncoder(json.JSONEncoder):
-        """
-        DynamoDB Decimal型のJSON変換エンコーダー
-        整数はint、小数はfloatに変換
-        """
-        def default(self, obj):
-            if isinstance(obj, Decimal):
-                return int(obj) if obj % 1 == 0 else float(obj)
-            return super(DecimalEncoder, self).default(obj)
+**DecimalEncoder導入**:
+- DynamoDB Decimal型のJSON変換エラー回避
+- 全レスポンスで自動int/float変換
 
-    # success_response, error_response 両方で使用
-    return {
-        'statusCode': status_code,
-        'headers': cors_headers(),
-        'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
-    }
-    ```
-  - **5. テスト環境整備**（tests/lambda/conftest.py:15-21）:
-    ```python
-    # CRITICAL: モジュールインポート前に環境変数を設定
-    os.environ['TABLE_NAME'] = 'test-table'
-    os.environ['QRCODE_BUCKET'] = 'test-qrcode-bucket'
-    os.environ['VIDEOS_BUCKET'] = 'test-videos-bucket'
-    os.environ['JWT_SECRET_KEY'] = 'test-secret-key'
-    os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
-    ```
-- 影響範囲:
-  - **lambda/common/validators.py**: validate_height() 追加（+23行）
-  - **lambda/player_auth/handler.py**: height フィールド対応（+8行）
-  - **lambda/admin_edit/handler.py**: 新規作成（304行）
-  - **lambda/common/response_utils.py**: DecimalEncoder追加（+16行）
-  - **tests/lambda/test_admin_edit.py**: 新規作成（373行、6テスト）
-  - **tests/lambda/test_common.py**: 身長テスト追加（+69行、6テスト）
-  - **tests/lambda/test_handlers.py**: DynamoDBキー修正（+18行変更）
-  - **tests/lambda/conftest.py**: 新規作成（22行）
-  - **template.yaml**: AdminEditFunction追加（+26行）
-  - 総計: 約840行追加・修正
-- API仕様:
-  - **PATCH /admin/teams/{teamId}** リクエスト:
-    ```json
-    {
-      "teamName": "栄フレッシュ2025"
-    }
-    ```
-  - **PATCH /admin/teams/{teamId}** レスポンス:
-    ```json
-    {
-      "success": true,
-      "data": {
-        "teamId": "tm_sakae",
-        "teamName": "栄フレッシュ2025",
-        "updatedAt": "2025-10-29T12:00:00Z"
-      },
-      "message": "Team updated successfully"
-    }
-    ```
-  - **PATCH /admin/players/{playerId}** リクエスト:
-    ```json
-    {
-      "personalInfo": {
-        "firstName": "太郎Updated",
-        "birthDate": "2010-03-16"
-      },
-      "bodyCharacteristics": {
-        "height": 175
-      }
-    }
-    ```
-  - **PATCH /admin/players/{playerId}** レスポンス:
-    ```json
-    {
-      "success": true,
-      "data": {
-        "playerId": "plr_sakae_19",
-        "personalInfo": {
-          "firstName": "太郎Updated",
-          "lastName": "山田",
-          "firstNameKana": "たろう",
-          "lastNameKana": "やまだ",
-          "birthDate": "2010-03-16"
-        },
-        "bodyCharacteristics": {
-          "dominantHand": "right",
-          "dominantFoot": "left",
-          "shootingHand": "right",
-          "height": 175
-        },
-        "updatedAt": "2025-10-29T12:00:00Z"
-      },
-      "message": "Player updated successfully"
-    }
-    ```
-- エラーハンドリング例:
-  - **編集不可フィールドへのアクセス**:
-    ```json
-    {
-      "success": false,
-      "error": "Fields not allowed to update: teamSlug, teamCode",
-      "errorCode": "FORBIDDEN_FIELD"
-    }
-    ```
-  - **不明なフィールド**:
-    ```json
-    {
-      "success": false,
-      "error": "Unknown fields: invalidField",
-      "errorCode": "UNKNOWN_FIELD"
-    }
-    ```
-  - **身長範囲外**:
-    ```json
-    {
-      "success": false,
-      "error": "Height must be between 100 and 250 cm",
-      "errorCode": "VALIDATION_ERROR"
-    }
-    ```
-- テスト結果:
-  - ✅ test_admin_edit.py: 6/6 passed
-    - test_update_team_success: チーム名変更成功
-    - test_update_team_not_found: チーム未存在404
-    - test_update_team_forbidden_fields: 編集不可フィールド拒否
-    - test_update_player_success: 選手情報変更成功
-    - test_update_player_not_found: 選手未存在404
-    - test_update_player_forbidden_fields: 編集不可フィールド拒否
-  - ✅ test_common.py: 42/42 passed（身長テスト6件追加）
-  - ✅ test_handlers.py: 6/6 passed（DynamoDBキー修正適用）
-  - ✅ 全Lambdaテスト: 48/48 passed
-- DynamoDB更新パターン:
-  - **フラットフィールド**（teamName）:
-    ```python
-    SET #teamName = :teamName
-    ```
-  - **ネストフィールド**（personalInfo.firstName）:
-    ```python
-    SET personalInfo.#pi_firstName = :pi_firstName
-    ```
-  - **複数フィールド同時更新**:
-    ```python
-    SET personalInfo.#pi_firstName = :pi_firstName,
-        bodyCharacteristics.#bc_height = :bc_height,
-        #updatedAt = :updatedAt
-    ```
-- セキュリティ:
-  - **認証なし（Stage 1）**: CRITICAL コメントで明記、Stage 2で実装予定
-  - **ホワイトリスト検証**: 許可フィールドのみ更新可能
-  - **エラーメッセージ**: 個人情報を含めない（ADR-013準拠）
-  - **パスワードハッシュ保護**: auth フィールド全体を編集禁止
-- パフォーマンス:
-  - バリデーション追加: +0.002秒/リクエスト（身長チェック）
-  - DynamoDB部分更新: 全フィールド上書きより高速（UpdateExpression使用）
-  - DecimalEncoder: +0.001秒/レスポンス（JSON変換）
-- Lessons Learned:
-  - **DynamoDB Decimal型の罠**:
-    - 問題: `json.dumps()` で "Object of type Decimal is not JSON serializable" エラー
-    - 原因: DynamoDBは全数値をDecimal型で保存
-    - 解決: DecimalEncoderカスタムクラス導入（int/float自動変換）
-    - 推奨: DynamoDB使用時は常にDecimalEncoder適用
-  - **pytest環境変数競合**:
-    - 問題: test_common.py の setup_jwt_secret fixture が環境変数削除
-    - 原因: テストファイル間で環境変数の設定/削除が競合
-    - 解決: conftest.py で一元管理（モジュールレベルで設定）
-    - 推奨: 複数テストファイルがある場合は conftest.py 必須
-  - **ホワイトリスト vs ブラックリスト**:
-    - 選択: ホワイトリスト方式（ALLOWED_FIELDS定義）
-    - 理由: セキュリティ強化（デフォルト拒否）
-    - 利点: 新規フィールド追加時も安全（明示的に許可するまで編集不可）
-- 次のステップ（Stage 2以降）:
-  - 認証機能追加: 管理者トークン検証
-  - 監査ログ: 編集履歴の記録（誰が・いつ・何を変更したか）
-  - バリデーション強化: teamName正規表現チェック等
-- 参照:
-  - Git commit: eb0aedc（身長追加）, 4e3fbf0（チーム編集）, 8397784（選手編集+Decimal）, 2f08b0a（テスト修正）, 8eed15d（SAM+conftest）
-  - ADR-020（選手登録フィールド拡張）
-  - lambda/admin_edit/handler.py:24-303（編集API実装）
-  - lambda/common/response_utils.py:16-28（DecimalEncoder）
-  - tests/lambda/conftest.py:15-21（環境変数一元管理）
-- 破壊的変更:
-  - **player_auth/handler.py POST /player/register**:
-    - 新規オプショナルフィールド: height（100-250cm、int）
-    - 影響: 既存フロントエンドは無変更でも動作（オプショナル）
-    - 推奨: フォームに身長入力欄追加
-  - **response_utils.py**:
-    - DecimalEncoder適用: 全レスポンスで自動Decimal変換
-    - 影響: なし（既存JSONレスポンス互換）
-    - 利点: DynamoDB数値フィールドが正しくJSON化される
+**conftest.py一元管理**:
+- pytest環境変数競合を解決
+- モジュールレベルで環境変数設定
+
+### Consequences（影響）
+**影響範囲（約840行追加・修正）**:
+- lambda/admin_edit/handler.py: 新規作成（304行）
+- lambda/common/validators.py: validate_height() 追加（+23行）
+- lambda/common/response_utils.py: DecimalEncoder追加（+16行）
+- tests/lambda/test_admin_edit.py: 新規作成（373行、6テスト）
+- tests/lambda/conftest.py: 新規作成（22行）
+- template.yaml: AdminEditFunction追加（+26行）
+
+**API仕様**: 詳細は lambda/admin_edit/handler.py 参照
+- PATCH /admin/teams/{teamId}
+- PATCH /admin/players/{playerId}
+
+**エラーコード**:
+- FORBIDDEN_FIELD: 編集不可フィールドへのアクセス
+- UNKNOWN_FIELD: 不明なフィールド
+- VALIDATION_ERROR: バリデーション失敗
+
+**セキュリティ**:
+- 認証なし（Stage 1）: Stage 2で実装予定
+- ホワイトリスト検証: 許可フィールドのみ更新可能
+- パスワードハッシュ保護: auth フィールド全体を編集禁止
+
+**テスト結果**: 全48テストパス
+- test_admin_edit.py: 6/6 passed
+- test_common.py: 42/42 passed（身長テスト6件追加）
+- test_handlers.py: 6/6 passed
+
+**パフォーマンス**:
+- バリデーション追加: +0.002秒/リクエスト
+- DynamoDB部分更新: UpdateExpression使用（高速）
+- DecimalEncoder: +0.001秒/レスポンス
+
+**破壊的変更**: なし
+- height フィールドはオプショナル（既存フロントエンド無変更で動作）
+- DecimalEncoder は既存JSONレスポンス互換
+
+**Lessons Learned**:
+- DynamoDB Decimal型: 常にDecimalEncoder適用推奨
+- pytest環境変数: 複数テストファイルは conftest.py 必須
+- ホワイトリスト方式: セキュリティ強化と安全な拡張性
+
+**次のステップ（Stage 2以降）**:
+- 認証機能追加（管理者トークン検証）
+- 監査ログ（編集履歴記録）
+- バリデーション強化
+
+**参照**:
+- Commit: eb0aedc, 4e3fbf0, 8397784, 2f08b0a, 8eed15d
+- lambda/admin_edit/handler.py:24-303
+- lambda/common/response_utils.py:16-28
+- tests/lambda/conftest.py:15-21
 
 ## ADR-022: 8原則・Eccentric/Concentric評価システム（evaluators_v2導入）
 - 日付: 2025-10-30
@@ -2881,227 +2498,116 @@
 
 - 日付: 2025-11-03
 - ステータス: Accepted
-- 決定者: Claude Code + Human
 - 影響範囲: CLI（rep-cli）、Lambda、観測性基盤
-- 関連ADR: ADR-028（thresholds.json versions）、ADR-029（Rep CLI MVP）
+- 関連ADR: ADR-028, ADR-029
 
-### コンテキスト
+### Context
 
-THF Motion Scanシステムでは、CLI（rep-cli）とサーバ側（Lambda等）で異なるログ形式が混在していました：
-- **CLI側**: `print()` ベースの非構造化ログ（人間可読だが機械解析困難）
-- **Lambda側**: `processing/logger.py` による構造化ログ（CloudWatch統合済み）
+CLI（`print()`ベース）とLambda（`processing/logger.py`）でログ形式が不統一。観測性・トレーサビリティが不足し、ADR-028で導入したthresholds.json versionsをログに記録する標準がなかった。
 
-この不統一により、以下の問題が発生：
-1. **観測性の欠如**: CLI実行時のエラー原因特定が困難
-2. **トレーサビリティの欠如**: バージョン追跡（rules_version, normalization_version）が不可能
-3. **自動化の制約**: ログ集約・分析ツールとの統合が困難（JSON形式でない）
-4. **パフォーマンス分析の困難**: duration_ms等のメトリクスが標準化されていない
+### Decision
 
-また、ADR-028でthresholds.json versionsフィールドを導入したものの、ログに記録する標準がなく、バージョン追跡の価値が限定的でした。
+**基盤のみ実装**（CLI/Lambda移行は別タスク化）：
+- 統一キースキーマ確立（必須9項目: timestamp/level/message/request_id/session_id/test_code/rules_version/normalization_version/artifact_sha + 任意8項目）
+- `utils/logger.py` 実装（make_logger, 必須キー検証, JSON 1行出力, UUID自動生成）
+- README Logging Standards章追加（119行）
+- テストフィクスチャ（success.json, error.json）
+- CI拡張（lint/unit-tests/schema/fixtures）
 
-### 決定
+詳細: `README.md` Logging Standards章、`utils/logger.py`
 
-**基盤のみ実装**（CLI/Lambda移行は別タスク化）の戦略で、以下を実装：
+### Rationale
 
-1. **統一キースキーマの確立**:
-   - **必須フィールド9項目**: timestamp, level, message, request_id, session_id, test_code, rules_version, normalization_version, artifact_sha
-   - **任意フィールド8項目**: component, duration_ms, receive_ts, error_code, error_message, trace_id, span_id, metadata
+**基盤のみ実装の理由**:
+- CLI print() → logger 置換は破壊的変更（stdout → JSON形式）、既存テスト影響大
+- 段階的移行可能（基盤確立後、計画的に移行）
+- 既存Lambda側（processing/logger.py）と共存可能
 
-2. **utils/logger.py実装**:
-   - `make_logger()` ファクトリー関数
-   - `Logger` class（info/warn/error/debug メソッド）
-   - 必須キー検証（出力前チェック、欠落時はValueError）
-   - ISO8601Z timestamp自動生成
-   - UUID v4自動生成（request_id, session_idが未指定の場合）
-   - JSON 1行出力（stdout + ファイル）
-   - levelフィルタ（DEBUG=10 < INFO=20 < WARN=30 < ERROR=40）
+**代替案**:
+- 全面移行（却下：破壊的変更リスク高、テスト修正影響大、ロールバック困難）
+- Lambda側のみ統一（却下：CLI側改善されず、バージョン追跡不可）
+- 既存logger拡張（却下：CloudWatch依存強、必須キー検証なし、ファイル出力なし）
 
-3. **ドキュメント整備**:
-   - README.md に Logging Standards章追加（119行）
-   - 必須/任意フィールド定義表
-   - セキュリティ・品質ポリシー
-   - 成功/失敗ログサンプル（JSON形式）
+**キースキーマ選択理由**:
+- CloudWatch/OpenTelemetry互換、PII除外（artifact_shaでハッシュ化）
+- バージョン追跡（ADR-028 versionsフィールド活用）
+- 必須キー検証（ValueError）で開発時に欠落検知
 
-4. **テストフィクスチャ**:
-   - `tests/fixtures/logs/success.json` - 成功時ログサンプル
-   - `tests/fixtures/logs/error.json` - エラー時ログサンプル
+### Consequences
 
-5. **CI拡張**:
-   - `.github/workflows/validate.yml` を4段階検証に拡張（lint/unit-tests/schema/fixtures）
+**メリット**:
+- 観測性基盤確立（JSON形式、機械解析可能、バージョン追跡）
+- 後方互換性維持（既存CLI動作不変）
+- 段階的移行可能（基盤確立済み）
 
-### 根拠
+**デメリット**:
+- 即座の効果限定的（基盤のみ、既存CLI/Lambda未改善）
+- 移行タスク残存（次フェーズで「CLI/Lambda構造化ログ移行」必要）
+- 二重管理（processing/logger.py と utils/logger.py 共存、一時的）
 
-**なぜ基盤のみ実装か**:
-1. **破壊的変更の回避**: CLI print() → logger への置換はstdout出力がJSON形式になり、既存のテスト（tests/test_rep_cli.py）やユーザースクリプトが影響を受ける
-2. **段階的移行**: 基盤だけで価値があり、後から計画的に移行可能
-3. **既存Lambda側との共存**: processing/logger.py を壊さず、共存可能な設計
-
-**なぜこのキースキーマか**:
-1. **CloudWatch/OpenTelemetry互換**: 主要な観測性ツールとの統合を考慮
-2. **PII除外**: 個人情報（動画ファイル名、ユーザーID等）をハッシュ化またはセッションID代替
-3. **バージョン追跡**: ADR-028で導入したthresholds.json versionsを活用
-4. **必須キー検証**: 開発時にログ出力前に欠落を検知（ValueError）、本番環境でのログ不整合を防止
-
-### 代替案と却下理由
-
-#### 代替案1: CLI/Lambda全面移行を同時実施
-- **却下理由**:
-  - 破壊的変更リスクが高い（既存CLIの動作が変わる）
-  - テスト修正の影響範囲が大きい
-  - ロールバックが困難
-
-#### 代替案2: Lambda側のみ統一、CLI側は放置
-- **却下理由**:
-  - CLI側のデバッグが困難なまま
-  - バージョン追跡がCLI実行時に機能しない
-  - 将来的な統一コストが増大
-
-#### 代替案3: 既存のprocessing/logger.pyを拡張
-- **却下理由**:
-  - CloudWatch依存が強く、CLI単独実行に不向き
-  - 必須キー検証がない（実行時エラーが発生しやすい）
-  - ファイル出力機能がない
-
-### 影響
-
-#### メリット
-1. **観測性向上**: JSON形式により機械解析可能、ログ集約ツールとの統合容易
-2. **トレーサビリティ**: request_id, session_idによる追跡、rules_versionによるバージョン管理
-3. **段階的移行**: 基盤が確立され、CLI/Lambda側の移行を計画的に実施可能
-4. **開発時の品質向上**: 必須キー検証により、ログ不整合を早期検知
-5. **後方互換性維持**: 既存CLIの動作は変わらない（print()そのまま）
-
-#### デメリット/トレードオフ
-1. **即座の効果は限定的**: 基盤のみでは、既存CLI/Lambdaのログは改善されない
-2. **移行タスクが残る**: 次フェーズで「CLI/Lambda構造化ログ移行」が必要
-3. **二重管理**: 既存のprocessing/logger.pyと新しいutils/logger.pyが共存（一時的）
-
-#### 影響を受けるコンポーネント
-- **追加**: utils/logger.py（新規）
-- **拡張**: README.md（Logging Standards章）
-- **拡張**: .github/workflows/validate.yml（CI段階的検証）
-- **追加**: tests/fixtures/logs/（テストフィクスチャ）
-- **影響なし**: cli/rep_cli.py, cli/evaluate.py（次フェーズで移行）
-- **影響なし**: lambda/handler.py, processing/logger.py（次フェーズで統合検討）
-
-### 実装詳細
-
-#### utils/logger.py（358行）
-
-**主要API**:
-```python
-from utils.logger import make_logger
-
-logger = make_logger(
-    component="cli",
-    default_context={
-        "test_code": "push_pull",
-        "rules_version": "1.0.0",
-        "normalization_version": "1.2.1",
-        "artifact_sha": "a3f5c8d1",
-    },
-    log_level="INFO",
-    log_file="output/log.jsonl",
-)
-
-logger.info("Evaluation started", duration_ms=1234)
-logger.error("Evaluation failed", error_code="MEDIAPIPE_FAILED", error_message="Low visibility")
-```
-
-**出力例**:
-```json
-{
-  "timestamp": "2025-11-03T12:34:56.789Z",
-  "level": "INFO",
-  "message": "Evaluation started",
-  "component": "cli",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-  "test_code": "push_pull",
-  "rules_version": "1.0.0",
-  "normalization_version": "1.2.1",
-  "artifact_sha": "a3f5c8d1",
-  "duration_ms": 1234
-}
-```
-
-#### 必須キー検証ロジック
-
-```python
-REQUIRED_KEYS = {
-    "timestamp", "level", "message",
-    "request_id", "session_id", "test_code",
-    "rules_version", "normalization_version", "artifact_sha",
-}
-
-def _validate_entry(self, entry: Dict[str, Any]) -> None:
-    missing_keys = self.REQUIRED_KEYS - set(entry.keys())
-    if missing_keys:
-        raise ValueError(
-            f"Missing required log keys: {sorted(missing_keys)}. "
-            f"Entry: {json.dumps(entry, ensure_ascii=False, default=str)}"
-        )
-```
-
-#### セキュリティポリシー
-
-- **PII除外**: 個人情報（Face/Name/Path等）を含めない
-- **動画ファイル名ハッシュ化**: artifact_sha使用（SHA256先頭8文字）
-- **ユーザーID除外**: session_idで代替
-
-### 検証
-
-#### 動作確認
-- ✅ JSON 1行出力（全必須キー含む）
-- ✅ UUID自動生成（request_id, session_id）
-- ✅ 必須キー欠落時のValueError
-- ✅ levelフィルタ（DEBUG < INFO < WARN < ERROR）
-- ✅ ファイル出力（追記モード）
-
-#### テストフィクスチャ
-- ✅ `tests/fixtures/logs/success.json` - 成功時ログサンプル（INFO level、duration_ms含む）
-- ✅ `tests/fixtures/logs/error.json` - エラー時ログサンプル（ERROR level、error_code/error_message含む）
-
-#### CI拡張
-- ✅ lint（Ruff + Black、Python 3.10/3.11）
-- ✅ unit-tests（pytest、Python 3.10/3.11）
-- ✅ schema（thresholds.json検証）
-- ✅ fixtures（valid/invalid フィクスチャ検証）
-
-### 今後の展開
-
-#### 次フェーズ（別タスク化）: CLI/Lambda構造化ログ移行
-
-**Stage 3: 既存ログ呼び出し置換（CLI）**:
-- `cli/rep_cli.py` の `print()` → `logger.info()` / `logger.error()`
-- `cli/evaluate.py` の `print()` → `logger.info()` / `logger.error()`
-- エラーメッセージを構造化ログに変換
-- versions情報をdefault_contextから取得
-
-**Stage 4: CLIオプション追加**:
-- `--log-file <path>` - ログファイル出力先
-- `--log-level <DEBUG|INFO|WARN|ERROR>` - ログレベル
-
-**Stage 5: Lambda統合**:
-- Lambda handler.py の既存ロガー統合検討
-- processing/logger.py との共存または置換
-- 環境変数 `LOG_LEVEL` で制御
-
-**Stage 6: テスト修正**:
-- `tests/test_rep_cli.py` のstdout検証修正（JSON形式対応）
-- ログ出力の検証ヘルパー追加
+**次フェーズ**: CLI/Lambda構造化ログ移行（別タスク化、print() → logger置換、--log-file/--log-level追加、テスト修正）
 
 ### 参照
 
-- **依存ADR**: ADR-028（thresholds.json versions導入）、ADR-029（Rep CLI MVP）
-- **新規ファイル**:
-  - `utils/__init__.py`
-  - `utils/logger.py`（358行）
-  - `tests/fixtures/logs/success.json`
-  - `tests/fixtures/logs/error.json`
-- **拡張ファイル**:
-  - `README.md`（Logging Standards章、119行追加）
-  - `.github/workflows/validate.yml`（4段階検証に拡張）
-  - `requirements-dev.txt`（black, ruff追加）
-- **コミット**: `488bcda`
-- **テスト**: Logger動作確認（JSON出力、UUID生成、必須キー検証）完了
+- 実装: `utils/logger.py` (358行)、`README.md` Logging Standards章（119行）
+- コミット: `488bcda`, `106762f`
+- テスト: `tests/fixtures/logs/success.json`, `tests/fixtures/logs/error.json`
+
+## ADR-033: Validate Workflow 段階的ロールアウト（schema 必須・lint/test 警告化）
+
+- 日付: 2025-11-06
+- ステータス: Accepted
+- 影響範囲: GitHub Actions CI, README, requirements-dev
+- 関連ADR: ADR-030, ADR-032
+
+### Context
+
+ADR-030 で thresholds.json バリデータ CI を導入したが、品質ゲートは schema / fixtures のみに限定されていた。Phase 5 完了後は CLI / Dashboard / Lambda のコード量が増え、追加の lint / test 監視が必要になった一方、既存コードは Ruff / Black / Pytest が未整備であり、即時必須化するとすべての PR が失敗するリスクがあった。
+
+### Decision
+
+GitHub Actions `validate.yml` を拡張し、以下の段階的ロールアウトを採用する。
+
+- schema / fixtures 検証は必須ジョブとして維持し、thresholds 品質を継続保証
+- lint / unit-tests ジョブを追加しつつ `continue-on-error: true` に設定し、失敗を警告として可視化
+- README に CI バッジを追加し、ワークフロー結果をリポジトリトップで確認可能にする
+
+### Rationale
+
+- **安全性優先**: thresholds.json の回帰防止を最優先しつつ、追加チェックを段階導入することで Main ブランチ保護を維持
+- **負債の可視化**: Ruff/Black/pytest の失敗を PR 上で確認でき、Phase 6 での是正範囲を定量化
+- **運用継続**: 既存コードに大規模フォーマット変更を強制せず、CI 導入を MVP として完了できる
+
+### Implementation
+
+1. `.github/workflows/validate.yml`
+   - トリガー: `push`（main / feature/**）と `pull_request`（opened / synchronize / reopened）を対象
+   - lint ジョブ: Python 3.10 / 3.11 マトリクス、Ruff (`--output-format=github`) と Black を実行、`continue-on-error: true`
+   - unit-tests ジョブ: Python 3.10 / 3.11 マトリクスで `pytest -q --maxfail=1 --disable-warnings` を実行、`continue-on-error: true`
+   - schema / fixtures ジョブ: 3.11 固定で `scripts/validate.py` を実行し、正常/異常フィクスチャ検証を必須化
+   - すべてのジョブで `actions/cache@v4` による pip キャッシュを導入
+2. `requirements-dev.txt`: Ruff 0.4.7 / Black 24.4.2 をピン留めし、CI とローカルで同一ツールを利用可能に
+3. `README.md`: CI バッジを `https://github.com/tfujimoto913/thf_motion_scan/actions/workflows/validate.yml/badge.svg` に更新
+
+### Consequences
+
+**メリット**
+- schema / fixtures は引き続き回帰ブロックを担保
+- lint / test の失敗内容が PR 上で可視化され、技術的負債の解消優先度を判断しやすい
+- CI 成果が README バッジで共有され、チーム外にも状況を伝達できる
+
+**デメリット**
+- lint / test が赤のままでも CI 全体は成功となるため、初見では違反を見落とす可能性がある
+- 大規模フォーマット適用や PYTHONPATH 再設計といった抜本的対策は Phase 6 へ持ち越し
+
+### Follow-up
+
+- Phase 6 で Ruff / Black / Pytest の必須化に向けたコード整備（unused import 解消、Black 適用、PYTHONPATH 設定）を行う
+- pre-commit に Ruff / Black を統合し、ローカル段階での逸脱抑止を検討
+- lint / test ジョブの `continue-on-error` を解除するタイミングを、Phase 6 の成果レビュー後に決定
+
+### References
+
+- 実装: `.github/workflows/validate.yml`, `README.md`, `requirements-dev.txt`
+- コミット: `feat: CI with staged rollout (schema/fixtures required, lint/test warning-only)`
+- ブランチ: `feature/phase5-complete`
