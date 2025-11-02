@@ -398,13 +398,25 @@ class VideoValidator:
         # アームスイング: 片方の肩が前、片方が後ろ → z差が大きい
         max_shoulder_twist = max(shoulder_angles)
 
+        # 撮影角度の判定（手首の動きから推定）
+        detected_axis = 'x' if wrist_x_range > wrist_z_range else 'z'
+
         # プッシュプルの判定:
         # 1. 手首が動く（x または z方向で0.2以上）
-        # 2. 肩の回旋が小さい（左右肩のz座標差が0.15未満）
-        #    ※ プッシュプルでは両肩が同じように前後に動く
-        #    ※ アームスイングでは上体を捻るので左右肩のz座標差が大きい
+        # 2. 肩の回旋チェック（撮影角度で閾値を変える）
+        #
+        # 正面撮影（z軸）: 肩の回旋（z座標差）で上体の捻りを検出可能
+        # 横向き撮影（x軸）: 肩のz座標差はプッシュプルでも大きくなるため閾値を緩く
         wrist_moves = (wrist_x_range > 0.2) or (wrist_z_range > 0.2)
-        shoulder_stable = max_shoulder_twist < 0.15  # 閾値0.15 = 画面深度の15%
+
+        if detected_axis == 'z':
+            # 正面撮影: 厳密にチェック
+            shoulder_threshold = 0.15
+            shoulder_stable = max_shoulder_twist < shoulder_threshold
+        else:
+            # 横向き撮影: 緩くチェック（または無視）
+            shoulder_threshold = 0.5
+            shoulder_stable = max_shoulder_twist < shoulder_threshold
 
         is_push_pull = wrist_moves and shoulder_stable
 
@@ -413,8 +425,9 @@ class VideoValidator:
             'wrist_z_range': float(wrist_z_range),
             'shoulder_twist': float(max_shoulder_twist),
             'wrist_threshold': 0.2,
-            'shoulder_threshold': 0.15,
-            'detected_axis': 'x' if wrist_x_range > wrist_z_range else 'z'
+            'shoulder_threshold': float(shoulder_threshold),
+            'detected_axis': detected_axis,
+            'camera_angle': 'front' if detected_axis == 'z' else 'side'
         }
 
         if is_push_pull:
@@ -423,7 +436,8 @@ class VideoValidator:
             if not wrist_moves:
                 return (False, f"手首の動きが不足（x変化:{wrist_x_range:.2f}, z変化:{wrist_z_range:.2f}）", details)
             else:
-                return (False, f"肩の回旋が大きすぎます（左右差:{max_shoulder_twist:.2f}）。アームスイングの可能性があります", details)
+                camera_type = "正面" if detected_axis == 'z' else "横向き"
+                return (False, f"肩の回旋が大きすぎます（左右差:{max_shoulder_twist:.2f}, 閾値:{shoulder_threshold}, {camera_type}撮影）。アームスイングの可能性があります", details)
 
     def _check_cross_step(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
