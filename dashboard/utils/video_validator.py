@@ -382,14 +382,15 @@ class VideoValidator:
         x_range = max(wrist_x_positions) - min(wrist_x_positions)
         z_range = max(wrist_z_positions) - min(wrist_z_positions)
 
-        # プッシュプルの判定：x座標またはz座標で0.4以上の変化
+        # プッシュプルの判定：x座標またはz座標で0.2以上の変化
         # 正面撮影ならz_range、横向き撮影ならx_rangeが大きくなる
-        is_push_pull = (x_range > 0.4) or (z_range > 0.4)
+        # 閾値0.2: 手首が画面幅/深度の20%以上動けば検出（実測値 x=0.23, z=0.26 をカバー）
+        is_push_pull = (x_range > 0.2) or (z_range > 0.2)
 
         details = {
             'x_range': float(x_range),
             'z_range': float(z_range),
-            'threshold': 0.4,
+            'threshold': 0.2,
             'detected_axis': 'x' if x_range > z_range else 'z'
         }
 
