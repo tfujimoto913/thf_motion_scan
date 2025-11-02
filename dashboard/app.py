@@ -759,7 +759,47 @@ def render_session_select_page(resources, demo_mode):
     with col_btn2:
         if session_id and st.button("アップロード開始 →", type="primary", use_container_width=True):
             st.session_state.session_id = session_id
-            st.session_state.wizard_step = 4  # 種目①へ
+
+            # CRITICAL: 既存セッションの場合、アップロード済み種目をスキップ
+            # 未アップロード種目から開始する（ADR-026）
+            next_step = 4  # デフォルトは種目①から
+            uploaded_tests = []  # 既存セッションのアップロード済み種目
+
+            if session_mode == "既存セッションに追加":
+                try:
+                    # 既存セッションのアップロード済み種目を確認
+                    items = load_results_items(resources, demo_mode=False)
+                    items_converted = [convert_decimals(item) for item in items]
+                    items_filtered = [
+                        item for item in items_converted
+                        if not str(item.get('video_id', '')).startswith('METADATA')
+                    ]
+
+                    # 選択したセッションのテスト一覧を取得
+                    from session_dao import get_session_by_id
+                    session_data = get_session_by_id(items_filtered, st.session_state.athlete_id, session_id)
+
+                    if session_data:
+                        uploaded_test_types = set(test.get('test_type') for test in session_data.get('tests', []))
+                        uploaded_tests = list(uploaded_test_types)
+
+                        # 未アップロードの最初の種目を見つける
+                        for i, test_type in enumerate(TEST_TYPES):
+                            if test_type not in uploaded_test_types:
+                                next_step = 4 + i  # wizard_step = 4 + test_index
+                                break
+                        else:
+                            # 全種目アップロード済みの場合、最後の種目（⑦）へ
+                            next_step = 10
+
+                except Exception as e:
+                    # エラー時はデフォルト（種目①）から開始
+                    record_error("wizard_find_next_test", str(e))
+                    next_step = 4
+
+            # uploaded_testsを初期化（既存セッションの場合は既存データを含む）
+            st.session_state.uploaded_tests = uploaded_tests
+            st.session_state.wizard_step = next_step
             st.rerun()
 
 
@@ -775,6 +815,10 @@ def render_test_upload_page(s3_client, resources, test_index, demo_mode):
     st.progress(progress, text=f"進捗: {len(st.session_state.uploaded_tests)}/7種目完了")
 
     st.info(f"選手ID: **{st.session_state.athlete_id}** | セッションID: **{st.session_state.session_id}**")
+
+    # 既にアップロード済みの種目の場合は通知
+    if test_type in st.session_state.uploaded_tests:
+        st.warning(f"⚠️ この種目（{test_name}）は既にアップロード済みです。\n上書きする場合は再度アップロードしてください。")
 
     # アップロード済みチェックリスト
     with st.expander("📋 アップロード状況"):
