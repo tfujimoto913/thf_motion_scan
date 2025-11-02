@@ -358,32 +358,45 @@ class VideoValidator:
     def _check_push_pull(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
         What: プッシュプル動作の特徴チェック
-        Why: 手首の前後動（z座標）
+        Why: 手首の前後動（z座標）または横動き（x座標）
+        Design Decision: 正面撮影（z変化）と横向き撮影（x変化）の両方に対応（ADR-026）
+
+        CRITICAL: カメラ向きに依存せず検出できるよう、x/z両軸をチェック
         """
+        wrist_x_positions = []
         wrist_z_positions = []
 
         for lm in landmarks_list:
             if 'LEFT_WRIST' in lm and 'RIGHT_WRIST' in lm:
+                # x座標（横方向）: 横向き撮影でのプッシュプル
+                avg_x = (lm['LEFT_WRIST']['x'] + lm['RIGHT_WRIST']['x']) / 2
+                wrist_x_positions.append(avg_x)
+
+                # z座標（奥行き）: 正面撮影でのプッシュプル
                 avg_z = (lm['LEFT_WRIST']['z'] + lm['RIGHT_WRIST']['z']) / 2
                 wrist_z_positions.append(avg_z)
 
         if len(wrist_z_positions) < 10:
             return (True, "手首検出不可", {})
 
+        x_range = max(wrist_x_positions) - min(wrist_x_positions)
         z_range = max(wrist_z_positions) - min(wrist_z_positions)
 
-        # プッシュプルの判定：z座標で0.4以上の変化
-        is_push_pull = z_range > 0.4
+        # プッシュプルの判定：x座標またはz座標で0.4以上の変化
+        # 正面撮影ならz_range、横向き撮影ならx_rangeが大きくなる
+        is_push_pull = (x_range > 0.4) or (z_range > 0.4)
 
         details = {
+            'x_range': float(x_range),
             'z_range': float(z_range),
-            'threshold': 0.4
+            'threshold': 0.4,
+            'detected_axis': 'x' if x_range > z_range else 'z'
         }
 
         if is_push_pull:
             return (True, "", details)
         else:
-            return (False, "プッシュ・プル動作（前後動）が検出されませんでした", details)
+            return (False, f"プッシュ・プル動作が検出されませんでした（x変化:{x_range:.2f}, z変化:{z_range:.2f}）", details)
 
     def _check_cross_step(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
