@@ -26,6 +26,7 @@ sys.path.insert(0, str(project_root))
 from processing.pose_extractor import PoseExtractor
 from processing.normalizer import BodyNormalizer
 from processing.evaluators_v2.single_leg_squat_v2 import SingleLegSquatEvaluatorV2
+import numpy as np
 
 
 def parse_args(args: Optional[list] = None):
@@ -168,6 +169,53 @@ def format_error_message(error: Exception) -> str:
     )
 
 
+def select_representative_frames(frame_scores: List[Dict]) -> Dict:
+    """
+    What: 代表フレーム3枚（best/worst/median）を抽出
+    Why: MVP仕様：overall scoreベースで代表フレーム選定
+    Design Decision: best=最高, worst=最低, median=中央値近傍
+
+    Args:
+        frame_scores: フレームごとのスコア
+            [{'frame_idx': int, 'score': float}, ...]
+
+    Returns:
+        Dict: {
+            'best': {'frame_idx': int, 'score': float},
+            'worst': {'frame_idx': int, 'score': float},
+            'median': {'frame_idx': int, 'score': float}
+        }
+
+    CRITICAL: 単一フレームでも処理可能（全て同じフレーム返す）
+    """
+    if not frame_scores:
+        # フレームがない場合のフォールバック
+        return {
+            'best': {'frame_idx': 0, 'score': 0.0},
+            'worst': {'frame_idx': 0, 'score': 0.0},
+            'median': {'frame_idx': 0, 'score': 0.0}
+        }
+
+    # スコアでソート
+    sorted_frames = sorted(frame_scores, key=lambda x: x['score'])
+
+    # best: 最高スコア
+    best = sorted_frames[-1]
+
+    # worst: 最低スコア
+    worst = sorted_frames[0]
+
+    # median: 中央値近傍
+    median_idx = len(sorted_frames) // 2
+    median = sorted_frames[median_idx]
+
+    return {
+        'best': best,
+        'worst': worst,
+        'median': median
+    }
+
+
 def generate_versions() -> Dict[str, str]:
     """
     What: versions フィールド生成
@@ -272,6 +320,18 @@ def run_pipeline(
     if eval_result.get('flags'):
         flags.extend(eval_result['flags'])
 
+    # PHASE CORE LOGIC: 代表フレーム抽出（MVP: overall scoreベース）
+    # 各フレームのスコアを抽出
+    frame_scores = []
+    if 'frame_scores' in eval_result:
+        frame_scores = eval_result['frame_scores']
+    else:
+        # フォールバック：全フレームにoverallスコアを割り当て
+        for idx in range(len(landmarks_data)):
+            frame_scores.append({'frame_idx': idx, 'score': overall})
+
+    representative_frames = select_representative_frames(frame_scores)
+
     return {
         'session_id': session_id,
         'rep_id': rep_id,
@@ -281,6 +341,7 @@ def run_pipeline(
         'uncertainty': uncertainty,
         'flags': flags,
         'versions': versions,
+        'representative_frames': representative_frames,  # 代表フレーム3枚
         'evaluation_detail': eval_result  # デバッグ用詳細情報
     }
 

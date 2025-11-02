@@ -188,3 +188,55 @@ class TestRepCLIPipeline:
         assert 'scores' in result
         assert 'class' in result
         assert 'class_prob' in result
+
+
+class TestRepresentativeFrames:
+    """
+    What: 代表フレーム抽出ロジックテスト
+    Why: best/worst/median フレーム選定の正確性を保証
+    Design Decision: overall score ベースで抽出
+    """
+
+    def test_select_representative_frames_returns_three_frames(self):
+        """
+        What: 代表フレーム抽出で3枚のフレームを返す
+        Why: best/worst/median の3枚必須
+        """
+        from cli.rep_cli import select_representative_frames
+
+        # モック：評価結果（フレームごとのスコア）
+        frame_scores = [
+            {'frame_idx': 0, 'score': 10.0},
+            {'frame_idx': 1, 'score': 50.0},
+            {'frame_idx': 2, 'score': 90.0},  # best
+            {'frame_idx': 3, 'score': 30.0},  # median (sorted: 5→10→30→50→90)
+            {'frame_idx': 4, 'score': 5.0},   # worst
+        ]
+
+        result = select_representative_frames(frame_scores)
+
+        # 3枚のフレームを返す
+        assert 'best' in result
+        assert 'worst' in result
+        assert 'median' in result
+
+        # 正しいインデックス
+        assert result['best']['frame_idx'] == 2
+        assert result['worst']['frame_idx'] == 4
+        assert result['median']['frame_idx'] == 3  # sorted後の中央値
+
+    def test_select_representative_frames_handles_single_frame(self):
+        """
+        What: 単一フレームの場合でも処理可能
+        Why: 短い動画でもクラッシュしない
+        """
+        from cli.rep_cli import select_representative_frames
+
+        frame_scores = [{'frame_idx': 0, 'score': 50.0}]
+
+        result = select_representative_frames(frame_scores)
+
+        # 全て同じフレーム
+        assert result['best']['frame_idx'] == 0
+        assert result['worst']['frame_idx'] == 0
+        assert result['median']['frame_idx'] == 0
