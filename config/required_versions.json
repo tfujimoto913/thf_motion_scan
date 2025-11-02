@@ -1,0 +1,5 @@
+{
+  "rules_version": "v0.1.0",
+  "normalization_version": "none",
+  "notes": "Required versions for dashboard compatibility check. Update when minimum supported version changes."
+}

@@ -24,8 +24,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 import uuid
 
-# dashboard/config.py, demo_data.py をインポート
+# dashboard/config.py, demo_data.py, version_display をインポート
 sys.path.insert(0, str(Path(__file__).parent))
+from version_display import display_versions
 from config import (
     DEFAULT_ENV,
     PERFORMANCE_LIMITS,
@@ -1996,6 +1997,9 @@ def main():
     if not st.session_state.get('page_load_logged'):
         log_dashboard_event("page_load")
         st.session_state['page_load_logged'] = True
+
+    # バージョン情報表示と互換性チェック
+    display_versions()
 
     # ヘッダーリンク無効化CSS
     st.markdown("""
