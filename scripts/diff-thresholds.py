@@ -20,17 +20,22 @@ SemVer Classification Rules:
 import argparse
 import json
 import sys
-from enum import Enum
+from enum import IntEnum
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-class Severity(Enum):
+class Severity(IntEnum):
     """Change severity classification (SemVer-based)."""
-    MAJOR = "MAJOR"  # Breaking change
-    MINOR = "MINOR"  # Backward compatible addition
-    PATCH = "PATCH"  # Non-breaking fix/metadata
-    NONE = "NONE"    # No change
+    NONE = 0     # No change
+    PATCH = 1    # Non-breaking fix/metadata
+    MINOR = 2    # Backward compatible addition
+    MAJOR = 3    # Breaking change
+
+    @property
+    def label(self) -> str:
+        """Get string label for severity."""
+        return self.name
 
 
 class Change:
