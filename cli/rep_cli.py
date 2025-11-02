@@ -4,7 +4,7 @@ Purpose: Rep CLI MVP - 単一動画から rep 単位で計測・可視化・判�
 Responsibility: CLI引数処理、入力検証、パイプライン実行
 Dependencies: argparse, pathlib, processing.worker
 Created: 2025-11-02 by Claude Code
-Decision Log: Rep CLI MVP - Stage 1
+Decision Log: Rep CLI MVP - Stage 1, Stage 2
 
 CRITICAL:
 - versions フィールド必須（rules_version, normalization_version, artifact_sha）
@@ -15,7 +15,15 @@ CRITICAL:
 import sys
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
+import uuid
+from datetime import datetime
+
+# プロジェクトルートをパスに追加
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from processing.pose_extractor import PoseExtractor
 
 
 def parse_args(args: Optional[list] = None):
@@ -158,6 +166,82 @@ def format_error_message(error: Exception) -> str:
     )
 
 
+def generate_versions() -> Dict[str, str]:
+    """
+    What: versions フィールド生成
+    Why: result.json の必須フィールド
+    Design Decision: MVP段階は固定値、将来 CI で artifact_sha 自動埋め込み
+
+    Returns:
+        Dict: {
+            'rules_version': str,
+            'normalization_version': str,
+            'artifact_sha': str
+        }
+
+    CRITICAL: 3キー必須（rules_version, normalization_version, artifact_sha）
+    """
+    return {
+        'rules_version': '0.1.0',
+        'normalization_version': 'none',
+        'artifact_sha': 'local-dev'
+    }
+
+
+def run_pipeline(
+    landmarks_data: List[Dict],
+    test_type: str = 'single_leg_squat'
+) -> Dict:
+    """
+    What: パイプライン実行（pose抽出→評価→結果生成）
+    Why: rep単位の計測・判定を実行
+    Design Decision: MVP段階は最小限の評価、Stage 3で代表フレーム追加
+
+    Args:
+        landmarks_data: ランドマークデータ（フレームごと）
+        test_type: テストタイプ
+
+    Returns:
+        Dict: {
+            'session_id': str,
+            'rep_id': str,
+            'scores': Dict,
+            'class': str,
+            'class_prob': float,
+            'uncertainty': float,
+            'flags': List[str],
+            'versions': Dict
+        }
+
+    CRITICAL: versions フィールド必須
+    """
+    # セッションID・repID生成
+    session_id = str(uuid.uuid4())
+    rep_id = str(uuid.uuid4())
+
+    # versions 生成
+    versions = generate_versions()
+
+    # TODO: Stage 2-3 で Evaluator 統合
+    # MVP段階：モック評価結果
+    scores = {'overall': 0.0}
+    classification = 'pending'
+    class_prob = 0.0
+    uncertainty = 1.0
+    flags = ['mvp-stage2-pending']
+
+    return {
+        'session_id': session_id,
+        'rep_id': rep_id,
+        'scores': scores,
+        'class': classification,
+        'class_prob': class_prob,
+        'uncertainty': uncertainty,
+        'flags': flags,
+        'versions': versions
+    }
+
+
 def main():
     """
     What: CLIメインエントリーポイント
@@ -191,9 +275,34 @@ def main():
         print("=" * 60)
         print()
 
-        # TODO: Stage 2 でパイプライン実装
-        print("⚠️  Stage 1 完了：CLI骨格実装済み")
-        print("📝 次のステップ：Stage 2 パイプライン構築")
+        # PHASE CORE LOGIC: パイプライン実行
+        print("🔧 パイプライン実行中...")
+
+        # ステップ1: 骨格推定
+        print("  [1/3] 骨格推定中...")
+        pose_extractor = PoseExtractor()
+        landmarks_result = pose_extractor.extract_landmarks(str(video_path))
+        landmarks_data = landmarks_result['landmarks']
+        print(f"  ✅ {landmarks_result['detected_frames']}/{landmarks_result['frame_count']} フレーム検出")
+
+        # ステップ2: 評価実行
+        print("  [2/3] 評価実行中...")
+        result = run_pipeline(landmarks_data=landmarks_data)
+        print("  ✅ 評価完了")
+
+        # ステップ3: 結果表示
+        print("  [3/3] 結果生成中...")
+        print("=" * 60)
+        print("✨ 処理完了")
+        print("=" * 60)
+        print(f"📊 versions:")
+        for key, value in result['versions'].items():
+            print(f"   - {key}: {value}")
+        print(f"🎯 scores: {result['scores']}")
+        print(f"📝 flags: {result['flags']}")
+        print(f"🆔 session_id: {result['session_id']}")
+        print(f"🆔 rep_id: {result['rep_id']}")
+        print("=" * 60)
 
         return 0
 

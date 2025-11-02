@@ -138,3 +138,53 @@ class TestRepCLIErrorMessages:
         assert any(keyword in message.lower() for keyword in [
             'check', 'verify', 'ensure', 'provide', '確認'
         ])
+
+
+class TestRepCLIPipeline:
+    """
+    What: rep-cli パイプライン処理テスト
+    Why: pose抽出→評価→結果生成の統合処理を保証
+    Design Decision: モック使用、実際の動画処理は統合テストで
+    """
+
+    def test_pipeline_returns_result_with_versions(self):
+        """
+        What: パイプライン実行結果に versions フィールド含む
+        Why: versions必須出力を保証
+        Design Decision: result.json スキーマ準拠
+        """
+        from cli.rep_cli import run_pipeline
+        from unittest.mock import MagicMock
+
+        # モック：ランドマークデータ
+        mock_landmarks = [{'frame': 0, 'landmarks': []}]
+
+        result = run_pipeline(
+            landmarks_data=mock_landmarks,
+            test_type='single_leg_squat'
+        )
+
+        # versions フィールド必須
+        assert 'versions' in result
+        assert 'rules_version' in result['versions']
+        assert 'normalization_version' in result['versions']
+        assert 'artifact_sha' in result['versions']
+
+    def test_pipeline_returns_scores_and_class(self):
+        """
+        What: パイプライン実行結果に scores と class 含む
+        Why: 判定結果の必須フィールドを保証
+        """
+        from cli.rep_cli import run_pipeline
+
+        mock_landmarks = [{'frame': 0, 'landmarks': []}]
+
+        result = run_pipeline(
+            landmarks_data=mock_landmarks,
+            test_type='single_leg_squat'
+        )
+
+        # 必須フィールド
+        assert 'scores' in result
+        assert 'class' in result
+        assert 'class_prob' in result
