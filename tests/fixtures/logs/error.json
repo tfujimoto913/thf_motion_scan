@@ -1,0 +1,19 @@
+{
+  "timestamp": "2025-11-03T12:35:00.123Z",
+  "level": "ERROR",
+  "message": "Pose extraction failed",
+  "request_id": "550e8400-e29b-41d4-a716-446655440001",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "lambda:pose_extraction",
+  "error_code": "MEDIAPIPE_FAILED",
+  "error_message": "Low visibility: confidence < 0.5",
+  "metadata": {
+    "frame_count": 150,
+    "failed_frames": 120,
+    "detection_rate": 0.2
+  }
+}

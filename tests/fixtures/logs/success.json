@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-11-03T12:34:56.789Z",
+  "level": "INFO",
+  "message": "Evaluation completed successfully",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "cli",
+  "duration_ms": 1234,
+  "metadata": {
+    "frame_count": 150,
+    "detection_rate": 0.98
+  }
+}

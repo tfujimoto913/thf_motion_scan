@@ -585,6 +585,125 @@ GitHub UIでPull Request作成時、以下を含めてください：
 
 ---
 
+![CI](https://github.com/<owner>/<repo>/actions/workflows/validate.yml/badge.svg)
+
+## 📋 Logging Standards
+
+### 概要
+
+THF Motion Scanでは、CLI（rep-cli）とサーバ側（Lambda等）で共通の構造化ログキー標準を採用し、観測性とトレーサビリティを向上させます。
+
+**目的**:
+- バージョン追跡（rules_version, normalization_version）
+- エラー原因特定（error_code, error_message）
+- パフォーマンス分析（duration_ms）
+- 統一フォーマットによる自動化（CloudWatch/OpenTelemetry互換）
+
+### 必須フィールド（9項目）
+
+すべてのログエントリに含める必要があるフィールド：
+
+| キー | 型 | 説明 | 例 |
+|------|-----|------|-----|
+| `timestamp` | string (ISO8601) | イベント発生時刻（UTC、アプリ生成） | `2025-11-03T12:34:56.789Z` |
+| `level` | string (enum) | ログレベル (`DEBUG`, `INFO`, `WARN`, `ERROR`) | `INFO` |
+| `message` | string | 人間可読メッセージ | `Evaluation completed successfully` |
+| `request_id` | string (UUID v4) | リクエスト単位のユニークID | `550e8400-e29b-41d4-a716-446655440000` |
+| `session_id` | string (UUID v4) | セッション単位のID | `7c9e6679-7425-40de-944b-e07fc1f90ae7` |
+| `test_code` | string | 評価対象テストコード | `push_pull` |
+| `rules_version` | string (semver) | thresholds.json のバージョン | `1.0.0` |
+| `normalization_version` | string (semver) | 正規化ロジックバージョン | `1.2.1` |
+| `artifact_sha` | string (SHA256, 先頭8文字) | 処理対象ファイルのハッシュ | `a3f5c8d1` |
+
+### 任意フィールド（8項目）
+
+特定のコンテキストで追加するフィールド：
+
+| キー | 型 | 説明 | 例 |
+|------|-----|------|-----|
+| `component` | string | 実行元コンポーネント（パイプラインステップ名も可） | `cli`, `lambda`, `lambda:classify` |
+| `duration_ms` | number | 処理時間（ミリ秒） | `1234` |
+| `receive_ts` | string (ISO8601) | 受信時刻（CloudWatchなど、アプリ時刻とズレがある場合） | `2025-11-03T12:34:57.012Z` |
+| `error_code` | string | エラー分類コード（ERROR時推奨） | `VALIDATION_FAILED` |
+| `error_message` | string | エラー詳細（ERROR時推奨） | `Invalid JSON structure` |
+| `trace_id` | string | OpenTelemetry互換トレースID | `0af7651916cd43dd8448eb211c80319c` |
+| `span_id` | string | OpenTelemetry互換スパンID | `b7ad6b7169203331` |
+| `metadata` | object | 追加メタデータ（自由形式） | `{"height_cm": 175}` |
+
+### ポリシー
+
+**セキュリティ**:
+- ✅ PII（個人情報）を含めない
+- ✅ 動画ファイル名はハッシュ化（artifact_sha使用）
+- ✅ ユーザーIDは含めない（session_idで代替）
+
+**品質**:
+- ✅ 必須キー欠落時は出力前にエラー（開発時検知）
+- ✅ CloudWatch/OpenTelemetry互換性を考慮
+- ✅ JSON 1行出力（stdout/ファイル）
+
+### ログサンプル
+
+#### 成功時（INFO）
+
+```json
+{
+  "timestamp": "2025-11-03T12:34:56.789Z",
+  "level": "INFO",
+  "message": "Evaluation completed successfully",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "cli",
+  "duration_ms": 1234
+}
+```
+
+#### エラー時（ERROR）
+
+```json
+{
+  "timestamp": "2025-11-03T12:35:00.123Z",
+  "level": "ERROR",
+  "message": "Pose extraction failed",
+  "request_id": "550e8400-e29b-41d4-a716-446655440001",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "lambda:pose_extraction",
+  "error_code": "MEDIAPIPE_FAILED",
+  "error_message": "Low visibility: confidence < 0.5"
+}
+```
+
+### 使用方法
+
+#### CLI（rep-cli）
+
+```bash
+# ログレベル指定
+rep-cli --video test.mp4 --log-level DEBUG
+
+# ログファイル出力
+rep-cli --video test.mp4 --log-file output/log.jsonl
+```
+
+#### Lambda
+
+```python
+# 環境変数で制御
+LOG_LEVEL=INFO  # DEBUG, INFO, WARN, ERROR
+```
+
+詳細は `utils/logger.py` および `docs/thresholds-README.md` を参照してください。
+
+---
+
 ## 📊 プロジェクト統計
 
 ### 実装規模（Phase 2完了時点）
