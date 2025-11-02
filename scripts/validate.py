@@ -16,8 +16,14 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
-from jsonschema import Draft7Validator
-from jsonschema.exceptions import ValidationError
+try:
+    from jsonschema import Draft7Validator
+    from jsonschema.exceptions import ValidationError
+except ImportError as exc:  # pragma: no cover - provides friendly hint
+    raise SystemExit(
+        "Missing dependency 'jsonschema'. Install development dependencies with:\n"
+        "  pip install -r requirements-dev.txt"
+    ) from exc
 
 
 DEFAULT_SCHEMA_PATH = Path("schema/thresholds.schema.json")
@@ -182,7 +188,7 @@ def validate_file(validator: Draft7Validator, file_path: Path, quiet: bool = Fal
     return errors
 
 
-def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate threshold configuration JSON files.")
     parser.add_argument(
         "targets",
@@ -205,7 +211,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv or [])
+    args = parse_args(argv)
     schema_path = args.schema
     if not schema_path.exists():
         print(f"[ERROR] Schema not found: {schema_path}")

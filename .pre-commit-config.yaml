@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-thresholds
+        name: Validate thresholds schema
+        entry: python scripts/validate.py --quiet
+        language: system
+        pass_filenames: true
+        files: ^config/thresholds\.json$

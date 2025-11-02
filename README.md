@@ -100,6 +100,8 @@ source .venv/bin/activate
 ```bash
 pip install --upgrade pip
 pip install opencv-python mediapipe numpy pytest pytest-cov
+# Validator / pre-commit tooling
+pip install -r requirements-dev.txt
 ```
 
 **主要パッケージ**:
@@ -731,6 +733,53 @@ sam logs -n ProcessingFunction --start-time '10 minutes ago' --end-time 'now'
 
 ---
 
+## ✅ thresholds.json バリデーション
+
+最新のしきい値ファイルは JSON Schema で検証できます。開発時は以下のワークフローを守ってください。
+
+### 手動検証
+
+```bash
+# 事前に開発用依存をインストール
+pip install -r requirements-dev.txt
+
+# メイン設定ファイルを検証
+python3 scripts/validate.py
+
+# 複数ファイル／ディレクトリをまとめて検証する場合
+python3 scripts/validate.py config/thresholds.json tests/fixtures/thresholds/valid
+```
+
+### フィクスチャでの挙動チェック
+
+```bash
+# 正常ケース（3件）は成功する
+python3 scripts/validate.py tests/fixtures/thresholds/valid
+
+# 異常ケース（10件）は失敗することを確認
+python3 scripts/validate.py --quiet tests/fixtures/thresholds/invalid || echo "expected failure"
+```
+
+### pre-commit フック
+
+`.pre-commit-config.yaml` により `config/thresholds.json` へのコミット前検証が有効化できます。
+
+```bash
+pre-commit install
+# 以後、thresholds.json を変更してコミットすると自動検証が走ります
+```
+
+フックを一時的に無効化したい場合は `SKIP=validate-thresholds git commit ...` を使用してください（緊急時のみ）。
+
+### 失敗時の対処
+
+1. バリデータ出力の `$.tests.xxx...` で報告されたキーを特定  
+2. 該当バンドやメタデータを修正  
+3. `python3 scripts/validate.py` を再実行して通ることを確認  
+4. コミット → CI（Validate Thresholds workflow）の完了を確認
+
+---
+
 ## 📜 ライセンス
 
 MIT License（予定）
@@ -756,4 +805,3 @@ MIT License（予定）
 - SNSアラート: `thf-alerts-<env>`（メール、将来Slack連携予定）に 4 種類のアラームを集約
 - Runbook: [docs/runbooks/dlq_redrive.md](docs/runbooks/dlq_redrive.md) にDLQ復旧手順と観測ポイントを記録
 - ツール: `scripts/redrive.py` でガードレールに沿った再投入（メトリクス/停止条件を自動実行）
-

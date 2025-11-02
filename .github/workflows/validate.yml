@@ -1,0 +1,57 @@
+name: Validate Thresholds
+
+on:
+  pull_request:
+    paths:
+      - "config/thresholds.json"
+      - "schema/thresholds.schema.json"
+      - "scripts/validate.py"
+      - "tests/fixtures/thresholds/**"
+      - ".pre-commit-config.yaml"
+      - "requirements-dev.txt"
+  push:
+    branches:
+      - main
+    paths:
+      - "config/thresholds.json"
+      - "schema/thresholds.schema.json"
+      - "scripts/validate.py"
+      - ".pre-commit-config.yaml"
+      - "requirements-dev.txt"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Validate thresholds.json
+        run: python scripts/validate.py --quiet
+
+      - name: Validate known-good fixtures
+        run: python scripts/validate.py tests/fixtures/thresholds/valid
+
+      - name: Ensure known-bad fixtures fail
+        run: |
+          set +e
+          python scripts/validate.py --quiet tests/fixtures/thresholds/invalid
+          status=$?
+          if [ $status -eq 0 ]; then
+            echo "Expected invalid fixtures to fail validation, but validator exited with 0."
+            exit 1
+          fi
+          if [ $status -gt 1 ]; then
+            echo "Validator returned unexpected exit code ${status}."
+            exit 1
+          fi
+          echo "Invalid fixtures correctly failed validation."
