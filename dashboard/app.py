@@ -808,6 +808,8 @@ def render_test_upload_page(s3_client, resources, test_index, demo_mode):
     test_type = TEST_TYPES[test_index]
     test_name = TEST_TYPE_DISPLAY.get(test_type, test_type)
 
+    # 種目ヘッダー（スクロールアンカー用のHTMLマークを追加）
+    st.markdown(f'<div id="test-header"></div>', unsafe_allow_html=True)
     st.header(f"📹 種目{test_index + 1}: {test_name}")
 
     # 進捗バー
@@ -2005,10 +2007,33 @@ def main():
     """, unsafe_allow_html=True)
 
     # ページトップへのスクロール処理（アップロード完了時）
+    # 種目ヘッダーが見える位置にスクロール（完全なトップではなく、タイトルバー分下げる）
     if st.session_state.get('scroll_to_top', False):
         st.markdown("""
         <script>
-            window.parent.document.querySelector('section.main').scrollTo(0, 0);
+            // Streamlitのメインコンテナを取得
+            const mainContainer = window.parent.document.querySelector('section.main');
+
+            // 種目ヘッダーの位置を取得
+            const testHeader = window.parent.document.getElementById('test-header');
+
+            if (testHeader && mainContainer) {
+                // 種目ヘッダーまでスクロール（少し上にマージンを取る）
+                const headerOffset = 20; // 20pxのマージン
+                const elementPosition = testHeader.getBoundingClientRect().top;
+                const offsetPosition = elementPosition + mainContainer.scrollTop - headerOffset;
+
+                mainContainer.scrollTo({
+                    top: offsetPosition,
+                    behavior: 'smooth'
+                });
+            } else {
+                // フォールバック: タイトルバー分だけ下げてスクロール（約150px）
+                mainContainer.scrollTo({
+                    top: 150,
+                    behavior: 'smooth'
+                });
+            }
         </script>
         """, unsafe_allow_html=True)
         st.session_state.scroll_to_top = False
