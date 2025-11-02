@@ -9,6 +9,7 @@ from .logging import (
     emit_ui_metric,
 )
 from .video_validator import VideoValidator
+from .dynamo_helpers import convert_decimals
 
 __all__ = [
     'VideoValidator',
@@ -18,4 +19,5 @@ __all__ = [
     'execution_timer',
     'record_error',
     'emit_ui_metric',
+    'convert_decimals',
 ]

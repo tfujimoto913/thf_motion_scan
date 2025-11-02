@@ -43,6 +43,7 @@ from utils import (  # type: ignore[import-untyped]
     record_error,
     log_dashboard_event,
     emit_ui_metric,
+    convert_decimals,
 )
 from session_dao import group_tests_by_session, get_latest_sessions
 from session_pages import session_list_page, session_detail_page
@@ -732,8 +733,18 @@ def render_session_select_page(resources, demo_mode):
                 st.info("「新規セッションを開始」を選択してください")
                 session_id = None
 
+        except ValueError as e:
+            # AWS認証・設定エラー
+            st.error("❌ AWS設定エラー: DynamoDBに接続できません")
+            st.info("💡 **対処法**:\n- AWS認証情報を確認してください\n- DynamoDBテーブルが存在するか確認してください")
+            record_error("wizard_step3_session_mode", f"ValueError: {str(e)}")
+            session_id = None
         except Exception as e:
-            st.warning(f"⚠️ 過去セッション取得エラー: {str(e)}")
+            # その他のエラー（データ形式、ネットワーク等）
+            error_msg = str(e)
+            st.error(f"❌ 過去セッション取得エラー: {error_msg}")
+            st.info("💡 **対処法**:\n- 「新規セッションを開始」を選択してください\n- 問題が続く場合は管理者に連絡してください")
+            record_error("wizard_step3_session_mode", f"Exception: {error_msg}")
             session_id = None
 
     st.markdown("---")
@@ -978,19 +989,7 @@ def results_list_page(dynamodb, resources, demo_mode=False, coach_mode=False):
             return
 
         # CRITICAL: DynamoDBのDecimal型をfloatに変換（DataFrame作成前）
-        from decimal import Decimal
-
-        def convert_decimals(obj):
-            """DynamoDB Decimal型をfloatに再帰的に変換"""
-            if isinstance(obj, list):
-                return [convert_decimals(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {key: convert_decimals(value) for key, value in obj.items()}
-            elif isinstance(obj, Decimal):
-                return float(obj)
-            return obj
-
-        # 全てのDecimal型をfloatに変換
+        # convert_decimals は dashboard/utils/dynamo_helpers.py で定義（ADR-026）
         items_converted = [convert_decimals(item) for item in items]
 
         # DataFrame変換
@@ -1801,6 +1800,134 @@ def incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mod
         record_error("incomplete_sessions_load", str(e))
 
 
+def debug_info_page(dynamodb, resources, demo_mode):
+    """
+    What: デバッグ情報ページ（DynamoDBデータ状況確認）
+    Why: データ保存状況を可視化し、トラブルシューティングを支援
+    Design Decision: デバッグモード時のみ表示（ADR-026）
+
+    CRITICAL: 本番環境では個人情報に注意
+    """
+    st.header("🔧 デバッグ情報")
+    st.caption("DynamoDBのデータ状況を確認")
+
+    if demo_mode:
+        st.warning("🎭 デモモードではDynamoDBデータは表示されません")
+        return
+
+    try:
+        items = load_results_items(resources, demo_mode=False)
+    except ValueError:
+        st.error("❌ AWS設定エラー: AccountIdが取得できません")
+        st.info("💡 AWS認証情報を確認してください")
+        return
+    except Exception as e:
+        st.error(f"❌ データ取得エラー: {str(e)}")
+        st.info("💡 DynamoDBテーブルが存在するか確認してください")
+        return
+
+    # データ存在確認
+    if not items:
+        st.warning("⚠️ データが1件も見つかりませんでした")
+        st.info("💡 対処法:\n- 動画をアップロードしてデータを作成してください\n- 別の環境（dev/prod）を確認してください")
+        return
+
+    # Decimal変換
+    items_converted = [convert_decimals(item) for item in items]
+
+    # メタデータとテストデータを分類
+    metadata_items = [
+        item for item in items_converted
+        if str(item.get('video_id', '')).startswith('METADATA')
+    ]
+    test_items = [
+        item for item in items_converted
+        if not str(item.get('video_id', '')).startswith('METADATA')
+    ]
+
+    # サマリー表示
+    st.subheader("📊 データサマリー")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("総件数", f"{len(items_converted)}件")
+    with col2:
+        st.metric("メタデータ", f"{len(metadata_items)}件")
+    with col3:
+        st.metric("テスト結果", f"{len(test_items)}件")
+
+    # セッション統計
+    if test_items:
+        st.subheader("📈 セッション統計")
+
+        athletes = set()
+        sessions = set()
+        test_types = set()
+
+        for item in test_items:
+            athlete_id = item.get('athlete_id')
+            session_id = item.get('session_id')
+            test_type = item.get('test_type')
+
+            if athlete_id:
+                athletes.add(athlete_id)
+            if session_id:
+                sessions.add((athlete_id, session_id))
+            if test_type:
+                test_types.add(test_type)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("選手数", f"{len(athletes)}人")
+        with col2:
+            st.metric("セッション数", f"{len(sessions)}件")
+        with col3:
+            st.metric("種目種類", f"{len(test_types)}種類")
+
+        # 選手別セッション数
+        st.subheader("👤 選手別セッション数")
+        athlete_data = []
+        for athlete in sorted(athletes):
+            athlete_sessions = [s for s in sessions if s[0] == athlete]
+            athlete_data.append({
+                "選手ID": athlete,
+                "セッション数": len(athlete_sessions)
+            })
+        st.dataframe(athlete_data, use_container_width=True)
+
+        # 種目別件数
+        st.subheader("🏋️ 種目別件数")
+        test_type_data = []
+        for test_type in sorted(test_types):
+            count = sum(1 for item in test_items if item.get('test_type') == test_type)
+            test_type_data.append({
+                "種目": test_type,
+                "件数": count
+            })
+        st.dataframe(test_type_data, use_container_width=True)
+
+        # 最新5件
+        st.subheader("📋 最新5件")
+        sorted_items = sorted(
+            test_items,
+            key=lambda x: x.get('uploaded_at', ''),
+            reverse=True
+        )[:5]
+
+        for i, item in enumerate(sorted_items, 1):
+            with st.expander(f"{i}. {item.get('athlete_id', 'N/A')} / {item.get('session_id', 'N/A')}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**種目**: {item.get('test_type', 'N/A')}")
+                    st.write(f"**スコア**: {item.get('grand_total', 'N/A')}")
+                with col2:
+                    st.write(f"**アップロード日時**: {item.get('uploaded_at', 'N/A')}")
+                    st.write(f"**video_id**: {item.get('video_id', 'N/A')}")
+
+        # 生データJSON表示
+        with st.expander("🔍 生データ（JSON）"):
+            st.json(sorted_items[:3])  # 最新3件のみ
+
+
 def main():
     """
     What: Streamlitアプリのメインエントリーポイント
@@ -2005,9 +2132,15 @@ def main():
 
     # サイドバーでページ選択
     st.sidebar.markdown("---")
+
+    # デバッグモード時はデバッグページを追加
+    page_options = ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理"]
+    if st.session_state.get('debug_mode'):
+        page_options.append("🔧 デバッグ情報")
+
     page = st.sidebar.radio(
         "ページ選択",
-        ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理"]
+        page_options
     )
 
     log_dashboard_event(
@@ -2049,6 +2182,11 @@ def main():
             incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mode)
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ 未完了セッション管理処理時間: {stats.duration_ms:.0f} ms")
+    elif page == "🔧 デバッグ情報":
+        with execution_timer("debug_info_page") as stats:
+            debug_info_page(dynamodb, resources, demo_mode)
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ デバッグ情報処理時間: {stats.duration_ms:.0f} ms")
 
 
 if __name__ == "__main__":

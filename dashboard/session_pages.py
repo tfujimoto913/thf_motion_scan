@@ -11,13 +11,12 @@ CRITICAL:
   - is_complete=False の場合は「撮影途中」表示
 """
 import streamlit as st
-from typing import Dict, Any, List
-from decimal import Decimal
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import plotly.graph_objects as go
 from session_dao import get_latest_sessions, get_session_by_id, get_previous_sessions
 from data_loader import load_results_items
-from utils import record_error
+from utils import record_error, emit_ui_metric, convert_decimals
 from config import TEST_TYPES, TEST_TYPE_DISPLAY, TEST_SHORT_MAP
 
 
@@ -59,17 +58,7 @@ def session_list_page(dynamodb, resources, demo_mode=False):
         return
 
     try:
-        # Decimal型をfloat型に変換
-        def convert_decimals(obj):
-            """DynamoDB Decimal型をfloatに再帰的に変換"""
-            if isinstance(obj, list):
-                return [convert_decimals(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {key: convert_decimals(value) for key, value in obj.items()}
-            elif isinstance(obj, Decimal):
-                return float(obj)
-            return obj
-
+        # CRITICAL: DynamoDB Decimal型をfloat型に変換（ADR-026）
         items_converted = [convert_decimals(item) for item in items]
 
         # メタデータ除外
@@ -241,17 +230,7 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         record_error("session_detail_page", str(e))
         return
 
-    # Decimal型をfloat型に変換
-    def convert_decimals(obj):
-        """DynamoDB Decimal型をfloatに再帰的に変換"""
-        if isinstance(obj, list):
-            return [convert_decimals(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {key: convert_decimals(value) for key, value in obj.items()}
-        elif isinstance(obj, Decimal):
-            return float(obj)
-        return obj
-
+    # CRITICAL: DynamoDB Decimal型をfloat型に変換（ADR-026）
     items_converted = [convert_decimals(item) for item in items]
 
     # メタデータ除外
@@ -286,6 +265,11 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
     grand_max = session.get('grand_max', 560)
     percentage = session.get('percentage', 0)
     rules_version = session.get('rules_version', 'unknown')
+    processed_at = session.get('processed_at', '')
+    freshness = _calculate_data_freshness(processed_at) if processed_at else "不明"
+    tests_count = len(session.get('tests', []))
+    total_tests = len(TEST_TYPES)
+    is_complete = session.get('is_complete', tests_count >= total_tests)
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -296,16 +280,27 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         st.metric("達成率", f"{percentage:.1f}%")
 
     with col3:
-        st.metric("ルールバージョン", rules_version)
+        st.metric("データ鮮度", freshness)
 
     with col4:
-        # データ鮮度表示（"X日前"）
-        processed_at = session.get('processed_at', '')
-        if processed_at:
-            freshness = _calculate_data_freshness(processed_at)
-            st.metric("データ鮮度", freshness)
+        if is_complete:
+            st.metric("完了状況", "✅ 完了")
         else:
-            st.metric("データ鮮度", "不明")
+            st.metric("完了状況", f"📝 {tests_count}/{total_tests}種目")
+
+    version_summary = _extract_session_versions(session)
+    normalization_version = version_summary.get('normalization_version')
+    artifact_sha = version_summary.get('artifact_sha')
+
+    vcol1, vcol2, vcol3 = st.columns(3)
+    vcol1.metric("rules_version", rules_version or "-")
+    vcol2.metric("normalization_version", normalization_version or "-")
+    artifact_display = "-"
+    if artifact_sha:
+        artifact_display = artifact_sha if len(artifact_sha) <= 12 else f"{artifact_sha[:12]}…"
+    vcol3.metric("artifact_sha", artifact_display)
+    if artifact_sha and len(artifact_sha) > 12:
+        vcol3.caption(artifact_sha)
 
     st.markdown("---")
 
@@ -346,10 +341,11 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
             prev_id = prev_session['session_id']
             prev_total = prev_session['grand_total']
             prev_pct = prev_session['percentage']
-            prev_processed = prev_session.get('processed_at', 'N/A')
+            prev_processed = prev_session.get('processed_at', '')
+            freshness_label = _calculate_data_freshness(prev_processed) if prev_processed else "不明"
 
             # ドロップダウン表示用ラベル
-            label = f"{prev_id} | {prev_total:.1f}/560点 ({prev_pct:.1f}%) | {prev_processed}"
+            label = f"{prev_id} | {prev_total:.1f}/560点 ({prev_pct:.1f}%) | {freshness_label}"
             session_options[label] = prev_session
 
         # セッションB選択（初期値: 直近セッション）
@@ -393,6 +389,16 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
 
                 # セッションBのスコアを抽出
                 test_scores_b = _extract_test_scores(session_b)
+
+                compare_key = (session_id, session_b.get('session_id'))
+                last_compare_key = st.session_state.get('_last_compare_metric')
+                if compare_key != last_compare_key:
+                    emit_ui_metric(
+                        "compare_run",
+                        environment=st.session_state.get('selected_env'),
+                        session_id=session_id,
+                    )
+                    st.session_state['_last_compare_metric'] = compare_key
 
                 # レーダーチャート重ね合わせ
                 st.markdown("### レーダーチャート重ね合わせ")
@@ -441,8 +447,8 @@ def _calculate_data_freshness(processed_at: str) -> str:
         else:
             return f"{days}日前"
 
-    except Exception as e:
-        return f"不明 ({str(e)[:20]})"
+    except Exception:
+        return "不明"
 
 
 def _extract_test_scores(session: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -473,29 +479,88 @@ def _extract_test_scores(session: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     tests = session.get('tests', [])
 
-    # test_type → スコアのマッピング
-    test_score_map = {}
+    # test_type → スコア情報のマッピング
+    test_score_map: Dict[str, Dict[str, Any]] = {}
     for test in tests:
-        test_type = test.get('test_type', 'unknown')
-        score = test.get('score', 0)
-        test_score_map[test_type] = score
+        test_type = test.get('test_type')
+        if not isinstance(test_type, str):
+            continue
+
+        raw_score = test.get('score')
+        if isinstance(raw_score, Decimal):
+            score_value = float(raw_score)
+        elif isinstance(raw_score, (int, float)):
+            score_value = float(raw_score)
+        else:
+            score_value = None
+
+        test_score_map[test_type] = {
+            'score': score_value,
+        }
 
     # 7種目分のスコアを生成
-    result = []
+    result: List[Dict[str, Any]] = []
+    max_score = 80
     for test_type in TEST_TYPES:
-        score = test_score_map.get(test_type, 0)
-        max_score = 80
-        percentage = (score / max_score * 100) if max_score > 0 else 0
+        entry = test_score_map.get(test_type)
+        score_value = entry.get('score') if entry else None
+        is_missing = score_value is None
+        safe_score = float(score_value) if score_value is not None else 0.0
+        percentage = (safe_score / max_score * 100) if max_score > 0 else 0
 
         result.append({
             'test_type': test_type,
             'test_name': TEST_TYPE_DISPLAY.get(test_type, test_type),
-            'score': score,
+            'short_name': TEST_SHORT_MAP.get(test_type, test_type),
+            'score': safe_score,
             'max_score': max_score,
-            'percentage': percentage
+            'percentage': percentage,
+            'is_missing': is_missing,
         })
 
     return result
+
+
+def _extract_session_versions(session: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """
+    What: セッションレベルのバージョン情報を抽出
+    Why: ヘッダー表示用に normalization_version / artifact_sha を取得
+    """
+
+    normalization_values: List[str] = []
+    artifact_values: List[str] = []
+
+    def collect(source: Any) -> None:
+        if not isinstance(source, dict):
+            return
+        normalization = source.get('normalization_version')
+        if isinstance(normalization, str) and normalization:
+            normalization_values.append(normalization)
+        artifact = source.get('artifact_sha') or source.get('artifactSha')
+        if isinstance(artifact, str) and artifact:
+            artifact_values.append(artifact)
+
+    collect(session)
+    collect(session.get('metadata'))
+
+    for test in session.get('tests', []):
+        collect(test)
+        collect(test.get('metadata'))
+        evaluation = test.get('evaluation')
+        collect(evaluation)
+        if isinstance(evaluation, dict):
+            collect(evaluation.get('metadata'))
+
+    def pick(values: List[str]) -> Optional[str]:
+        unique = list(dict.fromkeys(values))
+        if not unique:
+            return None
+        return unique[0] if len(unique) == 1 else "mixed"
+
+    return {
+        'normalization_version': pick(normalization_values),
+        'artifact_sha': pick(artifact_values),
+    }
 
 
 def _render_test_scores_table(test_scores: List[Dict[str, Any]]):
@@ -518,14 +583,21 @@ def _render_test_scores_table(test_scores: List[Dict[str, Any]]):
         score = item['score']
         max_score = item['max_score']
         percentage = item['percentage']
+        is_missing = item.get('is_missing', False)
 
-        # 2.0点未満の場合は⚠️マーク
-        warning = "⚠️" if score < 2.0 else ""
+        if is_missing:
+            score_display = "N/A"
+            percentage_display = "N/A"
+            warning = "⚠️"
+        else:
+            score_display = f"{score:.1f}/{max_score}"
+            percentage_display = f"{percentage:.1f}"
+            warning = "⚠️" if score < 2.0 else ""
 
         table_data.append({
-            '種目名': f"{warning} {test_name}",
-            '実得点/満点': f"{score:.1f}/{max_score}",
-            '達成率（%）': f"{percentage:.1f}"
+            '種目名': f"{warning} {test_name}".strip(),
+            '実得点/満点': score_display,
+            '達成率（%）': percentage_display
         })
 
     # Streamlit dataframe表示
@@ -547,26 +619,62 @@ def _render_radar_chart(test_scores: List[Dict[str, Any]]):
       - ツールチップ: 種目名+達成率+実得点
     """
     # レーダーチャートデータ作成
-    labels = []
-    values = []
+    labels: List[str] = []
+    values: List[float] = []
+    hover_text: List[str] = []
+    missing_labels: List[str] = []
+    missing_hover: List[str] = []
 
     for item in test_scores:
         test_type = item['test_type']
-        short_name = TEST_SHORT_MAP.get(test_type, test_type)
-        percentage = item['percentage']
-
+        short_name = item.get('short_name') or TEST_SHORT_MAP.get(test_type, test_type)
+        display_name = item['test_name']
         labels.append(short_name)
-        values.append(percentage)
 
-    # Plotlyレーダーチャート
-    fig = go.Figure(data=go.Scatterpolar(
-        r=values,
-        theta=labels,
-        fill='toself',
-        fillcolor='rgba(0, 123, 255, 0.3)',
-        line=dict(color='rgb(0, 123, 255)', width=2),
-        hovertemplate='<b>%{theta}</b><br>達成率: %{r:.1f}%<extra></extra>'
-    ))
+        if item.get('is_missing'):
+            values.append(0)
+            hover_text.append(f"{display_name}: N/A")
+            missing_labels.append(short_name)
+            missing_hover.append(f"{display_name}: N/A")
+        else:
+            percentage = item['percentage']
+            score = item['score']
+            max_score = item['max_score']
+            values.append(percentage)
+            hover_text.append(
+                f"{display_name}: {percentage:.1f}% ({score:.1f}/{max_score})"
+            )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values,
+            theta=labels,
+            fill='toself',
+            fillcolor='rgba(0, 123, 255, 0.3)',
+            line=dict(color='rgb(0, 123, 255)', width=2),
+            customdata=hover_text,
+            hovertemplate='%{customdata}<extra></extra>',
+            name='達成率',
+        )
+    )
+
+    if missing_labels:
+        fig.add_trace(
+            go.Scatterpolar(
+                r=[5] * len(missing_labels),
+                theta=missing_labels,
+                mode='lines+markers+text',
+                line=dict(color='rgba(108,117,125,0.7)', dash='dot'),
+                marker=dict(color='rgba(108,117,125,0.9)', size=8, symbol='circle-open'),
+                text=['N/A'] * len(missing_labels),
+                textposition='top center',
+                hovertext=missing_hover,
+                hoverinfo='text',
+                name='欠測',
+                showlegend=False,
+            )
+        )
 
     fig.update_layout(
         polar=dict(
@@ -600,66 +708,111 @@ def _render_comparison_radar_chart(
     CRITICAL:
       - セッションA: 青色（rgba 0,123,255）、透明度0.5
       - セッションB: オレンジ色（rgba 255,165,0）、透明度0.25
-      - 欠測種目（score=0）: 点線表示（dash='dot'）
-      - ツールチップ: 種目名 + 達成率 + 実得点
+      - 欠測種目: グレー点線 + "N/A" ラベル
+      - ツールチップ: 種目名 + 達成率 + 実得点（欠測はN/A）
     """
-    # レーダーチャートデータ作成
-    labels = []
-    values_a = []
-    values_b = []
-    hover_text_a = []
-    hover_text_b = []
+    labels: List[str] = []
+    values_a: List[float] = []
+    values_b: List[float] = []
+    hover_text_a: List[str] = []
+    hover_text_b: List[str] = []
+    missing_a_labels: List[str] = []
+    missing_b_labels: List[str] = []
+    missing_a_hover: List[str] = []
+    missing_b_hover: List[str] = []
 
     for item_a, item_b in zip(test_scores_a, test_scores_b):
         test_type = item_a['test_type']
-        short_name = TEST_SHORT_MAP.get(test_type, test_type)
-
-        percentage_a = item_a['percentage']
-        percentage_b = item_b['percentage']
-        score_a = item_a['score']
-        score_b = item_b['score']
+        short_name = item_a.get('short_name') or TEST_SHORT_MAP.get(test_type, test_type)
+        display_name = TEST_TYPE_DISPLAY.get(test_type, test_type)
 
         labels.append(short_name)
-        values_a.append(percentage_a)
-        values_b.append(percentage_b)
 
-        # 欠測種目（score=0）の場合は「データなし」と表示
-        if score_a == 0:
-            hover_text_a.append(f"<b>{short_name}</b><br>データなし（0点）")
+        if item_a.get('is_missing'):
+            values_a.append(0)
+            hover_text_a.append(f"{display_name}: N/A")
+            missing_a_labels.append(short_name)
+            missing_a_hover.append(f"{display_name}: N/A")
         else:
-            hover_text_a.append(f"<b>{short_name}</b><br>達成率: {percentage_a:.1f}%<br>実得点: {score_a:.1f}/80")
+            percentage_a = item_a['percentage']
+            score_a = item_a['score']
+            values_a.append(percentage_a)
+            hover_text_a.append(
+                f"{display_name}: {percentage_a:.1f}% ({score_a:.1f}/{item_a['max_score']})"
+            )
 
-        if score_b == 0:
-            hover_text_b.append(f"<b>{short_name}</b><br>データなし（0点）")
+        if item_b.get('is_missing'):
+            values_b.append(0)
+            hover_text_b.append(f"{display_name}: N/A")
+            missing_b_labels.append(short_name)
+            missing_b_hover.append(f"{display_name}: N/A")
         else:
-            hover_text_b.append(f"<b>{short_name}</b><br>達成率: {percentage_b:.1f}%<br>実得点: {score_b:.1f}/80")
+            percentage_b = item_b['percentage']
+            score_b = item_b['score']
+            values_b.append(percentage_b)
+            hover_text_b.append(
+                f"{display_name}: {percentage_b:.1f}% ({score_b:.1f}/{item_b['max_score']})"
+            )
 
-    # Plotlyレーダーチャート
     fig = go.Figure()
 
-    # セッションA（現在）: 青色、透明度0.5
-    fig.add_trace(go.Scatterpolar(
-        r=values_a,
-        theta=labels,
-        fill='toself',
-        fillcolor='rgba(0, 123, 255, 0.5)',
-        line=dict(color='rgb(0, 123, 255)', width=2),
-        name='セッションA（現在）',
-        hovertext=hover_text_a,
-        hoverinfo='text'
-    ))
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values_a,
+            theta=labels,
+            fill='toself',
+            fillcolor='rgba(0, 123, 255, 0.5)',
+            line=dict(color='rgb(0, 123, 255)', width=2),
+            name='セッションA（現在）',
+            customdata=hover_text_a,
+            hovertemplate='%{customdata}<extra></extra>',
+        )
+    )
 
-    # セッションB（比較対象）: オレンジ色、透明度0.25
-    fig.add_trace(go.Scatterpolar(
-        r=values_b,
-        theta=labels,
-        fill='toself',
-        fillcolor='rgba(255, 165, 0, 0.25)',
-        line=dict(color='rgb(255, 165, 0)', width=2),
-        name='セッションB（比較対象）',
-        hovertext=hover_text_b,
-        hoverinfo='text'
-    ))
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values_b,
+            theta=labels,
+            fill='toself',
+            fillcolor='rgba(255, 165, 0, 0.25)',
+            line=dict(color='rgb(255, 165, 0)', width=2),
+            name='セッションB（比較対象）',
+            customdata=hover_text_b,
+            hovertemplate='%{customdata}<extra></extra>',
+        )
+    )
+
+    if missing_a_labels:
+        fig.add_trace(
+            go.Scatterpolar(
+                r=[5] * len(missing_a_labels),
+                theta=missing_a_labels,
+                mode='lines+markers+text',
+                line=dict(color='rgba(0, 123, 255, 0.6)', dash='dot'),
+                marker=dict(color='rgba(0, 123, 255, 0.8)', size=8, symbol='triangle-up'),
+                text=['N/A'] * len(missing_a_labels),
+                textposition='top center',
+                hovertext=missing_a_hover,
+                hoverinfo='text',
+                showlegend=False,
+            )
+        )
+
+    if missing_b_labels:
+        fig.add_trace(
+            go.Scatterpolar(
+                r=[5] * len(missing_b_labels),
+                theta=missing_b_labels,
+                mode='lines+markers+text',
+                line=dict(color='rgba(255, 165, 0, 0.6)', dash='dot'),
+                marker=dict(color='rgba(255, 165, 0, 0.8)', size=8, symbol='triangle-down'),
+                text=['N/A'] * len(missing_b_labels),
+                textposition='top center',
+                hovertext=missing_b_hover,
+                hoverinfo='text',
+                showlegend=False,
+            )
+        )
 
     fig.update_layout(
         polar=dict(
@@ -756,24 +909,39 @@ def _render_score_diff(
         score_b = item_b['score']
         pct_a = item_a['percentage']
         pct_b = item_b['percentage']
+        missing_a = item_a.get('is_missing', False)
+        missing_b = item_b.get('is_missing', False)
 
-        score_diff = score_a - score_b
-        pct_diff = pct_a - pct_b
-
-        # 差分の色分け
-        if pct_diff > 0:
-            diff_display = f"🟢 +{pct_diff:.1f}%"
-        elif pct_diff < 0:
-            diff_display = f"🔴 {pct_diff:.1f}%"
+        if missing_a:
+            session_a_display = "N/A"
         else:
-            diff_display = f"⚪ ±0%"
+            session_a_display = f"{score_a:.1f}点 ({pct_a:.1f}%)"
+
+        if missing_b:
+            session_b_display = "N/A"
+        else:
+            session_b_display = f"{score_b:.1f}点 ({pct_b:.1f}%)"
+
+        if missing_a or missing_b:
+            diff_display = "⚪ N/A"
+            score_diff_display = "N/A"
+        else:
+            score_diff = score_a - score_b
+            pct_diff = pct_a - pct_b
+            if pct_diff > 0:
+                diff_display = f"🟢 +{pct_diff:.1f}%"
+            elif pct_diff < 0:
+                diff_display = f"🔴 {pct_diff:.1f}%"
+            else:
+                diff_display = "⚪ ±0%"
+            score_diff_display = f"{score_diff:+.1f}点"
 
         table_data.append({
             '種目名': test_name,
-            'セッションA': f"{score_a:.1f}点 ({pct_a:.1f}%)",
-            'セッションB': f"{score_b:.1f}点 ({pct_b:.1f}%)",
+            'セッションA': session_a_display,
+            'セッションB': session_b_display,
             '差分': diff_display,
-            '実得点差': f"{score_diff:+.1f}点"
+            '実得点差': score_diff_display
         })
 
     # Streamlit dataframe表示
