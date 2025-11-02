@@ -2874,3 +2874,234 @@
   - 依存ADR: ADR-028（thresholds.json versions導入）、ADR-030（構造検証）
   - 新規ファイル: `src/config/loader.py`, `src/config/compat.py`, `src/config/__init__.py`, `tests/test_config_compat.py`, `examples/check-compat.py`, `docs/compatibility-README.md`
   - テスト: pytest 6ケース全成功、CLI動作確認（OK/WARN/ERROR/strict/permissive）
+
+---
+
+## ADR-032: 構造化ログ規約の固定（統一キースキーマ・基盤実装）
+
+- 日付: 2025-11-03
+- ステータス: Accepted
+- 決定者: Claude Code + Human
+- 影響範囲: CLI（rep-cli）、Lambda、観測性基盤
+- 関連ADR: ADR-028（thresholds.json versions）、ADR-029（Rep CLI MVP）
+
+### コンテキスト
+
+THF Motion Scanシステムでは、CLI（rep-cli）とサーバ側（Lambda等）で異なるログ形式が混在していました：
+- **CLI側**: `print()` ベースの非構造化ログ（人間可読だが機械解析困難）
+- **Lambda側**: `processing/logger.py` による構造化ログ（CloudWatch統合済み）
+
+この不統一により、以下の問題が発生：
+1. **観測性の欠如**: CLI実行時のエラー原因特定が困難
+2. **トレーサビリティの欠如**: バージョン追跡（rules_version, normalization_version）が不可能
+3. **自動化の制約**: ログ集約・分析ツールとの統合が困難（JSON形式でない）
+4. **パフォーマンス分析の困難**: duration_ms等のメトリクスが標準化されていない
+
+また、ADR-028でthresholds.json versionsフィールドを導入したものの、ログに記録する標準がなく、バージョン追跡の価値が限定的でした。
+
+### 決定
+
+**基盤のみ実装**（CLI/Lambda移行は別タスク化）の戦略で、以下を実装：
+
+1. **統一キースキーマの確立**:
+   - **必須フィールド9項目**: timestamp, level, message, request_id, session_id, test_code, rules_version, normalization_version, artifact_sha
+   - **任意フィールド8項目**: component, duration_ms, receive_ts, error_code, error_message, trace_id, span_id, metadata
+
+2. **utils/logger.py実装**:
+   - `make_logger()` ファクトリー関数
+   - `Logger` class（info/warn/error/debug メソッド）
+   - 必須キー検証（出力前チェック、欠落時はValueError）
+   - ISO8601Z timestamp自動生成
+   - UUID v4自動生成（request_id, session_idが未指定の場合）
+   - JSON 1行出力（stdout + ファイル）
+   - levelフィルタ（DEBUG=10 < INFO=20 < WARN=30 < ERROR=40）
+
+3. **ドキュメント整備**:
+   - README.md に Logging Standards章追加（119行）
+   - 必須/任意フィールド定義表
+   - セキュリティ・品質ポリシー
+   - 成功/失敗ログサンプル（JSON形式）
+
+4. **テストフィクスチャ**:
+   - `tests/fixtures/logs/success.json` - 成功時ログサンプル
+   - `tests/fixtures/logs/error.json` - エラー時ログサンプル
+
+5. **CI拡張**:
+   - `.github/workflows/validate.yml` を4段階検証に拡張（lint/unit-tests/schema/fixtures）
+
+### 根拠
+
+**なぜ基盤のみ実装か**:
+1. **破壊的変更の回避**: CLI print() → logger への置換はstdout出力がJSON形式になり、既存のテスト（tests/test_rep_cli.py）やユーザースクリプトが影響を受ける
+2. **段階的移行**: 基盤だけで価値があり、後から計画的に移行可能
+3. **既存Lambda側との共存**: processing/logger.py を壊さず、共存可能な設計
+
+**なぜこのキースキーマか**:
+1. **CloudWatch/OpenTelemetry互換**: 主要な観測性ツールとの統合を考慮
+2. **PII除外**: 個人情報（動画ファイル名、ユーザーID等）をハッシュ化またはセッションID代替
+3. **バージョン追跡**: ADR-028で導入したthresholds.json versionsを活用
+4. **必須キー検証**: 開発時にログ出力前に欠落を検知（ValueError）、本番環境でのログ不整合を防止
+
+### 代替案と却下理由
+
+#### 代替案1: CLI/Lambda全面移行を同時実施
+- **却下理由**:
+  - 破壊的変更リスクが高い（既存CLIの動作が変わる）
+  - テスト修正の影響範囲が大きい
+  - ロールバックが困難
+
+#### 代替案2: Lambda側のみ統一、CLI側は放置
+- **却下理由**:
+  - CLI側のデバッグが困難なまま
+  - バージョン追跡がCLI実行時に機能しない
+  - 将来的な統一コストが増大
+
+#### 代替案3: 既存のprocessing/logger.pyを拡張
+- **却下理由**:
+  - CloudWatch依存が強く、CLI単独実行に不向き
+  - 必須キー検証がない（実行時エラーが発生しやすい）
+  - ファイル出力機能がない
+
+### 影響
+
+#### メリット
+1. **観測性向上**: JSON形式により機械解析可能、ログ集約ツールとの統合容易
+2. **トレーサビリティ**: request_id, session_idによる追跡、rules_versionによるバージョン管理
+3. **段階的移行**: 基盤が確立され、CLI/Lambda側の移行を計画的に実施可能
+4. **開発時の品質向上**: 必須キー検証により、ログ不整合を早期検知
+5. **後方互換性維持**: 既存CLIの動作は変わらない（print()そのまま）
+
+#### デメリット/トレードオフ
+1. **即座の効果は限定的**: 基盤のみでは、既存CLI/Lambdaのログは改善されない
+2. **移行タスクが残る**: 次フェーズで「CLI/Lambda構造化ログ移行」が必要
+3. **二重管理**: 既存のprocessing/logger.pyと新しいutils/logger.pyが共存（一時的）
+
+#### 影響を受けるコンポーネント
+- **追加**: utils/logger.py（新規）
+- **拡張**: README.md（Logging Standards章）
+- **拡張**: .github/workflows/validate.yml（CI段階的検証）
+- **追加**: tests/fixtures/logs/（テストフィクスチャ）
+- **影響なし**: cli/rep_cli.py, cli/evaluate.py（次フェーズで移行）
+- **影響なし**: lambda/handler.py, processing/logger.py（次フェーズで統合検討）
+
+### 実装詳細
+
+#### utils/logger.py（358行）
+
+**主要API**:
+```python
+from utils.logger import make_logger
+
+logger = make_logger(
+    component="cli",
+    default_context={
+        "test_code": "push_pull",
+        "rules_version": "1.0.0",
+        "normalization_version": "1.2.1",
+        "artifact_sha": "a3f5c8d1",
+    },
+    log_level="INFO",
+    log_file="output/log.jsonl",
+)
+
+logger.info("Evaluation started", duration_ms=1234)
+logger.error("Evaluation failed", error_code="MEDIAPIPE_FAILED", error_message="Low visibility")
+```
+
+**出力例**:
+```json
+{
+  "timestamp": "2025-11-03T12:34:56.789Z",
+  "level": "INFO",
+  "message": "Evaluation started",
+  "component": "cli",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "duration_ms": 1234
+}
+```
+
+#### 必須キー検証ロジック
+
+```python
+REQUIRED_KEYS = {
+    "timestamp", "level", "message",
+    "request_id", "session_id", "test_code",
+    "rules_version", "normalization_version", "artifact_sha",
+}
+
+def _validate_entry(self, entry: Dict[str, Any]) -> None:
+    missing_keys = self.REQUIRED_KEYS - set(entry.keys())
+    if missing_keys:
+        raise ValueError(
+            f"Missing required log keys: {sorted(missing_keys)}. "
+            f"Entry: {json.dumps(entry, ensure_ascii=False, default=str)}"
+        )
+```
+
+#### セキュリティポリシー
+
+- **PII除外**: 個人情報（Face/Name/Path等）を含めない
+- **動画ファイル名ハッシュ化**: artifact_sha使用（SHA256先頭8文字）
+- **ユーザーID除外**: session_idで代替
+
+### 検証
+
+#### 動作確認
+- ✅ JSON 1行出力（全必須キー含む）
+- ✅ UUID自動生成（request_id, session_id）
+- ✅ 必須キー欠落時のValueError
+- ✅ levelフィルタ（DEBUG < INFO < WARN < ERROR）
+- ✅ ファイル出力（追記モード）
+
+#### テストフィクスチャ
+- ✅ `tests/fixtures/logs/success.json` - 成功時ログサンプル（INFO level、duration_ms含む）
+- ✅ `tests/fixtures/logs/error.json` - エラー時ログサンプル（ERROR level、error_code/error_message含む）
+
+#### CI拡張
+- ✅ lint（Ruff + Black、Python 3.10/3.11）
+- ✅ unit-tests（pytest、Python 3.10/3.11）
+- ✅ schema（thresholds.json検証）
+- ✅ fixtures（valid/invalid フィクスチャ検証）
+
+### 今後の展開
+
+#### 次フェーズ（別タスク化）: CLI/Lambda構造化ログ移行
+
+**Stage 3: 既存ログ呼び出し置換（CLI）**:
+- `cli/rep_cli.py` の `print()` → `logger.info()` / `logger.error()`
+- `cli/evaluate.py` の `print()` → `logger.info()` / `logger.error()`
+- エラーメッセージを構造化ログに変換
+- versions情報をdefault_contextから取得
+
+**Stage 4: CLIオプション追加**:
+- `--log-file <path>` - ログファイル出力先
+- `--log-level <DEBUG|INFO|WARN|ERROR>` - ログレベル
+
+**Stage 5: Lambda統合**:
+- Lambda handler.py の既存ロガー統合検討
+- processing/logger.py との共存または置換
+- 環境変数 `LOG_LEVEL` で制御
+
+**Stage 6: テスト修正**:
+- `tests/test_rep_cli.py` のstdout検証修正（JSON形式対応）
+- ログ出力の検証ヘルパー追加
+
+### 参照
+
+- **依存ADR**: ADR-028（thresholds.json versions導入）、ADR-029（Rep CLI MVP）
+- **新規ファイル**:
+  - `utils/__init__.py`
+  - `utils/logger.py`（358行）
+  - `tests/fixtures/logs/success.json`
+  - `tests/fixtures/logs/error.json`
+- **拡張ファイル**:
+  - `README.md`（Logging Standards章、119行追加）
+  - `.github/workflows/validate.yml`（4段階検証に拡張）
+  - `requirements-dev.txt`（black, ruff追加）
+- **コミット**: `488bcda`
+- **テスト**: Logger動作確認（JSON出力、UUID生成、必須キー検証）完了
