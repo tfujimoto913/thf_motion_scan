@@ -737,6 +737,41 @@ Dashboardは `config/required_versions.json` を読み込み、現在のthreshol
 
 ---
 
+## 🎯 Validation State Badge（セッション詳細画面）
+
+### 概要
+セッション詳細画面で、validation.state（OK/WARN/ERROR）を色分けバッジで表示します。
+
+### 表示仕様
+- **✅ OK（緑）**: すべての評価が基準を満たしています
+- **⚠️ WARN（黄）**: 一部の評価が警告範囲です（続行可能）
+- **❌ ERROR（赤）**: 評価基準を満たしていません
+
+### ツールチップ
+- **詳細理由を表示**: エクスパンダーでvalidation.violations/reasonsを展開表示
+- **versions情報**: rules_version, thresholds_version, artifact_sha（短縮表示）
+
+### フォールバック
+- session_result.json未取得時: "Validation情報なし"と表示（クラッシュしない）
+- state不正値: "UNKNOWN（グレー）"と表示
+
+### テストフィクスチャ
+```bash
+# デモモードで3状態を確認可能
+tests/fixtures/session_result/valid3.json    # OK状態
+tests/fixtures/session_result/warn1.json     # WARN状態
+tests/fixtures/session_result/invalid5.json  # ERROR状態
+```
+
+### 実装ファイル
+- `dashboard/validation_badge.py`: バッジコンポーネント
+- `dashboard/session_pages.py`: セッション詳細画面統合（318-330行）
+- `tests/fixtures/session_result/`: テストフィクスチャ（OK/WARN/ERROR）
+
+詳細は `dashboard/validation_badge.py` のコメントを参照してください。
+
+---
+
 ## 📊 プロジェクト統計
 
 ### 実装規模（Phase 2完了時点）

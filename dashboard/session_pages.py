@@ -10,14 +10,22 @@ CRITICAL:
   - 総合スコア = 7種目×80点 = 560点満点
   - is_complete=False の場合は「撮影途中」表示
 """
+import json
+from pathlib import Path
+
 import streamlit as st
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import plotly.graph_objects as go
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from session_dao import get_latest_sessions, get_session_by_id, get_previous_sessions
 from data_loader import load_results_items
 from utils import record_error, emit_ui_metric, convert_decimals
 from config import TEST_TYPES, TEST_TYPE_DISPLAY, TEST_SHORT_MAP
+from i18n import t
+from session_result_loader import DEMO_FIXTURES, SessionResultLoadResult, load_session_result
+from validation_badge import render_validation_badge
 
 
 def session_list_page(dynamodb, resources, demo_mode=False):
@@ -258,6 +266,13 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         st.session_state.pop('selected_session', None)
         st.rerun()
 
+    default_fixture = 'invalid5' if session.get('has_version_mismatch') else 'valid3'
+    fixture_name = None
+    if demo_mode:
+        fixture_name = _select_demo_session_result_fixture(default_fixture)
+        if not fixture_name:
+            fixture_name = default_fixture
+
     st.markdown("---")
 
     # 総合スコア表示
@@ -288,6 +303,34 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         else:
             st.metric("完了状況", f"📝 {tests_count}/{total_tests}種目")
 
+    session_result_payload = load_session_result(
+        athlete_id=athlete_id,
+        session_id=session_id,
+        resources=resources,
+        demo_mode=demo_mode,
+        fixture_name=fixture_name if demo_mode else None,
+    )
+    _store_session_result_state(athlete_id, session_id, session_result_payload)
+    pdf_column = _render_session_result_summary(session_result_payload)
+    if pdf_column and session_result_payload.available:
+        _render_pdf_generation(pdf_column, session, session_result_payload.data or {})
+
+    # ========== Validation State バッジ表示 ==========
+    st.markdown("---")
+    st.subheader("✅ Validation State")
+
+    if session_result_payload.available and session_result_payload.data:
+        validation = session_result_payload.data.get("validation")
+        versions = session_result_payload.data.get("versions")
+        render_validation_badge(validation, versions, show_legend=True)
+    else:
+        st.caption("ℹ️ session_result.json が利用できないため、Validation情報は表示できません。")
+        if session_result_payload.error:
+            st.caption(f"エラー: {session_result_payload.error}")
+
+    st.markdown("---")
+
+    # ========== Versions情報表示 ==========
     version_summary = _extract_session_versions(session)
     normalization_version = version_summary.get('normalization_version')
     artifact_sha = version_summary.get('artifact_sha')
@@ -519,6 +562,354 @@ def _extract_test_scores(session: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
 
     return result
+
+
+def _select_demo_session_result_fixture(default_fixture: str) -> Optional[str]:
+    """Render selectbox to choose demo session_result fixture."""
+    if not DEMO_FIXTURES:
+        return default_fixture
+
+    options = list(DEMO_FIXTURES.keys())
+    default_index = options.index(default_fixture) if default_fixture in options else 0
+    label_map = {
+        "valid3": f"valid3 – {t('status_ok')}",
+        "invalid5": f"invalid5 – {t('status_warn')}/{t('status_error')}",
+    }
+
+    return st.selectbox(
+        "Session result fixture (demo)",
+        options,
+        index=default_index,
+        format_func=lambda key: label_map.get(key, key),
+        key="session_result_fixture",
+        help="デモ専用: session_result.json のシナリオを切り替えます"
+    )
+
+
+def _store_session_result_state(
+    athlete_id: str,
+    session_id: str,
+    payload: SessionResultLoadResult,
+) -> None:
+    """Persist current session_result payload in session_state for downstream actions."""
+    st.session_state['session_result_context'] = {
+        'athlete_id': athlete_id,
+        'session_id': session_id,
+        'data': payload.data,
+        'versions': (payload.data or {}).get('versions', {}),
+        'source': payload.source,
+        'error': payload.error,
+    }
+
+
+def _render_session_result_summary(
+    payload: SessionResultLoadResult,
+) -> Optional[Any]:
+    """
+    Render QC pass count and validation state summary.
+
+    Returns:
+        Optional column container reserved for PDF actions.
+    """
+    container = st.container()
+
+    with container:
+        if not payload.available:
+            if payload.error == "not_found":
+                st.info("session_result.json がまだ生成されていません。処理が完了すると表示されます。")
+            elif payload.error == "missing_resources":
+                st.warning("session_result の取得には results バケットへのアクセスが必要です。")
+            elif payload.error:
+                st.error(f"session_result の読み込みに失敗しました: {payload.error}")
+            else:
+                st.info("session_result 情報は現在利用できません。")
+            return None
+
+        data = payload.data or {}
+        qc_pass = data.get('qc_pass_count')
+        total_reps = data.get('total_reps')
+        validation = data.get('validation') or {}
+        validation_state = validation.get('state')
+        violations = validation.get('violations') or []
+
+        col_valid, col_validation, col_pdf = st.columns([1.1, 1.0, 1.2])
+
+        with col_valid:
+            if isinstance(qc_pass, int) and isinstance(total_reps, int):
+                st.metric(t('valid_reps'), f"{qc_pass}/{total_reps}", help=t('valid_reps_hint'))
+            else:
+                st.metric(t('valid_reps'), "N/A", help=t('valid_reps_hint'))
+
+        with col_validation:
+            st.markdown(f"**{t('validation_state')}**")
+            _render_validation_badge(validation_state, violations)
+
+        versions = data.get('versions') or {}
+        if versions:
+            rules_v = versions.get('rules_version', '-')
+            thresholds_v = versions.get('thresholds_version', '-')
+            artifact_sha = versions.get('artifact_sha', '-')
+            st.caption(
+                f"{t('pdf_versions_caption')}: "
+                f"rules {rules_v} / thresholds {thresholds_v} / artifact {artifact_sha}"
+            )
+
+        if payload.source and payload.source.startswith(("fixture", "local")):
+            st.caption(f"session_result source: {payload.source}")
+
+    return col_pdf
+
+
+def _render_validation_badge(state: Optional[str], violations: List[Dict[str, Any]]) -> None:
+    """Display validation state with color-coded badge and optional violation details."""
+    normalized = (state or "UNKNOWN").upper()
+    config = {
+        "OK": ("#218838", "✅", t('status_ok')),
+        "WARN": ("#FFC107", "⚠️", t('status_warn')),
+        "ERROR": ("#DC3545", "⛔️", t('status_error')),
+    }
+    color, icon, label = config.get(normalized, ("#6C757D", "ℹ️", normalized))
+
+    st.markdown(
+        f"""
+        <div style="
+            display: inline-flex;
+            align-items: center;
+            padding: 0.35rem 0.85rem;
+            border-radius: 999px;
+            background-color: {color};
+            color: white;
+            font-weight: 600;
+            font-size: 0.95rem;
+        ">
+            <span style="margin-right: 0.4rem;">{icon}</span>{label}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if normalized != "OK":
+        summaries = [
+            summary for summary in (_format_violation_summary(v) for v in violations)
+            if summary
+        ]
+        if summaries:
+            st.caption(summaries[0])
+            if len(summaries) > 1:
+                with st.expander(t('compat_details')):
+                    for summary in summaries[1:]:
+                        st.markdown(f"- {summary}")
+
+
+def _format_violation_summary(violation: Dict[str, Any]) -> Optional[str]:
+    """Format validation violation dict into a concise summary string."""
+    if not isinstance(violation, dict):
+        return None
+
+    parts: List[str] = []
+    for key in ("severity", "category", "field", "status"):
+        value = violation.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+
+    message = violation.get("message") or violation.get("reason")
+    if isinstance(message, str) and message:
+        parts.append(message)
+    else:
+        expected = violation.get("expected")
+        current = violation.get("current")
+        if expected and current:
+            parts.append(f"{current} → {expected}")
+
+    details = violation.get("details")
+    if isinstance(details, str) and details:
+        parts.append(details)
+
+    return " / ".join(parts) if parts else None
+
+
+def _render_pdf_generation(
+    column: Any,
+    session: Dict[str, Any],
+    session_result: Dict[str, Any],
+) -> None:
+    """Render manual PDF generation controls."""
+    context_key = f"{session.get('athlete_id', 'unknown')}::{session.get('session_id', 'unknown')}"
+    confirm_key = f"pdf_confirm::{context_key}"
+    result_key = f"pdf_result::{context_key}"
+
+    with column:
+        st.markdown(f"**{t('pdf_generate')}**")
+
+        result_state = st.session_state.get(result_key)
+        if result_state:
+            pdf_path = Path(result_state['path'])
+            pdf_bytes = result_state.get('bytes')
+            if pdf_bytes is None and pdf_path.exists():
+                pdf_bytes = pdf_path.read_bytes()
+                result_state['bytes'] = pdf_bytes
+
+            st.success(t('pdf_generated'))
+            if pdf_bytes:
+                st.download_button(
+                    t('pdf_download'),
+                    data=pdf_bytes,
+                    file_name=pdf_path.name,
+                    mime="application/pdf",
+                    key=f"pdf_download::{context_key}",
+                    use_container_width=True,
+                )
+
+            versions_meta = result_state.get('versions') or session_result.get('versions') or {}
+            if versions_meta:
+                st.caption(
+                    f"{t('pdf_versions_caption')}: "
+                    f"rules {versions_meta.get('rules_version', '-')}, "
+                    f"thresholds {versions_meta.get('thresholds_version', '-')}, "
+                    f"artifact {versions_meta.get('artifact_sha', '-')}"
+                )
+            return
+
+        if st.session_state.get(confirm_key):
+            st.warning(t('pdf_confirm_message'))
+            confirm_col, cancel_col = st.columns(2)
+
+            with confirm_col:
+                if st.button(t('pdf_confirm_yes'), key=f"pdf_yes::{context_key}", use_container_width=True):
+                    try:
+                        pdf_path, pdf_bytes = _generate_session_pdf(session, session_result)
+                        st.session_state[result_key] = {
+                            'path': str(pdf_path),
+                            'bytes': pdf_bytes,
+                            'versions': session_result.get('versions', {}),
+                            'generated_at': datetime.now(timezone.utc).isoformat(),
+                        }
+                        st.session_state.pop(confirm_key, None)
+                        emit_ui_metric(
+                            "pdf_generated",
+                            environment=st.session_state.get('selected_env'),
+                            session_id=session.get('session_id'),
+                        )
+                        st.experimental_rerun()
+                    except Exception as exc:
+                        st.session_state.pop(confirm_key, None)
+                        record_error("pdf_generation", str(exc))
+                        st.error(f"{t('pdf_generation_failed')}: {exc}")
+
+            with cancel_col:
+                if st.button(t('pdf_confirm_no'), key=f"pdf_no::{context_key}", use_container_width=True):
+                    st.session_state.pop(confirm_key, None)
+        else:
+            if st.button(t('pdf_generate'), key=f"pdf_trigger::{context_key}", type="primary", use_container_width=True):
+                st.session_state[confirm_key] = True
+
+
+def _generate_session_pdf(
+    session: Dict[str, Any],
+    session_result: Dict[str, Any],
+) -> tuple[Path, bytes]:
+    """Generate a lightweight PDF summary for the current session."""
+    output_dir = Path("outputs") / "dashboard" / "reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    athlete_slug = _slugify_for_filename(session.get('athlete_id', 'athlete'))
+    session_slug = _slugify_for_filename(session.get('session_id', 'session'))
+    pdf_path = output_dir / f"{athlete_slug}_{session_slug}_{timestamp}.pdf"
+
+    c = canvas.Canvas(str(pdf_path), pagesize=A4)
+    page_width, page_height = A4
+    margin = 48
+    cursor_y = page_height - margin
+
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(margin, cursor_y, "THF Motion Scan Session Report")
+    cursor_y -= 32
+
+    c.setFont("Helvetica", 11)
+    c.drawString(margin, cursor_y, f"Athlete: {session.get('athlete_id', '-')}")
+    cursor_y -= 16
+    c.drawString(margin, cursor_y, f"Session: {session.get('session_id', '-')}")
+    cursor_y -= 16
+
+    processed_at = session.get('processed_at') or session_result.get('processed_at') or "-"
+    c.drawString(margin, cursor_y, f"Processed at: {processed_at}")
+    cursor_y -= 16
+
+    qc_pass = session_result.get('qc_pass_count', 'N/A')
+    total_reps = session_result.get('total_reps', 'N/A')
+    c.drawString(margin, cursor_y, f"QC pass count: {qc_pass}/{total_reps}")
+    cursor_y -= 16
+
+    validation_state = session_result.get('validation', {}).get('state', 'UNKNOWN')
+    c.drawString(margin, cursor_y, f"Validation state: {validation_state}")
+    cursor_y -= 24
+
+    aggregates = session_result.get('aggregates') or {}
+    if aggregates:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, cursor_y, "Aggregates")
+        cursor_y -= 18
+        c.setFont("Helvetica", 10)
+        aggregates_text = json.dumps(aggregates, ensure_ascii=False, indent=2)
+        cursor_y = _draw_multiline_text(c, aggregates_text, margin, cursor_y, page_height, margin)
+        cursor_y -= 18
+
+    versions = session_result.get('versions') or {}
+    if versions:
+        if cursor_y < margin + 72:
+            c.showPage()
+            cursor_y = page_height - margin
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, cursor_y, "Versions")
+        cursor_y -= 18
+        c.setFont("Helvetica", 10)
+        for key in ("rules_version", "thresholds_version", "artifact_sha"):
+            value = versions.get(key, '-')
+            c.drawString(margin, cursor_y, f"{key}: {value}")
+            cursor_y -= 14
+            if cursor_y < margin:
+                c.showPage()
+                cursor_y = page_height - margin
+                c.setFont("Helvetica", 10)
+
+    c.save()
+    pdf_bytes = pdf_path.read_bytes()
+    return pdf_path, pdf_bytes
+
+
+def _draw_multiline_text(
+    canvas_obj: canvas.Canvas,
+    text: str,
+    x: float,
+    y: float,
+    page_height: float,
+    margin: float,
+    font: str = "Helvetica",
+    size: int = 10,
+) -> float:
+    """Render multi-line text with automatic page breaks."""
+    text_obj = canvas_obj.beginText(x, y)
+    text_obj.setFont(font, size)
+
+    for line in text.splitlines():
+        if text_obj.getY() < margin:
+            canvas_obj.drawText(text_obj)
+            canvas_obj.showPage()
+            text_obj = canvas_obj.beginText(x, page_height - margin)
+            text_obj.setFont(font, size)
+        text_obj.textLine(line)
+
+    canvas_obj.drawText(text_obj)
+    return text_obj.getY()
+
+
+def _slugify_for_filename(value: Any) -> str:
+    """Convert arbitrary text into a filesystem-safe slug."""
+    text = str(value or "value")
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in text)
+    safe = safe.strip("-") or "value"
+    return safe[:64]
 
 
 def _extract_session_versions(session: Dict[str, Any]) -> Dict[str, Optional[str]]:

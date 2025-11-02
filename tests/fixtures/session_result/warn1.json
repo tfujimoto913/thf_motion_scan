@@ -1,0 +1,31 @@
+{
+  "session_id": "demo-warn1",
+  "athlete_id": "demo-athlete",
+  "qc_pass_count": 4,
+  "total_reps": 5,
+  "aggregates": {
+    "best_score": 68.5,
+    "average_score": 65.2,
+    "rep_states": ["PASS", "PASS", "WARN", "PASS", "WARN"]
+  },
+  "versions": {
+    "rules_version": "2.2.0",
+    "thresholds_version": "1.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "local-dev"
+  },
+  "validation": {
+    "state": "WARN",
+    "violations": [
+      {
+        "severity": "WARN",
+        "category": "compatibility",
+        "field": "rules_version",
+        "status": "WARN",
+        "current": "2.2.0",
+        "expected": "2.1.0",
+        "message": "MINOR version difference detected (backward compatible)."
+      }
+    ]
+  }
+}
