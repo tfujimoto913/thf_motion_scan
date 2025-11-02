@@ -117,3 +117,100 @@
 - [ ] CloudWatch 上で `UIEvent` メトリクスが期待通り Dimension（Environment/TestCode/SessionId）付きで記録されるか確認し、運用ダッシュボードを検討。
 - [ ] normalization_version / artifact_sha を Lambda 生成物で必ず埋め込むようワークフローを整備（未設定時は UI 上 “mixed/‐” 表示）。
 - [ ] 欠測が多発するセッションの割合を算出し、さらに視覚化（例: 欠測ヒートマップ）するアイデアを検討。
+
+# Task 6 – Thresholds Validation Tooling (jsonschema / pre-commit / CI)
+
+## Context
+- thresholds.json 検証フローを再設計し、ローカル・CI ともに同一スクリプトで検証できるよう統合。
+- 旧 `scripts/validate-thresholds.py` / `.github/workflows/validate-thresholds.yml` の役割を置き換え済み。
+- pre-commit によりローカル開発者にもバリデーション実行を強制できる状態。
+
+## Task
+- `scripts/validate.py` を新設して JSON Schema + カスタム検証（test_code重複、band整合など）を単一入口に集約。
+- `requirements-dev.txt` / `.pre-commit-config.yaml` を整備し、`config/thresholds.json` 変更時に自動チェック。
+- `.github/workflows/validate.yml` を追加し、正常フィクスチャ（3件）の pass と異常フィクスチャ（10件）の fail を CI で保証。
+- README に手動検証・pre-commit 利用方法・失敗時の対処を追記。
+- 旧スクリプトとワークフローを削除し、運用ドキュメント（本ファイル・ADR-030）を更新。
+
+## Notes
+### Diff Summary
+- `scripts/validate.py`: Draft7Validator + カスタムチェック（コード重複、キー整合、range_inc範囲）を実装。複数ファイル/ディレクトリ検証に対応。
+- `tests/fixtures/thresholds/valid/*`: 3件の正常データ（最小構成、複数テスト、hysteresis）を追加。
+- `tests/fixtures/thresholds/invalid/*`: 10件の異常ケース（op/value不一致、band重複、schema_version書式不正等）を追加。
+- `.pre-commit-config.yaml`: `config/thresholds.json` 変更時に `python scripts/validate.py --quiet` を自動実行。
+- `.github/workflows/validate.yml`: dev依存インストール → 本番ファイル検証 → 正常ケース pass → 異常ケース fail を CI で検証。
+- `requirements-dev.txt`: jsonschema / pre-commit を追加。開発・CI で `pip install -r requirements-dev.txt` を前提化。
+- `README.md`: 手動検証コマンド、フィクスチャ確認、フック無効化方法、失敗時対処を記載。
+- `docs/adr/decision_log.md`: ADR-030 として本変更を記録。旧 `.github/workflows/validate-thresholds.yml` / `scripts/validate-thresholds.py` は削除。
+
+## Next Actions
+- [ ] `schema/thresholds.schema.json` のバージョン別エイリアス（例: `thresholds.schema.v1.json`）を検討。
+- [ ] `scripts/diff-thresholds.py` と組み合わせた PR コメント自動生成を検討（重大度レポートの自動化）。
+- [ ] Data Science チーム向けに複数ファイルバッチ検証＋レポート生成ツール（CLI/GUI）を検討。
+
+# Task 7 – Thresholds.json Version Compatibility Checker (SemVer準拠)
+
+## Context
+- thresholds.json のバージョン互換性を自動判定する機能を実装。
+- 対象ブランチ: `feature/phase5-complete` / SemVer準拠のロジック。
+- 検証: `python3 -m pytest tests/test_config_compat.py -v` で6ケース全成功、CLI動作確認済み。
+
+## Task
+- SemVer準拠の互換性チェッカーを実装し、MAJOR差異はエラー、MINOR差異は警告、PATCH差異は許容。
+- Python APIとCLIツールの両方を提供し、環境変数でポリシー上書き可能（`COMPAT_POLICY=strict|permissive`）。
+- 構造化ログ出力と詳細なエラーメッセージにより、デプロイ安全性を向上。
+
+## Notes
+### Diff Summary
+- `src/config/loader.py`: thresholds.json読み込み、versions抽出ロジックを実装。
+- `src/config/compat.py`: SemVerパース、バージョン比較、複数フィールド横断チェック、"none"特別扱いを実装。
+- `tests/test_config_compat.py`: 6ケースのテスト（同一/MAJOR差/MINOR差/PATCH差/欠損/複数フィールド）を作成。全てRed→Green→Refactorフローで実装。
+- `examples/check-compat.py`: CLIツール作成。基本使用、カスタムバージョン指定、環境変数ポリシー上書き対応。
+- `docs/compatibility-README.md`: 互換性ポリシー、使用方法、返却形式、トラブルシューティング、CI統合例を文書化。
+- `docs/adr/decision_log.md`: ADR-031 として設計判断、互換性ルール、影響範囲、今後の展開を記録。
+
+### 互換性ルール
+| 差異レベル | 判定 | 説明 | Exit Code |
+|-----------|------|------|-----------|
+| PATCH | ✅ OK | バグ修正レベル、完全互換 | 0 |
+| MINOR | ⚠️ WARN | 機能追加レベル、後方互換あり | 0 (default) / 1 (strict) |
+| MAJOR | ❌ ERROR | 破壊的変更、互換性なし | 1 |
+| 欠損 | ❌ ERROR | 必須フィールド不足 | 1 |
+| "none" | ✅ OK | バージョン管理対象外 | 0 |
+
+### CLI使用例
+```bash
+# 基本使用
+python3 examples/check-compat.py
+
+# カスタム要求バージョン
+python3 examples/check-compat.py --required-rules-version v2.1.0
+
+# Strictモード（WARNもERROR扱い）
+COMPAT_POLICY=strict python3 examples/check-compat.py
+
+# Permissiveモード（ERRORのみブロック）
+COMPAT_POLICY=permissive python3 examples/check-compat.py
+```
+
+### Python API使用例
+```python
+from src.config.loader import load_thresholds, get_versions
+from src.config.compat import check_compat
+
+current_data = load_thresholds("config/thresholds.json")
+current_versions = get_versions(current_data)
+
+required_versions = {"rules_version": "v2.0.0"}
+result = check_compat(current_versions, required_versions)
+
+if result["status"] == "ERROR":
+    sys.exit(1)
+```
+
+### Next Actions
+- [ ] Lambda handler に互換性チェックを統合し、起動時に thresholds.json バージョンを検証。
+- [ ] CloudWatch メトリクスに `compat_check_status{status=OK|WARN|ERROR}` を送信し、分布を可視化。
+- [ ] CI に GitHub Actions job を追加し、PR時に互換性チェックを必須化。
+- [ ] `artifact_sha` の完全一致チェックを追加し、デプロイ整合性を強化。
+- [ ] 自動マイグレーション提案機能（MAJOR差異検出時の移行手順出力）を検討。
