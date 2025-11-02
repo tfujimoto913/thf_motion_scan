@@ -358,13 +358,18 @@ class VideoValidator:
     def _check_push_pull(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
         What: プッシュプル動作の特徴チェック
-        Why: 手首の前後動（z座標）または横動き（x座標）
-        Design Decision: 正面撮影（z変化）と横向き撮影（x変化）の両方に対応（ADR-026）
+        Why: 手首の前後動（z座標）または横動き（x座標）+ 肩の回転が小さい
+        Design Decision: アームスイングとの区別のため肩回転チェック追加（ADR-026）
 
-        CRITICAL: カメラ向きに依存せず検出できるよう、x/z両軸をチェック
+        CRITICAL:
+        - プッシュプル = 肩を固定して腕を伸ばす動き
+        - アームスイング = 肩が回転する動き
+        - 肩の前後動（z軸）はプッシュプルで発生するのでOK
+        - 肩の回転（xy平面での角度変化）が小さいことを確認
         """
         wrist_x_positions = []
         wrist_z_positions = []
+        shoulder_angles = []
 
         for lm in landmarks_list:
             if 'LEFT_WRIST' in lm and 'RIGHT_WRIST' in lm:
@@ -376,28 +381,46 @@ class VideoValidator:
                 avg_z = (lm['LEFT_WRIST']['z'] + lm['RIGHT_WRIST']['z']) / 2
                 wrist_z_positions.append(avg_z)
 
-        if len(wrist_z_positions) < 10:
-            return (True, "手首検出不可", {})
+            # 肩の回転角度（アームスイングとの区別）
+            if 'LEFT_SHOULDER' in lm and 'RIGHT_SHOULDER' in lm:
+                dx = lm['RIGHT_SHOULDER']['x'] - lm['LEFT_SHOULDER']['x']
+                dy = lm['RIGHT_SHOULDER']['y'] - lm['LEFT_SHOULDER']['y']
+                # xy平面での角度（z方向の前後動は影響しない）
+                angle = np.arctan2(dy, dx) * 180 / np.pi
+                shoulder_angles.append(angle)
 
-        x_range = max(wrist_x_positions) - min(wrist_x_positions)
-        z_range = max(wrist_z_positions) - min(wrist_z_positions)
+        if len(wrist_z_positions) < 10 or len(shoulder_angles) < 10:
+            return (True, "手首または肩の検出不可", {})
 
-        # プッシュプルの判定：x座標またはz座標で0.2以上の変化
-        # 正面撮影ならz_range、横向き撮影ならx_rangeが大きくなる
-        # 閾値0.2: 手首が画面幅/深度の20%以上動けば検出（実測値 x=0.23, z=0.26 をカバー）
-        is_push_pull = (x_range > 0.2) or (z_range > 0.2)
+        wrist_x_range = max(wrist_x_positions) - min(wrist_x_positions)
+        wrist_z_range = max(wrist_z_positions) - min(wrist_z_positions)
+        shoulder_rotation = max(shoulder_angles) - min(shoulder_angles)
+
+        # プッシュプルの判定:
+        # 1. 手首が動く（x または z方向で0.2以上）
+        # 2. 肩の回転が小さい（10度未満）
+        #    ※ 肩の前後動（z軸）は考慮しない（プッシュプルで正常）
+        wrist_moves = (wrist_x_range > 0.2) or (wrist_z_range > 0.2)
+        shoulder_stable = shoulder_rotation < 10  # アームスイングは15度以上
+
+        is_push_pull = wrist_moves and shoulder_stable
 
         details = {
-            'x_range': float(x_range),
-            'z_range': float(z_range),
-            'threshold': 0.2,
-            'detected_axis': 'x' if x_range > z_range else 'z'
+            'wrist_x_range': float(wrist_x_range),
+            'wrist_z_range': float(wrist_z_range),
+            'shoulder_rotation': float(shoulder_rotation),
+            'wrist_threshold': 0.2,
+            'shoulder_threshold': 10,
+            'detected_axis': 'x' if wrist_x_range > wrist_z_range else 'z'
         }
 
         if is_push_pull:
             return (True, "", details)
         else:
-            return (False, f"プッシュ・プル動作が検出されませんでした（x変化:{x_range:.2f}, z変化:{z_range:.2f}）", details)
+            if not wrist_moves:
+                return (False, f"手首の動きが不足（x変化:{wrist_x_range:.2f}, z変化:{wrist_z_range:.2f}）", details)
+            else:
+                return (False, f"肩の回転が大きすぎます（{shoulder_rotation:.1f}度）。アームスイングの可能性があります", details)
 
     def _check_cross_step(self, landmarks_list: List[dict]) -> Tuple[bool, str, dict]:
         """
