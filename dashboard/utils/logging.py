@@ -24,8 +24,9 @@ import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
+import boto3
 import streamlit as st
 
 from config import PERFORMANCE_LIMITS
@@ -68,6 +69,16 @@ def configure_structured_logging() -> logging.Logger:
     logger.addHandler(handler)
     logger.propagate = False
     return logger
+
+
+_metrics_client: Optional[boto3.client] = None
+
+
+def _get_metrics_client():
+    global _metrics_client
+    if _metrics_client is None:
+        _metrics_client = boto3.client("cloudwatch")
+    return _metrics_client
 
 
 def emit_structured_log(payload: Dict[str, Any], level: int = logging.INFO) -> None:
@@ -150,3 +161,74 @@ def record_error(context: str, error: str) -> None:
     error_log.append(entry)
     if len(error_log) > 20:
         del error_log[0]
+
+
+def emit_ui_metric(
+    event_type: str,
+    *,
+    value: float = 1.0,
+    test_code: Optional[str] = None,
+    session_id: Optional[str] = None,
+    environment: Optional[str] = None,
+    debounce_seconds: float = 1.0,
+) -> None:
+    """
+    Emit a CloudWatch custom metric for dashboard UI events.
+
+    Args:
+        event_type: Logical UI event (e.g., env_switch, cache_clear, compare_run)
+        value: Metric value (default 1.0)
+        test_code: Optional test identifier; defaults to '-' when omitted
+        session_id: Optional session identifier; defaults to '-' when omitted
+        environment: Deployment environment; falls back to sidebar selection
+        debounce_seconds: Minimum seconds between identical emissions
+    """
+
+    if not event_type:
+        return
+
+    env_value = environment or st.session_state.get('selected_env') or "unknown"
+    env_value_str = str(env_value)
+    test_value = str(test_code) if test_code else "-"
+    session_value = str(session_id) if session_id else "-"
+    state_key = "_ui_metric_last_emission"
+    emission_state: Dict[Tuple[str, str, str, str], float] = st.session_state.setdefault(state_key, {})
+    dedupe_key = (
+        event_type,
+        test_value,
+        session_value,
+        env_value_str,
+    )
+    now = time.time()
+    last_emission = emission_state.get(dedupe_key)
+    if last_emission is not None and now - last_emission < debounce_seconds:
+        return
+
+    dimensions = [
+        {"Name": "Environment", "Value": env_value_str},
+        {"Name": "EventType", "Value": event_type},
+        {"Name": "TestCode", "Value": test_value},
+        {"Name": "SessionId", "Value": session_value},
+    ]
+
+    try:
+        _get_metrics_client().put_metric_data(
+            Namespace="THF/MotionScan",
+            MetricData=[
+                {
+                    "MetricName": "UIEvent",
+                    "Timestamp": datetime.utcnow(),
+                    "Value": float(value),
+                    "Unit": "Count",
+                    "Dimensions": dimensions,
+                }
+            ],
+        )
+        emission_state[dedupe_key] = now
+    except Exception as exc:  # noqa: BLE001
+        log_dashboard_event(
+            "ui_metric_emit_failed",
+            level=logging.WARNING,
+            event_type=event_type,
+            error=str(exc),
+        )

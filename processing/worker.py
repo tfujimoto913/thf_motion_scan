@@ -11,9 +11,19 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
+from aws_xray_sdk.core import xray_recorder
 
 # PHASE 5: 構造化ロギング（JSON形式）
-from .logger import log_info, log_warning, log_error, log_processing_start, log_processing_complete, log_quality_check
+from .logger import (
+    log_info,
+    log_warning,
+    log_error,
+    log_processing_start,
+    log_processing_complete,
+    log_quality_check,
+    emit_metric,
+    set_processing_context,
+)
 
 from .pose_extractor import PoseExtractor
 from .normalizer import BodyNormalizer
@@ -156,6 +166,12 @@ class VideoProcessingWorker:
         if session_id is None:
             session_id = datetime.now().strftime('%Y%m%d-%H%M-X')
 
+        set_processing_context(
+            test_code=test_type,
+            athlete_id=athlete_id,
+            session_id=session_id,
+        )
+
         # PHASE CORE LOGIC: ワークフロー実行
         # 1. ランドマーク抽出
         log_processing_start(str(video_path), test_type)
@@ -188,12 +204,16 @@ class VideoProcessingWorker:
             total_frames=extraction_result['frame_count']
         )
 
+        detection_rate = float(quality_result['detection_rate'])
         log_quality_check(
-            detection_rate=quality_result['detection_rate'],
+            detection_rate=detection_rate,
             quality_score=quality_metrics['quality_score'],
             test_type=test_type,
             passed=is_quality_ok and not quality_metrics['recommend_retake']
         )
+        emit_metric("LandmarkDetectionRate", detection_rate * 100, unit="Percent")
+        if not (is_quality_ok and not quality_metrics['recommend_retake']):
+            emit_metric("LandmarkDetectionFailures", 1)
 
         # 3. 正規化（base_width計算）
         log_info("Landmark normalization in progress", test_type=test_type)
@@ -215,29 +235,34 @@ class VideoProcessingWorker:
         )
 
         # PHASE B: バージョン選択ロジック（ADR-022, ADR-023）
-        if self.scoring_version in ['v2', 'v2.1']:
-            # v2/v2.1: 8原則・560点満点評価システム
-            evaluator = self.evaluators_v2[test_type]
-            evaluation_result = evaluator.evaluate(
-                extraction_result['landmarks'],
-                base_width=base_width,
-                shoulder_width=representative_values.get('shoulder_width', 0.4),
-                leg_length=representative_values.get('leg_length', 0.9)
-            )
-            # CRITICAL: v2システムでは'total_score'を'score'にマッピング
-            score = evaluation_result.get('total_score', 0)
-            max_score = evaluation_result.get('max_possible', 80)
-        else:
-            # v1: 既存システム（7原則・12点満点）
-            evaluator = self.evaluators[test_type]
-            evaluation_result = evaluator.evaluate(
-                extraction_result['landmarks'],
-                base_width=base_width,
-                shoulder_width=representative_values.get('shoulder_width', 0.4),
-                leg_length=representative_values.get('leg_length', 1.0)
-            )
-            score = evaluation_result.get('total', 0)
-            max_score = 12
+        with xray_recorder.in_subsegment('score_calculation') as subsegment:
+            subsegment.put_annotation('scoringVersion', self.scoring_version)
+            subsegment.put_annotation('testCode', test_type)
+            if self.scoring_version in ['v2', 'v2.1']:
+                # v2/v2.1: 8原則・560点満点評価システム
+                evaluator = self.evaluators_v2[test_type]
+                evaluation_result = evaluator.evaluate(
+                    extraction_result['landmarks'],
+                    base_width=base_width,
+                    shoulder_width=representative_values.get('shoulder_width', 0.4),
+                    leg_length=representative_values.get('leg_length', 0.9)
+                )
+                # CRITICAL: v2システムでは'total_score'を'score'にマッピング
+                score = evaluation_result.get('total_score', 0)
+                max_score = evaluation_result.get('max_possible', 80)
+            else:
+                # v1: 既存システム（7原則・12点満点）
+                evaluator = self.evaluators[test_type]
+                evaluation_result = evaluator.evaluate(
+                    extraction_result['landmarks'],
+                    base_width=base_width,
+                    shoulder_width=representative_values.get('shoulder_width', 0.4),
+                    leg_length=representative_values.get('leg_length', 1.0)
+                )
+                score = evaluation_result.get('total', 0)
+                max_score = 12
+            subsegment.put_metadata('score', score, 'motion_scan')
+            subsegment.put_metadata('maxScore', max_score, 'motion_scan')
 
         log_processing_complete(
             test_type=test_type,

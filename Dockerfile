@@ -47,6 +47,7 @@ RUN mkdir -p /var/task/mediapipe/modules/pose_landmark && \
 # アプリケーションコードをコピー
 COPY config.json .
 COPY processing/ ./processing/
+COPY lambda/common/ ./common/
 COPY src/handler.py ./
 
 # Lambda関数ハンドラーを指定

@@ -4,6 +4,7 @@
 # AWS SDK
 boto3==1.34.0
 botocore==1.34.0
+aws-xray-sdk==2.14.0
 
 # JWT認証
 PyJWT==2.8.0

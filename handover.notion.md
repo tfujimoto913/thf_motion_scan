@@ -66,3 +66,54 @@
 - [ ] CloudWatch Logs/Metrics 連携を構成し、構造化ログをモニタリング基盤へ転送。
 - [ ] キャッシュヒット率・レスポンスタイムを可視化するダッシュボードを別途整備。
 - [ ] ヘルスチェックの対象にSQSやLambda実行状況を追加し、運用Runbookと紐付ける。
+
+# Task 4 – Ops Guardrails Phase 5 Completion
+
+## Context
+- Phase 5 Opsカード（Notion: 1701b3b9c24e4e9eaa225c5a7ee8a0fc）に基づき、CloudWatchダッシュボード/アラーム、SNSトピック、DLQ Runbook、構造化ログ＆カスタムメトリクスをIaC＋コード双方へ実装。
+- `sam validate` を通過（~/.aws-sam/metadata.json 書き込み権限警告ありだがテンプレートは有効）。
+- `python3 -m compileall` で `src`, `processing`, `lambda/*`, `scripts/redrive.py` を構文チェック済み。
+
+## Task
+- `template.yaml` にSNSトピック、INFO/WARN/ERROR/METRICS各LogGroup、4種アラーム、`MotionScan-Ops-<env>`ダッシュボードを追加し、環境/閾値/Retentionをパラメータ化。
+- StructuredLoggerを共通化（`lambda/common/structured_logging.py`）し、Processing/UploadUrl Lambdaから必須フィールドを含むJSONログとカスタムメトリクス（VideoAnalysisDuration, LandmarkDetectionRate, PresignedUrlGenerationDuration 等）を送出。X-Rayサブセグメント（video_processing, score_calculation）を追加。
+- DLQ再投入スクリプト（`scripts/redrive.py`）とRunbook（`docs/runbooks/dlq_redrive.md`）を作成し、停止条件（同一原因5連続・UserErrorsスパイク・MaxBatch等）とメトリクス発行（RedriveSuccessCount/FailureCount）を自動化。
+
+## Notes
+### Diff Summary
+- `template.yaml`: Parameters/Conditions/Resources 更新、CloudWatch Dashboard JSON刷新、Outputs調整。
+- `src/handler.py`, `processing/worker.py`: StructuredLogger適用、X-Ray subsegment挿入、Landmark検出率メトリクス/失敗カウンタ実装。
+- `lambda/upload_url/handler.py`: 構造化ログとレスポンス計測、Authorization/Validationログ出力を強化。
+- `lambda/common/structured_logging.py`: JSONログ+CloudWatch Logs/metrics送信、およびシーケンストークン管理を実装。
+- `scripts/redrive.py`: バッチ制御・停止条件・CloudWatchメトリクス送信を備えた運用スクリプトを追加。
+- `docs/runbooks/dlq_redrive.md`: 前提条件、コマンドテンプレート、停止条件、観測ポイント、事後対応を整理。
+- `requirements*.txt`, `Dockerfile`: `aws-xray-sdk` 追加、共通モジュールをLambdaコンテナにコピー。
+
+### Next Actions
+- [ ] 疑似ERROR（Lambda Errors, LandmarkDetectionFailures, DynamoDB UserErrors）を発火させ、SNS通知・ダッシュボード反映・X-Rayトレースを検証。
+- [ ] Slack通知フロー準備後、`thf-alerts-<env>` トピックをChatOpsに接続。
+- [ ] `scripts/redrive.py` をステージングDLQでドライランし、Runbook手順と停止条件ログを確認。
+- [ ] pytest環境（`pip install -r requirements.txt`）整備後に `python -m pytest` を実行し、構造化ロギング変更の回帰テストを追加検討。
+
+# Task 5 – Session Detail Polish (Phase 5 Stage 3 Micro-Adjustments)
+
+## Context
+- Notion Stage 3 タスク（欠測表示・バージョン情報拡充・ラベリング統一・UIメトリクス）を実装。
+- `python3 -m compileall dashboard` にて構文チェック済み。
+
+## Task
+- 欠測を含むレーダーチャートで 0% 塗り潰しを回避し、グレー点線＋“N/A” ラベルの別トレースで可視化。
+- セッション詳細ヘッダーに `rules_version / normalization_version / artifact_sha` を並記し、鮮度表示を「今日 / 1日前 / X日前」に統一。
+- test_code → 日本語名称のマッピングを `config.py` の単一ソースに集約し、ヘルプやツールチップでも一貫した表示に変更。
+- 環境切替・キャッシュクリア・比較実行などの UI 操作で `UIEvent` カスタムメトリクスを CloudWatch へ送出。
+
+## Notes
+### Diff Summary
+- `dashboard/utils/logging.py`: `emit_ui_metric` を追加し、Namespace `THF/MotionScan` の `UIEvent` を Environment/TestCode/SessionId 付きで送信。短時間の連続発火を抑制。
+- `dashboard/app.py`: 環境セレクタとキャッシュクリアに UIEvent を埋め込み。短縮マップを `config` 依存に揃えるため呼び出しを微修正。
+- `dashboard/session_pages.py`: ヘッダー métrics を再構成し、欠測判定とレーダー表示の拡張、比較実行時に UIEvent 送信を実装。差分テーブルも N/A 表示に対応。
+
+### Next Actions
+- [ ] CloudWatch 上で `UIEvent` メトリクスが期待通り Dimension（Environment/TestCode/SessionId）付きで記録されるか確認し、運用ダッシュボードを検討。
+- [ ] normalization_version / artifact_sha を Lambda 生成物で必ず埋め込むようワークフローを整備（未設定時は UI 上 “mixed/‐” 表示）。
+- [ ] 欠測が多発するセッションの割合を算出し、さらに視覚化（例: 欠測ヒートマップ）するアイデアを検討。

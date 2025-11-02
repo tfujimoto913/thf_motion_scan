@@ -2443,3 +2443,42 @@
   - ECRイメージ: thf-motion-scan:v2.1-b1-feedback（SHA: f0e46cf512...）
   - CloudFormation Stack: thf-motion-scan（変更なし、Lambda関数のみ更新）
   - ADR-007（Lambda Container）、ADR-024（v2.1統合）
+
+## ADR-026: Phase 5 Ops Guardrails（CloudWatch Dashboards / DLQ Runbook / Structured Logging）
+- 日付: 2025-11-07
+- 決定者: Human + Claude
+- 決定: CloudWatchダッシュボード・アラーム・SNS通知、DLQ再投入Runbook、構造化ログとカスタムメトリクスを統合し、Phase 5運用ガードレールをIaCとアプリケーションコードに実装
+- 理由:
+  - 失敗を早期検知して安全に収束: Lambda Errors / Duration、DynamoDB UserErrors、LandmarkDetectionFailures を5分単位で監視し `thf-alerts-<env>` に通知
+  - 可観測性の一元化: `MotionScan-Ops-<env>` ダッシュボードでシステムヘルス・KPI・解析ログを単一画面に集約
+  - 障害復旧の標準化: `scripts/redrive.py` + Runbook でバッチ制限・停止条件・メトリクス送信を自動化し、DLQ復旧オペレーションを定型化
+  - 監査性・トレーサビリティ向上: 構造化ログに必須メタデータ（timestamp/level/requestId/environment/testCode等）を含め、VideoAnalysisDurationやLandmarkDetectionRateなどのカスタムメトリクスを CloudWatch に記録
+- 影響:
+  - `template.yaml`: SNSトピック、ロググループ（INFO/WARN/ERROR/METRICS）、CloudWatchアラーム4種、`MotionScan-Ops-<env>`ダッシュボード、Retention・閾値・Email設定のパラメータ化を実装
+  - `src/handler.py` / `processing/worker.py`: StructuredLogger によるメトリクス発行と X-Ray サブセグメント（`video_processing`, `score_calculation`）追加、LandmarkDetectionRate / LandmarkDetectionFailures 等を計測
+  - `lambda/common/structured_logging.py`: ロギング・メトリクス共通モジュールを新設し、全Lambdaから利用
+  - `lambda/upload_url/handler.py`: 構造化ログと `PresignedUrlGenerationDuration` メトリクスを追加
+  - `scripts/redrive.py` / `docs/runbooks/dlq_redrive.md`: DLQ再投入スクリプトとRunbookを新規作成し、停止条件（5連続同一原因・UserErrorsスパイク・MaxBatch等）とメトリクス送信を自動化
+  - `requirements*.txt` / `Dockerfile`: `aws-xray-sdk` 追加、共通モジュールをLambdaイメージにバンドル
+- 課題とフォローアップ:
+  - [ ] Slack通報経路が整い次第、SNSトピックをChatOpsへ連携
+  - [ ] 疑似エラー/性能試験でダッシュボードの解像度を検証し、必要に応じてウィジェット・Insightsクエリを調整
+  - [ ] RedriveスクリプトをCI/CDやGitHub Actionsに組み込み、運用Runbookとのリンクを明確化
+
+## ADR-027: Dashboard Session Detail Enhancements（Radar NA / Version Header / UI Metrics）
+- 日付: 2025-11-07
+- 決定者: Human + Claude
+- 決定: セッション詳細ページのレーダーチャート、ヘッダー表示、ラベリング、および UI 操作の可観測性を改善し、Phase 5 Stage 3 の微調整タスクリストを実装
+- 理由:
+  - 欠測データを 0% で塗り潰さず、グレー点線＋“N/A”ラベルで明示して分析ミスを防ぐ
+  - データ鮮度と normalization / artifact 情報をヘッダーで可視化し、バージョン不整合の追跡を容易にする
+  - test_code の命名規則を単一ソース化し、UI 上の日本語表記とツールチップを一貫させる
+  - 環境切替・比較・キャッシュクリアなどの UI 操作を CloudWatch カスタムメトリクスに記録し、利用状況を可視化する
+- 影響:
+  - `dashboard/utils/logging.py`: CloudWatch へ `UIEvent` を送出する `emit_ui_metric` を追加（Environment/TestCode/SessionId/Timestamp を標準化し、デバウンス実装）
+  - `dashboard/app.py`: 環境セレクタとキャッシュクリアにメトリクスフックを挿入、Streamlit 側で共通マッピングを参照するよう調整
+  - `dashboard/session_pages.py`: ヘッダーメトリクスを再構成し、`rules_version / normalization_version / artifact_sha` を表示。鮮度表示を「今日/1日前/X日前」に統一。レーダー/比較レーダーで欠測を別レイヤ（グレー点線＋N/A）とし、比較トリガーで `UIEvent(compare_run)` を送信
+- フォローアップ:
+  - [ ] CloudWatch 上で `UIEvent` メトリクスの増減と Dimensions（Environment/TestCode/SessionId）を確認し、ダッシュボード整備を検討
+  - [ ] 欠測が頻発するセッションでのヒートマップ／一覧表示強化を評価（N/A の比率集計など）
+  - [ ] normalization_version / artifact_sha の記録を評価出力に標準化し、データ欠損時のグレー表示を緩和

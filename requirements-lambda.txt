@@ -24,6 +24,8 @@ reportlab==4.0.7
 # AWS SDK（S3/DynamoDB/SQS連携）
 boto3==1.34.0
 botocore==1.34.0
+aws-xray-sdk==2.14.0
+
 
 # Lambda Functions（Week 1 - 認証・QR生成）
 PyJWT==2.8.0

@@ -19,8 +19,10 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from aws_xray_sdk.core import patch_all, xray_recorder
 from decimal import Decimal
 import boto3
 from urllib.parse import unquote_plus
@@ -28,7 +30,17 @@ from urllib.parse import unquote_plus
 # processingモジュールをインポート
 sys.path.append('/var/task')
 from processing.worker import VideoProcessingWorker
-from processing.logger import log_info, log_warning, log_error
+from processing.logger import (
+    log_info,
+    log_warning,
+    log_error,
+    set_request_context,
+    set_processing_context,
+    clear_context,
+    emit_metric,
+)
+
+patch_all()
 
 # AWS クライアント初期化
 s3_client = boto3.client('s3')
@@ -52,7 +64,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Returns:
         Dict: 処理結果
     """
+    request_id = getattr(context, 'aws_request_id', None) if context else None
+    function_name = getattr(context, 'function_name', os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+    environment = os.environ.get('ENVIRONMENT', os.environ.get('STAGE', 'dev'))
+    set_request_context(
+        request_id=request_id,
+        environment=environment,
+        function_name=function_name,
+    )
     log_info("Event received", context={"event": event})
+
+    start_time = time.perf_counter()
+    result: Optional[Dict[str, Any]] = None
 
     try:
         # S3イベントからバケット名とキーを取得
@@ -95,6 +118,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             athlete_id = None
             session_id = None
 
+        set_processing_context(test_code=test_type, athlete_id=athlete_id, session_id=session_id)
+
         log_info(
             "Processing target identified",
             test_type=test_type,
@@ -128,7 +153,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
         )
 
-        result = worker.process_video(video_path, test_type=test_type)
+        with xray_recorder.in_subsegment('video_processing') as subsegment:
+            subsegment.put_annotation('testType', test_type)
+            subsegment.put_metadata('bucket', bucket, 'motion_scan')
+            subsegment.put_metadata('s3Key', key, 'motion_scan')
+            result = worker.process_video(
+                video_path,
+                test_type=test_type,
+                athlete_id=athlete_id,
+                session_id=session_id,
+            )
+        result_duration_ms = (time.perf_counter() - start_time) * 1000
+        emit_metric(
+            "VideoAnalysisDuration",
+            result_duration_ms,
+            unit="Milliseconds",
+            dimensions={"Stage": "EndToEnd"},
+        )
+        emit_metric("AnalysesCompleted", 1)
 
         # 一時ファイル削除
         os.unlink(video_path)
@@ -182,6 +224,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'error': str(e)
             })
         }
+    finally:
+        clear_context()
 
 
 def extract_test_type(s3_key: str) -> str:

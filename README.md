@@ -748,3 +748,12 @@ MIT License（予定）
 **Last Updated**: 2025-10-21
 **Version**: Phase 2完了版
 **Protocol**: CLAUDE.md v1.0
+
+
+## 🧭 運用ガードレール (Phase 5)
+
+- CloudWatchダッシュボード: `MotionScan-Ops-<env>` でリクエスト・エラー率・リトライ成功率・DLQ状況を一元監視
+- SNSアラート: `thf-alerts-<env>`（メール、将来Slack連携予定）に 4 種類のアラームを集約
+- Runbook: [docs/runbooks/dlq_redrive.md](docs/runbooks/dlq_redrive.md) にDLQ復旧手順と観測ポイントを記録
+- ツール: `scripts/redrive.py` でガードレールに沿った再投入（メトリクス/停止条件を自動実行）
+
