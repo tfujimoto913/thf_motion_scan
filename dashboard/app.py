@@ -42,21 +42,11 @@ from utils import (  # type: ignore[import-untyped]
     execution_timer,
     record_error,
     log_dashboard_event,
+    emit_ui_metric,
 )
 from session_dao import group_tests_by_session, get_latest_sessions
 from session_pages import session_list_page, session_detail_page
 
-
-# 種目名マッピング（内部コード→日本語名）
-TEST_NAMES = {
-    "single_leg_squat": "片脚スタンススクワット",
-    "skater_lunge": "スケーターランジ",
-    "stride_mimic": "スケートストライド模倣",
-    "jump_landing": "ミニジャンプ＆着地",
-    "upper_body_swing": "上体スイング",
-    "push_pull": "プッシュプル動作",
-    "cross_step": "クロスステップ模倣"
-}
 
 # 種目別評価原則マッピング（各種目で評価される原則番号）
 TEST_PRINCIPLES_MAP = {
@@ -712,16 +702,31 @@ def render_session_select_page(resources, demo_mode):
                 for s in athlete_sessions:
                     sid = s['session_id']
                     test_count = len(s.get('tests', []))
-                    label = f"{sid} ({test_count}/7種目完了)"
+                    is_complete = s.get('is_complete', False)
+
+                    # 未完了セッションを視覚的に区別
+                    if is_complete:
+                        label = f"{sid} ({test_count}/7種目 完了✅)"
+                    else:
+                        label = f"{sid} ({test_count}/7種目 未完了⚠️)"
+
                     session_options[label] = sid
 
                 selected_label = st.selectbox(
                     "既存セッションを選択",
                     list(session_options.keys()),
-                    help="過去20セッションから選択できます"
+                    help="過去20セッションから選択できます。未完了⚠️セッションに追加して続きからアップロードできます。"
                 )
                 session_id = session_options[selected_label]
-                st.success(f"✅ セッション「{session_id}」に追加します")
+
+                # 選択したセッションの情報を表示
+                selected_session = next((s for s in athlete_sessions if s['session_id'] == session_id), None)
+                if selected_session:
+                    selected_test_count = len(selected_session.get('tests', []))
+                    if selected_session.get('is_complete'):
+                        st.success(f"✅ セッション「{session_id}」に追加します（完了済み7種目）")
+                    else:
+                        st.info(f"📋 セッション「{session_id}」に追加します（未完了 {selected_test_count}/7種目）\n続きからアップロードできます。")
             else:
                 st.warning(f"⚠️ 選手ID「{st.session_state.athlete_id}」の過去セッションが見つかりません")
                 st.info("「新規セッションを開始」を選択してください")
@@ -850,6 +855,9 @@ def render_test_upload_page(s3_client, resources, test_index, demo_mode):
                         st.success(f"✅ アップロード成功: 種目{test_index + 1}")
                         st.session_state.uploaded_tests.append(test_type)
                         st.session_state.validation_result = None
+
+                        # ページトップにスクロール（ステータスバーを表示）
+                        st.session_state.scroll_to_top = True
 
                         # 次の種目へ
                         if test_index < 6:  # まだ種目が残っている
@@ -1212,7 +1220,7 @@ def show_result_detail(df: pd.DataFrame, video_id: str, coach_mode: bool = False
     row = df[df['video_id'] == video_id].iloc[0]
     record = row.to_dict()
     test_type = record.get('test_type')
-    test_name = TEST_NAMES.get(test_type, test_type)
+    test_name = TEST_TYPE_DISPLAY.get(test_type, test_type)
 
     evaluation_dict = record.get('evaluation') if isinstance(record.get('evaluation'), dict) else {}
     evaluation_version = evaluation_dict.get('version') if isinstance(evaluation_dict.get('version'), str) else None
@@ -1683,6 +1691,116 @@ def show_result_detail(df: pd.DataFrame, video_id: str, coach_mode: bool = False
         st.json(row.to_dict())
 
 
+def incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mode):
+    """
+    What: 未完了セッション管理ページ
+    Why: 途中で中断したセッションの削除または再開をサポート
+    Design Decision: セッション単位で削除、S3+DynamoDB両方から削除
+    """
+    st.header("🗑️ 未完了セッション管理")
+
+    if demo_mode:
+        st.info("🎭 **デモモード**: 削除機能は無効です")
+        return
+
+    st.markdown("""
+    ### 未完了セッション（7種目未満）の管理
+
+    途中で中断したセッションを表示・削除できます：
+    - ✅ **継続したい場合**: 「📤 動画アップロード」→「既存セッションに追加」から再開
+    - ❌ **不要な場合**: 以下のリストから選択して削除
+
+    **注意**: 削除すると、DynamoDB の処理結果が削除されます。
+    """)
+
+    st.markdown("---")
+
+    # 未完了セッション一覧を取得
+    try:
+        items = load_results_items(resources, demo_mode=False)
+        from session_dao import group_tests_by_session
+        items_converted = [convert_decimals(item) for item in items]
+        items_filtered = [
+            item for item in items_converted
+            if not str(item.get('video_id', '')).startswith('METADATA')
+        ]
+        sessions = group_tests_by_session(items_filtered)
+
+        # 未完了セッションのみフィルタ
+        incomplete_sessions = [s for s in sessions if not s.get('is_complete', False)]
+
+        if not incomplete_sessions:
+            st.success("✅ 未完了セッションはありません！")
+            st.info("すべてのセッションが7種目完了しています。")
+            return
+
+        st.warning(f"⚠️ 未完了セッション: {len(incomplete_sessions)}件")
+
+        # 未完了セッション一覧を表示
+        for session in incomplete_sessions:
+            athlete_id = session.get('athlete_id', 'Unknown')
+            session_id = session.get('session_id', 'Unknown')
+            test_count = len(session.get('tests', []))
+            grand_total = session.get('grand_total', 0)
+            percentage = session.get('percentage', 0)
+            processed_at = session.get('processed_at', 'Unknown')
+
+            with st.expander(f"📋 {athlete_id} - {session_id} ({test_count}/7種目)", expanded=False):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("完了種目数", f"{test_count}/7")
+                with col2:
+                    st.metric("総合スコア", f"{grand_total:.1f}/560")
+                with col3:
+                    st.metric("達成率", f"{percentage:.1f}%")
+
+                st.caption(f"最終更新: {processed_at}")
+
+                # 種目一覧を表示
+                st.markdown("**アップロード済み種目:**")
+                for test in session.get('tests', []):
+                    test_type = test.get('test_type', 'Unknown')
+                    score = test.get('score', 0)
+                    st.write(f"- {TEST_TYPE_DISPLAY.get(test_type, test_type)}: {score:.1f}点")
+
+                st.markdown("---")
+
+                # 削除ボタン
+                delete_key = f"delete_{athlete_id}_{session_id}"
+                if st.button(f"🗑️ このセッションを削除", key=delete_key, type="secondary"):
+                    with st.spinner("削除中..."):
+                        try:
+                            # DynamoDBからレコード削除
+                            table = dynamodb.Table(resources['table_name'])
+                            deleted_count = 0
+
+                            for test in session.get('tests', []):
+                                video_id = test.get('video_id')
+                                processed_at_val = test.get('processed_at')
+
+                                if video_id and processed_at_val:
+                                    table.delete_item(
+                                        Key={
+                                            'video_id': video_id,
+                                            'processed_at': processed_at_val
+                                        }
+                                    )
+                                    deleted_count += 1
+
+                            st.success(f"✅ {deleted_count}件のレコードを削除しました")
+                            st.info("ページをリロードして最新状態を確認してください")
+                            time.sleep(2)
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"❌ 削除に失敗しました: {str(e)}")
+                            record_error("incomplete_sessions_delete", str(e))
+
+    except Exception as e:
+        st.error(f"❌ セッション一覧の取得に失敗しました: {str(e)}")
+        record_error("incomplete_sessions_load", str(e))
+
+
 def main():
     """
     What: Streamlitアプリのメインエントリーポイント
@@ -1715,6 +1833,15 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
+    # ページトップへのスクロール処理（アップロード完了時）
+    if st.session_state.get('scroll_to_top', False):
+        st.markdown("""
+        <script>
+            window.parent.document.querySelector('section.main').scrollTo(0, 0);
+        </script>
+        """, unsafe_allow_html=True)
+        st.session_state.scroll_to_top = False
+
     # タイトル
     st.title("🏒 THF Motion Scan Dashboard")
     st.markdown("---")
@@ -1738,6 +1865,7 @@ def main():
     if selected_env != st.session_state.selected_env:
         st.session_state.selected_env = selected_env
         log_dashboard_event("environment_change", new_environment=selected_env)
+        emit_ui_metric("env_switch", environment=selected_env)
 
     # AWS クライアント初期化
     try:
@@ -1826,6 +1954,7 @@ def main():
         cached_scan_results.clear()
         st.session_state.pop('cache_metadata', None)
         log_dashboard_event("cache_clear", scope="all")
+        emit_ui_metric("cache_clear", environment=selected_env)
         st.sidebar.success("キャッシュをクリアしました")
 
     st.sidebar.markdown("---")
@@ -1878,7 +2007,7 @@ def main():
     st.sidebar.markdown("---")
     page = st.sidebar.radio(
         "ページ選択",
-        ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）"]
+        ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理"]
     )
 
     log_dashboard_event(
@@ -1915,6 +2044,11 @@ def main():
             results_list_page(dynamodb, resources, demo_mode, coach_mode)
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ 評価結果一覧処理時間: {stats.duration_ms:.0f} ms")
+    elif page == "🗑️ 未完了セッション管理":
+        with execution_timer("incomplete_sessions_management") as stats:
+            incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mode)
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ 未完了セッション管理処理時間: {stats.duration_ms:.0f} ms")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from .logging import (
     execution_timer,
     record_error,
     log_dashboard_event,
+    emit_ui_metric,
 )
 from .video_validator import VideoValidator
 
@@ -16,4 +17,5 @@ __all__ = [
     'log_dashboard_event',
     'execution_timer',
     'record_error',
+    'emit_ui_metric',
 ]
