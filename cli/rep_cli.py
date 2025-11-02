@@ -24,6 +24,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from processing.pose_extractor import PoseExtractor
+from processing.normalizer import BodyNormalizer
+from processing.evaluators_v2.single_leg_squat_v2 import SingleLegSquatEvaluatorV2
 
 
 def parse_args(args: Optional[list] = None):
@@ -195,11 +197,11 @@ def run_pipeline(
     """
     What: パイプライン実行（pose抽出→評価→結果生成）
     Why: rep単位の計測・判定を実行
-    Design Decision: MVP段階は最小限の評価、Stage 3で代表フレーム追加
+    Design Decision: evaluators_v2 使用（8原則・560点満点システム）
 
     Args:
         landmarks_data: ランドマークデータ（フレームごと）
-        test_type: テストタイプ
+        test_type: テストタイプ（MVP: single_leg_squat のみ）
 
     Returns:
         Dict: {
@@ -222,13 +224,53 @@ def run_pipeline(
     # versions 生成
     versions = generate_versions()
 
-    # TODO: Stage 2-3 で Evaluator 統合
-    # MVP段階：モック評価結果
-    scores = {'overall': 0.0}
-    classification = 'pending'
-    class_prob = 0.0
-    uncertainty = 1.0
-    flags = ['mvp-stage2-pending']
+    # フラグ初期化
+    flags = []
+
+    # PHASE CORE LOGIC: Normalizer で base_width 計算
+    normalizer = BodyNormalizer()
+
+    # 最初のフレームから base_width を計算（MVP: 簡易実装）
+    base_width = None
+    if landmarks_data and len(landmarks_data) > 0:
+        first_frame = landmarks_data[0]
+        if 'landmarks' in first_frame:
+            base_width = normalizer.calculate_base_width(first_frame['landmarks'])
+
+    # base_width が取得できない場合のフォールバック
+    if base_width is None:
+        base_width = 1.0  # デフォルト値
+        flags.append('base_width_unavailable')
+
+    # PHASE CORE LOGIC: Evaluator統合
+    # MVP段階：single_leg_squat のみ対応
+    evaluator = SingleLegSquatEvaluatorV2()
+    eval_result = evaluator.evaluate(landmarks_data, base_width=base_width)
+
+    # スコア抽出
+    scores = {
+        'overall': eval_result.get('total_score', 0.0),
+        'A_execution': eval_result.get('A_execution_score', 0.0),
+        'B_total': eval_result.get('B_total', 0.0)
+    }
+
+    # 判定（MVP: 簡易的な閾値ベース）
+    overall = scores['overall']
+    if overall >= 60:  # 80点満点の75%
+        classification = 'pass'
+        class_prob = 0.9
+    elif overall >= 40:  # 80点満点の50%
+        classification = 'needs_improvement'
+        class_prob = 0.7
+    else:
+        classification = 'fail'
+        class_prob = 0.8
+
+    uncertainty = 1.0 - class_prob
+
+    # フラグ追加（Evaluatorから）
+    if eval_result.get('flags'):
+        flags.extend(eval_result['flags'])
 
     return {
         'session_id': session_id,
@@ -238,7 +280,8 @@ def run_pipeline(
         'class_prob': class_prob,
         'uncertainty': uncertainty,
         'flags': flags,
-        'versions': versions
+        'versions': versions,
+        'evaluation_detail': eval_result  # デバッグ用詳細情報
     }
 
 
