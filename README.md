@@ -576,6 +576,9 @@ GitHub UIでPull Request作成時、以下を含めてください：
 - **Decision Log（ADR-001〜005）**: [docs/adr/decision_log.md](docs/adr/decision_log.md)
 - **Phase 1完了レポート**: [docs/phase1_completion_report.md](docs/phase1_completion_report.md)
 - **設計概要**: [docs/design/overview.md](docs/design/overview.md)
+- **Phase0-4適用ルール運用**: [docs/phase0-4_deployment_rules.md](docs/phase0-4_deployment_rules.md)
+- **撮影ガイド v2**: [docs/filming_guide_v2.md](docs/filming_guide_v2.md)
+- **Canary監視/ロールバック手順**: [docs/canary_monitoring.md](docs/canary_monitoring.md)
 
 ### 外部ドキュメント
 
@@ -704,71 +707,23 @@ LOG_LEVEL=INFO  # DEBUG, INFO, WARN, ERROR
 
 ---
 
-## 📊 Version Compatibility
+## 🎯 Validation System（Task A〜D統合）
 
 ### 概要
-Dashboardは `config/required_versions.json` を読み込み、現在のthresholds.jsonバージョンとの互換性をチェックします。
+Notion Templates → thresholds_v2.json → ValidationEngine → Dashboard の一貫したvalidation state管理を実現。CLI/Lambda/DashboardでOK/WARN/ERRORの同一語彙を使用し、Phase 2.5→5横断で整合性を担保。
 
-### SemVer比較ポリシー
-- **MAJOR差**: 破壊的変更 → **ERROR**（実行ブロック）
-- **MINOR差**: 機能追加（後方互換） → **WARN**（続行可）
-- **PATCH差**: バグ修正 → **OK**
-
-### 必須鍵
-```json
-{
-  "rules_version": "0.2.0",
-  "normalization_version": "1.2.1",
-  "artifact_sha": "abc1234"
-}
-```
-
-### 強制続行（force_override）
-- ERROR時でも「強制的に続行」ボタンで実行可能
-- `st.session_state.force_override = True` で制御
-- **監査推奨**: 強制続行時は構造化ログで記録
+### 主要コンポーネント
+- **Task A**: `tools/build_thresholds.py` でthresholds_v2.json自動生成（SemVer管理）
+- **Task B**: `src/config/compat.py` でSemVer互換性判定（MAJOR差=ERROR, MINOR差=WARN, PATCH差=OK）
+- **Task C**: `dashboard/version_display.py` で全体バージョン互換性チェック（サイドバー表示、force_override対応）
+- **Task D**: `dashboard/validation_badge.py` でセッション単位のValidation State表示（✅ OK/⚠️ WARN/❌ ERROR色分けバッジ）
 
 ### 実装ファイル
-- `dashboard/version_display.py`: バージョン表示ロジック
-- `config/required_versions.json`: 要求バージョン定義
-- `src/config/compat.py`: SemVer比較エンジン
+- `config/thresholds_v2.json`: 唯一の真実源
+- `cli/rep_cli.py`: rep/sessionにvalidation.state付与
+- `tests/fixtures/session_result/`: テストフィクスチャ（valid3/warn1/invalid5）
 
-詳細は `dashboard/version_display.py` のコメントを参照してください。
-
----
-
-## 🎯 Validation State Badge（セッション詳細画面）
-
-### 概要
-セッション詳細画面で、validation.state（OK/WARN/ERROR）を色分けバッジで表示します。
-
-### 表示仕様
-- **✅ OK（緑）**: すべての評価が基準を満たしています
-- **⚠️ WARN（黄）**: 一部の評価が警告範囲です（続行可能）
-- **❌ ERROR（赤）**: 評価基準を満たしていません
-
-### ツールチップ
-- **詳細理由を表示**: エクスパンダーでvalidation.violations/reasonsを展開表示
-- **versions情報**: rules_version, thresholds_version, artifact_sha（短縮表示）
-
-### フォールバック
-- session_result.json未取得時: "Validation情報なし"と表示（クラッシュしない）
-- state不正値: "UNKNOWN（グレー）"と表示
-
-### テストフィクスチャ
-```bash
-# デモモードで3状態を確認可能
-tests/fixtures/session_result/valid3.json    # OK状態
-tests/fixtures/session_result/warn1.json     # WARN状態
-tests/fixtures/session_result/invalid5.json  # ERROR状態
-```
-
-### 実装ファイル
-- `dashboard/validation_badge.py`: バッジコンポーネント
-- `dashboard/session_pages.py`: セッション詳細画面統合（318-330行）
-- `tests/fixtures/session_result/`: テストフィクスチャ（OK/WARN/ERROR）
-
-詳細は `dashboard/validation_badge.py` のコメントを参照してください。
+詳細は ADR-034〜036 および各実装ファイルのコメントを参照してください。
 
 ---
 
