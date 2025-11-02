@@ -704,6 +704,39 @@ LOG_LEVEL=INFO  # DEBUG, INFO, WARN, ERROR
 
 ---
 
+## 📊 Version Compatibility
+
+### 概要
+Dashboardは `config/required_versions.json` を読み込み、現在のthresholds.jsonバージョンとの互換性をチェックします。
+
+### SemVer比較ポリシー
+- **MAJOR差**: 破壊的変更 → **ERROR**（実行ブロック）
+- **MINOR差**: 機能追加（後方互換） → **WARN**（続行可）
+- **PATCH差**: バグ修正 → **OK**
+
+### 必須鍵
+```json
+{
+  "rules_version": "0.2.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "abc1234"
+}
+```
+
+### 強制続行（force_override）
+- ERROR時でも「強制的に続行」ボタンで実行可能
+- `st.session_state.force_override = True` で制御
+- **監査推奨**: 強制続行時は構造化ログで記録
+
+### 実装ファイル
+- `dashboard/version_display.py`: バージョン表示ロジック
+- `config/required_versions.json`: 要求バージョン定義
+- `src/config/compat.py`: SemVer比較エンジン
+
+詳細は `dashboard/version_display.py` のコメントを参照してください。
+
+---
+
 ## 📊 プロジェクト統計
 
 ### 実装規模（Phase 2完了時点）
@@ -896,6 +929,53 @@ pre-commit install
 2. 該当バンドやメタデータを修正  
 3. `python3 scripts/validate.py` を再実行して通ることを確認  
 4. コミット → CI（Validate Thresholds workflow）の完了を確認
+
+---
+
+## ✅ thresholds_v2 自動生成と検証フロー
+
+Phase 5 では Notion Templates を唯一の真実源とし、`thresholds_v2.json` を自動生成するパイプラインを導入しました。出力は ValidationEngine から `validation_state` を算出するための中間データです。
+
+### ビルド手順
+
+```bash
+python tools/build_thresholds.py \
+  --src tests/fixtures/thresholds_v2/notion_exports/templates_minimal.json \
+  --out config/thresholds_v2.json \
+  --rules-version 0.2.0 \
+  --thresholds-version 2.0.0 \
+  --artifact-sha $(git rev-parse --short HEAD)
+```
+
+- `--dry-run` を付与するとファイル生成せず標準出力に結果を表示  
+- `--normalization-version`（既定値: `none`）で正規化ロジックのバージョンを明示  
+- 標準ログは構造化 JSON（utils.logger）で記録されます
+
+### フィクスチャ検証
+
+| ディレクトリ | 役割 | 内容 |
+|--------------|------|------|
+| `tests/fixtures/thresholds_v2/valid/` | スキーマに準拠した3件 | 単一テスト / secondary付き / 複合ユニット |
+| `tests/fixtures/thresholds_v2/invalid/` | 失敗期待の5件 | versions欠落 / code書式 / 演算子 / range長 / artifact_sha |
+
+CIでは `.github/workflows/validate-thresholds-v2.yml` がこれらのフィクスチャを検証し、`tools/build_thresholds.py --dry-run` を実行してビルドが成功することを保証します。
+
+### トラブルシューティング
+
+1. Notion Export の `templates` 構造を確認（必須キー: `test_code`, `metric`, `unit`, `thresholds`）  
+2. 変換した `config/thresholds_v2.json` を JSON Schema (`schema/thresholds_v2.schema.json`) で再検証  
+3. invalid フィクスチャと同等の違反を起こしていないか比較  
+4. `tools/build_thresholds.py --dry-run --log-level DEBUG` で変換ログを確認
+
+---
+
+## 📦 Result Schema Contracts
+
+- **互換ポリシー**: `schema/rep_result.schema.jsonl` / `schema/session_result.schema.json` は Draft-07 準拠。後方互換を維持したい場合は「任意フィールドの追加」のみで対応し、既存キーの型変更・必須化は禁止。破壊的変更を行う場合は `versions.rules_version` / `versions.thresholds_version` の MAJOR を更新し、ValidationEngine・Dashboard・CLI を同一リリースウィンドウで展開する。
+- **Non-breaking 例**: `validation.violations[*].hint` のようなオプションフィールド追加、`aggregates.extra_metrics` の追加は OK。**Breaking 例**: `validation.state` 語彙の変更、`versions.artifact_sha` の削除、`rep_index` の型変更など。
+- **マイグレーション注意点**: 既存データで `versions.*` が欠落している場合は `build_thresholds.py` 出力のメタデータを反映し、ValidationEngine が `validation.state` を再計算できるようにする。CI の `schema-fixtures` ジョブ（`tests/fixtures/schemas/**`）と `tests/test_result_schemas.py` を通過させること。
+- **運用チェックリスト**: 変更前後で `examples/rep_result.sample.jsonl` / `examples/session_result.sample.json` を `jsonschema --instance` で検証し、`qc_pass_count <= total_reps` の事後チェックを必須化。
+- **関連仕様**: Validation Ops Hub「出力ルール＆処方マップ」、Streamlit Dashboard 統合仕様 v2.1、Rep CLI MVP。
 
 ---
 
