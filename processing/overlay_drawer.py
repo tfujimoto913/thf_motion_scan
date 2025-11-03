@@ -27,6 +27,14 @@ COLOR_ROTATION_ARROW = (0, 255, 255)  # 黄（ハンドオーバー：黄）
 THICKNESS_LINE = 3  # 肩線・骨盤線の太さ（ハンドオーバー：3px）
 THICKNESS_AXIS = 2  # 体幹軸の太さ（ハンドオーバー：2px）
 
+# CRITICAL: 注記配置定義（ハンドオーバー仕様）
+ANNOTATION_PADDING = 10  # 画像端からの余白（px）
+ANNOTATION_LINE_HEIGHT = 30  # 行間（px）
+ANNOTATION_FONT = cv2.FONT_HERSHEY_SIMPLEX
+ANNOTATION_FONT_SCALE = 0.6
+ANNOTATION_FONT_COLOR = (255, 255, 255)  # 白
+ANNOTATION_FONT_THICKNESS = 2
+
 
 def normalize_to_pixel(
     landmark: Dict[str, float],
@@ -309,3 +317,146 @@ def draw_rotation_indicator(
         tipLength=0.3
     )
     return True
+
+
+def draw_versions_annotation(
+    image: np.ndarray,
+    versions: Dict[str, str]
+) -> None:
+    """
+    What: versions注記を左上に描画
+    Why: トレーサビリティ確保（rules/thresholds/normalizationのバージョン）
+    Design Decision: 左上、白文字、3行（ハンドオーバー仕様）
+
+    Args:
+        image: 描画対象画像（変更される）
+        versions: {'rules_version': '2.1.0', 'thresholds_version': '1.0.0', ...}
+
+    CRITICAL: versionsが空の場合はスキップ（エラーにしない）
+    """
+    if not versions:
+        return
+
+    x = ANNOTATION_PADDING
+    y = ANNOTATION_PADDING + ANNOTATION_LINE_HEIGHT
+
+    lines = [
+        f"Rules: {versions.get('rules_version', 'N/A')}",
+        f"Thresholds: {versions.get('thresholds_version', 'N/A')}",
+        f"Norm: {versions.get('normalization_version', 'N/A')}"
+    ]
+
+    for line in lines:
+        cv2.putText(
+            image,
+            line,
+            (x, y),
+            ANNOTATION_FONT,
+            ANNOTATION_FONT_SCALE,
+            ANNOTATION_FONT_COLOR,
+            ANNOTATION_FONT_THICKNESS
+        )
+        y += ANNOTATION_LINE_HEIGHT
+
+
+def draw_metadata_annotation(
+    image: np.ndarray,
+    metadata: Dict[str, Any]
+) -> None:
+    """
+    What: メタデータ注記を左下に描画
+    Why: N/A率、有効KPI数、選定理由の表示
+    Design Decision: 左下、白文字、3行（ハンドオーバー仕様）
+
+    Args:
+        image: 描画対象画像（変更される）
+        metadata: {'na_rate': 0.2, 'valid_kpi_count': 6, 'selection_reason': 'best'}
+
+    CRITICAL: metadataが空の場合はスキップ
+    """
+    if not metadata:
+        return
+
+    h = image.shape[0]
+    x = ANNOTATION_PADDING
+    y = h - ANNOTATION_PADDING - ANNOTATION_LINE_HEIGHT * 3
+
+    lines = [
+        f"Reason: {metadata.get('selection_reason', 'N/A')}",
+        f"Valid KPIs: {metadata.get('valid_kpi_count', 0)}/{metadata.get('total_kpi_count', 8)}",
+        f"N/A Rate: {metadata.get('na_rate', 0.0):.1%}"
+    ]
+
+    for line in lines:
+        cv2.putText(
+            image,
+            line,
+            (x, y),
+            ANNOTATION_FONT,
+            ANNOTATION_FONT_SCALE,
+            ANNOTATION_FONT_COLOR,
+            ANNOTATION_FONT_THICKNESS
+        )
+        y += ANNOTATION_LINE_HEIGHT
+
+
+def draw_kpi_annotation(
+    image: np.ndarray,
+    kpi_values: Dict[str, float],
+    kpi_classes: Dict[str, str],
+    kpi_p_values: Dict[str, float],
+    max_kpis: int = 5
+) -> None:
+    """
+    What: 主要KPI値とクラスを右上に描画
+    Why: 評価結果の視覚化
+    Design Decision: 右上、白文字、最大5KPI表示（ハンドオーバー仕様）
+
+    Args:
+        image: 描画対象画像（変更される）
+        kpi_values: {'B1_core_stability': 4.2, 'B4_pelvis_horizontal': 3.8, ...}
+        kpi_classes: {'B1_core_stability': 'A', 'B4_pelvis_horizontal': 'B', ...}
+        kpi_p_values: {'B1_core_stability': 0.92, 'B4_pelvis_horizontal': 0.85, ...}
+        max_kpis: 表示するKPI数上限
+
+    CRITICAL:
+    - kpi_values/classes/p_valuesが空の場合はスキップ
+    - 上位max_kpis個のみ表示（値の大きい順）
+    """
+    if not kpi_values:
+        return
+
+    # 値の大きい順にソート（Noneは0として扱う）
+    sorted_kpis = sorted(
+        kpi_values.items(),
+        key=lambda x: x[1] if x[1] is not None else 0,
+        reverse=True
+    )
+    top_kpis = sorted_kpis[:max_kpis]
+
+    h, w = image.shape[:2]
+    x = w - 350  # 右端から350px左
+    y = ANNOTATION_PADDING + ANNOTATION_LINE_HEIGHT
+
+    for kpi_name, value in top_kpis:
+        kpi_class = kpi_classes.get(kpi_name, 'N/A')
+        p_value = kpi_p_values.get(kpi_name, 0.0)
+
+        # 短縮名（B1, B4等）
+        short_name = kpi_name.split('_')[0] if '_' in kpi_name else kpi_name
+
+        if value is not None:
+            line = f"{short_name}: {value:.1f} [{kpi_class}] p={p_value:.2f}"
+        else:
+            line = f"{short_name}: N/A"
+
+        cv2.putText(
+            image,
+            line,
+            (x, y),
+            ANNOTATION_FONT,
+            ANNOTATION_FONT_SCALE,
+            ANNOTATION_FONT_COLOR,
+            ANNOTATION_FONT_THICKNESS
+        )
+        y += ANNOTATION_LINE_HEIGHT
