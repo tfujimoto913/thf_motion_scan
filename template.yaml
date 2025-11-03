@@ -299,12 +299,41 @@ Resources:
                 - states:StartExecution
               Resource: !GetAtt RepRescoreStateMachine.Arn
 
-  RepRescoreStateMachine:
-    Type: AWS::Serverless::StateMachine
+  # IAM Role for RepRescoreStateMachine
+  # Allows Step Functions to invoke Lambda and send SQS messages
+  RepRescoreStateMachineRole:
+    Type: AWS::IAM::Role
     Properties:
-      Name: !Sub '${AWS::StackName}-RepRescore'
-      DefinitionBody:
-        Fn::Sub: |
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RepRescoreStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt RepRescoreWorkerFunction.Arn
+                  - !GetAtt RepRescoreDiffReporterFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt RepRescoreDLQ.Arn
+
+  RepRescoreStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-RepRescore'
+      RoleArn: !GetAtt RepRescoreStateMachineRole.Arn
+      DefinitionString: !Sub
+        - |
           {
             "Comment": "THF Motion Scan rep rescore pipeline",
             "StartAt": "RescoreReps",
@@ -312,7 +341,7 @@ Resources:
               "RescoreReps": {
                 "Type": "Map",
                 "ItemsPath": "$.rep_ids",
-                "MaxConcurrency": ${MaxConcurrency},
+                "MaxConcurrency": ${MaxConcurrencyValue},
                 "Parameters": {
                   "rep_id.$": "$$.Map.Item.Value",
                   "threshold_version.$": "$.threshold_version",
@@ -321,12 +350,26 @@ Resources:
                   "rules_version.$": "$.rules_version"
                 },
                 "Iterator": {
-                  "StartAt": "InvokeWorker",
+                  "StartAt": "RescoreWorker",
                   "States": {
-                    "InvokeWorker": {
+                    "RescoreWorker": {
                       "Type": "Task",
-                      "Resource": "${RepRescoreWorkerArn}",
+                      "Resource": "${WorkerArn}",
                       "ResultPath": "$.result",
+                      "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "ResultPath": "$.error",
+                        "Next": "SendToDLQ"
+                      }],
+                      "End": true
+                    },
+                    "SendToDLQ": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::sqs:sendMessage",
+                      "Parameters": {
+                        "QueueUrl": "${DLQUrl}",
+                        "MessageBody.$": "$"
+                      },
                       "End": true
                     }
                   }
@@ -344,11 +387,11 @@ Resources:
                   "error.$": "$.result.error"
                 },
                 "ResultPath": "$.rescore_results",
-                "Next": "GenerateReport"
+                "Next": "GenerateDiffReport"
               },
-              "GenerateReport": {
+              "GenerateDiffReport": {
                 "Type": "Task",
-                "Resource": "${RepRescoreDiffReporterArn}",
+                "Resource": "${ReporterArn}",
                 "Parameters": {
                   "execution_id.$": "$.execution_id",
                   "threshold_version.$": "$.threshold_version",
@@ -361,15 +404,10 @@ Resources:
               }
             }
           }
-      DefinitionSubstitutions:
-        RepRescoreWorkerArn: !GetAtt RepRescoreWorkerFunction.Arn
-        RepRescoreDiffReporterArn: !GetAtt RepRescoreDiffReporterFunction.Arn
-        MaxConcurrency: !FindInMap [RescoreConcurrencyMap, !Ref Environment, MaxConcurrency]
-      Policies:
-        - LambdaInvokePolicy:
-            FunctionName: !Ref RepRescoreWorkerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref RepRescoreDiffReporterFunction
+        - MaxConcurrencyValue: !FindInMap [RescoreConcurrencyMap, !Ref Environment, MaxConcurrency]
+          WorkerArn: !GetAtt RepRescoreWorkerFunction.Arn
+          DLQUrl: !Ref RepRescoreDLQ
+          ReporterArn: !GetAtt RepRescoreDiffReporterFunction.Arn
 
   # S3バケット: アップロード用
   VideosBucket:
