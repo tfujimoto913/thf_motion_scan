@@ -78,6 +78,18 @@ Parameters:
     Type: Number
     Description: Retention period for application metrics logs.
     Default: 365
+  MonthlyBillingBudgetAmount:
+    Type: Number
+    Description: Monthly budget amount in USD for billing alarms.
+    Default: 200
+  EBSUnattachedVolumeLimit:
+    Type: Number
+    Description: Maximum number of unattached EBS volumes before alarms trigger.
+    Default: 5
+  LambdaMonthlyInvocationLimit:
+    Type: Number
+    Description: Monthly Lambda invocation limit used for usage alarms.
+    Default: 1000000
 
 Conditions:
   CreateAlertsEmailSubscription:
@@ -342,16 +354,20 @@ Resources:
                 "Type": "Map",
                 "ItemsPath": "$.rep_ids",
                 "MaxConcurrency": ${MaxConcurrencyValue},
-                "Parameters": {
-                  "rep_id.$": "$$.Map.Item.Value",
-                  "threshold_version.$": "$.threshold_version",
-                  "execution_id.$": "$.execution_id",
-                  "artifact_sha.$": "$.artifact_sha",
-                  "rules_version.$": "$.rules_version"
-                },
                 "Iterator": {
-                  "StartAt": "RescoreWorker",
+                  "StartAt": "PrepareInput",
                   "States": {
+                    "PrepareInput": {
+                      "Type": "Pass",
+                      "Parameters": {
+                        "rep_id.$": "$",
+                        "threshold_version.$": "$$.Execution.Input.threshold_version",
+                        "execution_id.$": "$$.Execution.Input.execution_id",
+                        "artifact_sha.$": "$$.Execution.Input.artifact_sha",
+                        "rules_version.$": "$$.Execution.Input.rules_version"
+                      },
+                      "Next": "RescoreWorker"
+                    },
                     "RescoreWorker": {
                       "Type": "Task",
                       "Resource": "${WorkerArn}",
@@ -375,7 +391,7 @@ Resources:
                   }
                 },
                 "ResultSelector": {
-                  "rep_id.$": "$$.Map.Item.Value",
+                  "rep_id.$": "$.rep_id",
                   "status.$": "$.result.status",
                   "old_threshold_version.$": "$.result.old_threshold_version",
                   "new_threshold_version.$": "$.result.new_threshold_version",
@@ -940,6 +956,180 @@ Resources:
         - Name: Environment
           Value: !Ref Environment
       TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  BillingEstimatedChargesWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Warn'
+      AlarmDescription: 'Estimated AWS charges have exceeded 80% of the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 0.8
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Billing
+              MetricName: EstimatedCharges
+              Dimensions:
+                - Name: Currency
+                  Value: USD
+            Period: 21600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${MonthlyBillingBudgetAmount}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  BillingEstimatedChargesFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Fail'
+      AlarmDescription: 'Estimated AWS charges have reached the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1.0
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Billing
+              MetricName: EstimatedCharges
+              Dimensions:
+                - Name: Currency
+                  Value: USD
+            Period: 21600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${MonthlyBillingBudgetAmount}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  EbsUnattachedVolumesWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-EBSUnattached-Warn'
+      AlarmDescription: 'Unattached EBS volume count is approaching the configured limit (80%).'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 0.8
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Usage
+              MetricName: ResourceCount
+              Dimensions:
+                - Name: Service
+                  Value: EBS
+                - Name: Type
+                  Value: ResourceCount
+                - Name: Class
+                  Value: UnattachedVolume
+                - Name: Resource
+                  Value: Volume
+            Period: 3600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${EBSUnattachedVolumeLimit}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  EbsUnattachedVolumesFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-EBSUnattached-Fail'
+      AlarmDescription: 'Unattached EBS volume count has reached the configured limit.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1.0
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Usage
+              MetricName: ResourceCount
+              Dimensions:
+                - Name: Service
+                  Value: EBS
+                - Name: Type
+                  Value: ResourceCount
+                - Name: Class
+                  Value: UnattachedVolume
+                - Name: Resource
+                  Value: Volume
+            Period: 3600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${EBSUnattachedVolumeLimit}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  LambdaInvocationsWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-LambdaInvocations-Warn'
+      AlarmDescription: 'Lambda invocation usage has exceeded 80% of the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 0.8
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+            Period: 3600
+            Stat: Sum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${LambdaMonthlyInvocationLimit}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  LambdaInvocationsFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-LambdaInvocations-Fail'
+      AlarmDescription: 'Lambda invocation usage has reached the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1.0
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+            Period: 3600
+            Stat: Sum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${LambdaMonthlyInvocationLimit}"
+          ReturnData: true
       AlarmActions:
         - !Ref AlertsTopic
 
