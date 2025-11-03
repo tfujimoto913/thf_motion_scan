@@ -460,3 +460,77 @@ def draw_kpi_annotation(
             ANNOTATION_FONT_THICKNESS
         )
         y += ANNOTATION_LINE_HEIGHT
+
+
+def draw_overlay(
+    image: np.ndarray,
+    landmarks: List[Dict],
+    annotation_data: Dict[str, Any],
+    show_versions: bool = True,
+    show_metadata: bool = True,
+    show_kpi: bool = True,
+    min_visibility: float = 0.5,
+    rotation_angle: Optional[float] = None
+) -> np.ndarray:
+    """
+    What: 画像にオーバーレイを描画（全要素統合）
+    Why: rep選定画像への視覚的フィードバック提供
+    Design Decision: 元画像を変更しない、エラー時もクラッシュしない（ハンドオーバー仕様）
+
+    Args:
+        image: 元画像（RGB or BGR）
+        landmarks: MediaPipeランドマークリスト（33点）
+        annotation_data: build_rep_annotation()の出力
+        show_versions: versions注記表示フラグ
+        show_metadata: metadata注記表示フラグ
+        show_kpi: KPI注記表示フラグ
+        min_visibility: 最小visibility（これ未満はスキップ）
+        rotation_angle: 回旋角度（Noneの場合は自動計算）
+
+    Returns:
+        描画済み画像（元画像のコピー）
+
+    CRITICAL:
+    - 元画像は変更しない（コピーして描画）
+    - ランドマーク欠損・低visibilityは警告ログなし、該当要素をスキップ
+    - 最低解像度チェック（480p未満は警告ログ）
+
+    Raises:
+        ValueError: imageがNone or 空配列の場合のみ
+    """
+    if image is None or image.size == 0:
+        raise ValueError("Input image is None or empty")
+
+    # 元画像をコピー
+    annotated = image.copy()
+
+    # 最低解像度チェック
+    h, w = annotated.shape[:2]
+    if h < 480 or w < 640:
+        # CRITICAL: 警告ログのみ、処理は継続
+        print(f"Warning: Low resolution ({w}x{h}), annotations may be hard to read")
+
+    # 線描画
+    draw_shoulder_line(annotated, landmarks, min_visibility)
+    draw_pelvis_line(annotated, landmarks, min_visibility)
+    draw_torso_axis(annotated, landmarks, min_visibility)
+
+    # 矢印描画
+    draw_rotation_indicator(annotated, landmarks, rotation_angle, min_visibility)
+
+    # 注記描画
+    if show_versions:
+        versions = annotation_data.get('versions', {})
+        draw_versions_annotation(annotated, versions)
+
+    if show_metadata:
+        metadata = annotation_data.get('metadata', {})
+        draw_metadata_annotation(annotated, metadata)
+
+    if show_kpi:
+        kpi_values = annotation_data.get('kpi_values', {})
+        kpi_classes = annotation_data.get('kpi_classes', {})
+        kpi_p_values = annotation_data.get('kpi_p_values', {})
+        draw_kpi_annotation(annotated, kpi_values, kpi_classes, kpi_p_values)
+
+    return annotated
