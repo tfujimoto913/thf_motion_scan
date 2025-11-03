@@ -7,7 +7,7 @@ import io
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import boto3
 
@@ -44,6 +44,46 @@ def _build_csv(rows: List[Dict[str, Any]]) -> bytes:
     return buffer.getvalue().encode("utf-8")
 
 
+SEVERITY_ORDER = {
+    "OK": 0,
+    "VALID": 0,
+    "WARN": 1,
+    "ATTN": 1,
+    "INVALID": 2,
+    "ERROR": 2,
+}
+
+
+def _representative_samples(success: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    upshift: List[Dict[str, Any]] = []
+    downshift: List[Dict[str, Any]] = []
+    for item in success:
+        score_delta = float(item.get("score_delta", 0))
+        old_state = (item.get("old_validation_state") or "").upper()
+        new_state = (item.get("new_validation_state") or "").upper()
+        old_severity = SEVERITY_ORDER.get(old_state, 1)
+        new_severity = SEVERITY_ORDER.get(new_state, 1)
+        payload = {
+            "rep_id": item.get("rep_id"),
+            "old_state": item.get("old_validation_state"),
+            "new_state": item.get("new_validation_state"),
+            "old_score": item.get("old_score"),
+            "new_score": item.get("new_score"),
+            "score_delta": score_delta,
+        }
+        if new_severity < old_severity:
+            upshift.append(payload)
+        elif new_severity > old_severity:
+            downshift.append(payload)
+        elif score_delta >= 0:
+            upshift.append(payload)
+        else:
+            downshift.append(payload)
+    upshift.sort(key=lambda row: abs(row["score_delta"]), reverse=True)
+    downshift.sort(key=lambda row: abs(row["score_delta"]), reverse=True)
+    return upshift[:3], downshift[:3]
+
+
 def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     execution_id = event.get("execution_id")
     threshold_version = event.get("threshold_version")
@@ -61,21 +101,42 @@ def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
         or abs(float(item.get("score_delta", 0))) > 1e-6
     ]
 
+    reclassified = [
+        item
+        for item in success
+        if item.get("old_validation_state") != item.get("new_validation_state")
+    ]
+    reclassified_count = len(reclassified)
+    processed_success = len(success)
+    reclassified_rate = (reclassified_count / processed_success) if processed_success else 0.0
+    upshift, downshift = _representative_samples(reclassified or success)
+
     summary = {
         "execution_id": execution_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "threshold_version": threshold_version,
-        "artifact_sha": artifact_sha,
-        "rules_version": rules_version,
+        "versions": {
+            "thresholds_json": threshold_version,
+            "scoring_engine": rules_version,
+            "artifact_sha": artifact_sha,
+        },
         "total_processed": len(results),
         "success_count": len(success),
         "failure_count": len(failed),
-        "reclassified_count": len(reclassified),
+        "reclassified_count": reclassified_count,
+        "impact_count": reclassified_count,
+        "reclassified_rate": round(reclassified_rate, 4),
         "avg_score_delta": (
             sum(float(item.get("score_delta", 0)) for item in success) / len(success)
             if success
             else 0.0
         ),
+        "representatives": {
+            "upshift": upshift,
+            "downshift": downshift,
+        },
+        "threshold_version": threshold_version,
+        "artifact_sha": artifact_sha,
+        "rules_version": rules_version,
     }
 
     prefix = PREFIX.rstrip("/") + f"/{execution_id}/"
