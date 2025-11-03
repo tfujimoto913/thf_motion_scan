@@ -3,23 +3,47 @@ Purpose: Static frame selection and storage helpers for rep/session pipelines
 Responsibility: Pick best/worst/representative frames/reps and build storage keys
 Dependencies: typing, re, pathlib, boto3 (optional for upload), statistics
 Created: 2025-11-06 by Codex
-Updated: 2025-11-03 by Claude Code - Added rep-level selection logic
-Decision Log: Task E - Static frame selection (Phase2 Rep基盤), Phase2 Overlay仕様FIX
+Updated: 2025-11-04 by Claude Code - Phase2 KPI-based frame selection
+Decision Log: Task E - Static frame selection (Phase2 Rep基盤), Phase2 Overlay仕様FIX, Phase2 静止画選出ロジック
 
 CRITICAL:
 - select_representative_reps() selects 3 reps (best/worst/repr) from multiple reps
 - N/A handling: exclude N/A KPIs, require >= 50% valid KPIs
 - Tiebreak: N/A rate (lower is better) -> rep_number (earlier is better)
+- extract_frame_kpis() extracts B1-B8 KPIs from evaluator output for frame-level selection
 """
 
 from __future__ import annotations
 
+import logging
+import math
 import re
 import statistics
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 FRAME_TYPES = ("best", "worst", "repr")
+
+# B1-B8 KPI names (8 principles)
+B_PRINCIPLES_KEYS = [
+    "B1_core_stability",
+    "B2_support_foundation",
+    "B3_3joint_coordination",
+    "B4_pelvis_horizontal",
+    "B5_knee_stability",
+    "B6_ankle_mobility",
+    "B7_upper_body_control",
+    "B8_breathing_pattern",
+]
+
+# Major KPIs for selection priority (B1, B4, B2)
+MAJOR_KPI_KEYS = [
+    "B1_core_stability",
+    "B4_pelvis_horizontal",
+    "B2_support_foundation",
+]
+
+logger = logging.getLogger(__name__)
 
 
 def _normalise_frame(frame: Mapping[str, Any]) -> Dict[str, Any]:
@@ -558,3 +582,145 @@ def build_rep_annotation(
             "rep_number": rep_number,
         },
     }
+
+
+# ========== Stage 1: KPI Extraction from Evaluator Output ==========
+
+
+def _is_na_value(value: Any) -> bool:
+    """
+    Check if a value represents N/A.
+
+    What: Detect N/A values (None, NaN, missing keys).
+    Why: Unified N/A detection for KPI extraction.
+    Design Decision: None, float('nan'), and missing keys are all N/A. 0.0 is valid.
+
+    Args:
+        value: KPI value to check
+
+    Returns:
+        bool: True if N/A, False otherwise
+
+    CRITICAL:
+    - None is N/A
+    - float('nan') is N/A (using math.isnan)
+    - 0.0 is NOT N/A (explicit valid value)
+    """
+    if value is None:
+        return True
+
+    # Check for NaN
+    try:
+        if isinstance(value, float) and math.isnan(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return False
+
+
+def extract_frame_kpis(
+    frames_data: Sequence[Mapping[str, Any]],
+    phase: str = "eccentric",
+) -> List[Dict[str, Any]]:
+    """
+    Extract B1-B8 KPI vectors from evaluator output frames.
+
+    What: Extract KPI values from B_principles structure for each frame.
+    Why: Provide clean KPI vectors for best/worst/repr selection algorithms.
+    Design Decision: N/A values (None, NaN, missing keys) are preserved as None.
+                     0.0 is treated as a valid value. Major KPI absence triggers warning.
+
+    Args:
+        frames_data: List of frame dicts with B_principles structure
+                     [{frame_idx: int, B_principles: {phase: {B1_...: float, ...}}}, ...]
+        phase: Phase to extract ('eccentric' or 'concentric')
+
+    Returns:
+        List[Dict]: [{
+            'frame_idx': int,
+            'kpis': {B1_core_stability: float|None, B2_...: float|None, ...},
+            'na_count': int,
+            'na_rate': float (0.0-1.0),
+            'major_kpis_missing': bool
+        }, ...]
+
+    Raises:
+        ValueError: If all KPIs are N/A for a frame
+
+    CRITICAL:
+    - N/A values: None, float('nan'), or missing keys
+    - 0.0 is valid (not N/A)
+    - Major KPIs: B1, B4, B2
+    - Overall na_rate > 0.5 triggers warning log
+    """
+    if not frames_data:
+        return []
+
+    result = []
+    total_frames = len(frames_data)
+    overall_na_count = 0
+    total_kpis = len(B_PRINCIPLES_KEYS)
+
+    for frame_data in frames_data:
+        frame_idx = frame_data.get("frame_idx", 0)
+        b_principles = frame_data.get("B_principles", {})
+        phase_data = b_principles.get(phase, {})
+
+        # Extract KPIs
+        kpis: Dict[str, Optional[float]] = {}
+        na_count = 0
+
+        for kpi_key in B_PRINCIPLES_KEYS:
+            value = phase_data.get(kpi_key)
+
+            # Check if N/A
+            if _is_na_value(value):
+                kpis[kpi_key] = None
+                na_count += 1
+            else:
+                # Valid value (including 0.0)
+                try:
+                    kpis[kpi_key] = float(value)
+                except (TypeError, ValueError):
+                    # Cannot convert to float, treat as N/A
+                    kpis[kpi_key] = None
+                    na_count += 1
+
+        # Check if all KPIs are N/A
+        if na_count == total_kpis:
+            raise ValueError(
+                f"All KPIs are N/A for frame {frame_idx} (phase={phase}). "
+                "Cannot proceed with frame selection."
+            )
+
+        # Check if major KPIs are all missing
+        major_kpis_missing = all(kpis.get(key) is None for key in MAJOR_KPI_KEYS)
+
+        # Calculate N/A rate
+        na_rate = na_count / total_kpis
+
+        result.append(
+            {
+                "frame_idx": frame_idx,
+                "kpis": kpis,
+                "na_count": na_count,
+                "na_rate": na_rate,
+                "major_kpis_missing": major_kpis_missing,
+            }
+        )
+
+        overall_na_count += na_count
+
+    # Calculate overall N/A rate
+    overall_na_rate = overall_na_count / (total_frames * total_kpis) if total_frames > 0 else 0.0
+
+    # Warning if overall N/A rate > 50%
+    if overall_na_rate > 0.5:
+        logger.warning(
+            f"High N/A rate detected: {overall_na_rate:.2%} "
+            f"({overall_na_count}/{total_frames * total_kpis} KPIs are N/A). "
+            "Frame selection quality may be degraded."
+        )
+
+    return result
