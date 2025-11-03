@@ -1,25 +1,35 @@
 {
-  "session_id": "session-ok-three",
-  "athlete_id": "athlete-003",
-  "test_code": "T03_push_pull",
-  "qc_pass_count": 3,
-  "total_reps": 3,
-  "aggregates": {
-    "best_score": 74.0,
-    "average_score": 70.0,
-    "rep_summaries": [
-      {"rep_index": 0, "overall": 72.0},
-      {"rep_index": 1, "overall": 70.0},
-      {"rep_index": 2, "overall": 68.0}
-    ]
-  },
-  "versions": {
-    "rules_version": "2.2.0",
-    "thresholds_version": "1.2.0",
-    "artifact_sha": "local-dev"
+  "session_id": "sess-ok-three",
+  "athlete_id": "ath-ok-003",
+  "test_name": "push_pull",
+  "threshold_version": "v2.1",
+  "aggregated_scores": {
+    "mean_composite": 71.2,
+    "std_composite": 1.6,
+    "valid_rep_count": 3,
+    "total_rep_count": 5
   },
   "validation": {
-    "state": "OK",
-    "violations": []
+    "state": "VALID",
+    "messages": ["Minimum valid reps satisfied"],
+    "qc_gate_result": {
+      "gate_name": "B4_sigma",
+      "passed": true,
+      "criteria_met": ["valid_rep_count >= 3"]
+    }
+  },
+  "reps": [
+    {"rep_id": "rep-three-001", "state": "VALID"},
+    {"rep_id": "rep-three-002", "state": "VALID"},
+    {"rep_id": "rep-three-003", "state": "VALID"},
+    {"rep_id": "rep-three-004", "state": "WARN"},
+    {"rep_id": "rep-three-005", "state": "WARN"}
+  ],
+  "metadata": {
+    "processed_at": "2025-11-04T10:15:00Z",
+    "versions": {
+      "threshold": "v2.1",
+      "schema": "1.0.0"
+    }
   }
 }

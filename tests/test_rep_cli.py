@@ -8,6 +8,7 @@ Decision Log: Rep CLI MVP - Stage 1
 CRITICAL: TDD Red phase - このテストは最初失敗すべき
 """
 import pytest
+import re
 import sys
 import types
 from pathlib import Path
@@ -329,12 +330,13 @@ class TestRepresentativeFrames:
         # 3枚のフレームを返す
         assert 'best' in result
         assert 'worst' in result
-        assert 'median' in result
+        assert 'repr' in result
+        assert result['median'] == result['repr']
 
         # 正しいインデックス
         assert result['best']['frame_idx'] == 2
         assert result['worst']['frame_idx'] == 4
-        assert result['median']['frame_idx'] == 3  # sorted後の中央値
+        assert result['repr']['frame_idx'] == 3  # 最も平均に近いフレーム
 
     def test_select_representative_frames_handles_single_frame(self):
         """
@@ -350,7 +352,7 @@ class TestRepresentativeFrames:
         # 全て同じフレーム
         assert result['best']['frame_idx'] == 0
         assert result['worst']['frame_idx'] == 0
-        assert result['median']['frame_idx'] == 0
+        assert result['repr']['frame_idx'] == 0
 
 
 class TestJSONCSVOutput:
@@ -432,7 +434,7 @@ class TestRepSessionExports:
 
     def test_export_rep_session_results_matches_schema(self, tmp_path):
         from cli.rep_cli import export_rep_session_results
-        from jsonschema import Draft7Validator
+        from jsonschema import Draft202012Validator
         import json
         from pathlib import Path
 
@@ -460,29 +462,21 @@ class TestRepSessionExports:
 
         paths = export_rep_session_results(result, tmp_path)
 
-        rep_schema = json.loads((project_root / 'schema' / 'rep_result.schema.jsonl').read_text())
-        rep_validator = Draft7Validator(rep_schema)
-        rep_records = []
+        rep_schema = json.loads((project_root / 'schema' / 'rep_result.schema.json').read_text())
+        rep_validator = Draft202012Validator(rep_schema)
         with open(paths['rep_result'], encoding='utf-8') as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                rep_validator.validate(record)
-                rep_records.append(record)
-                assert 'thresholds_version' in record['versions']
-                assert 'state' in record['validation']
-
-        assert rep_records, "rep_result.jsonl should contain at least one record"
+            rep_record = json.load(fh)
+        rep_validator.validate(rep_record)
+        assert rep_record['validation']['state'] in {'VALID', 'WARN', 'INVALID'}
+        assert re.match(r"^(v\d+\.\d+|\d+\.\d+\.\d+)$", rep_record['threshold_version'])
 
         session_schema = json.loads((project_root / 'schema' / 'session_result.schema.json').read_text())
-        session_validator = Draft7Validator(session_schema)
+        session_validator = Draft202012Validator(session_schema)
         with open(paths['session_result'], encoding='utf-8') as fh:
             session_payload = json.load(fh)
         session_validator.validate(session_payload)
-        assert session_payload['validation']['state'] in {'OK', 'WARN', 'ERROR'}
-        assert session_payload['versions']['thresholds_version'] == '1.0.0'
+        assert session_payload['validation']['state'] in {'VALID', 'WARN', 'INVALID'}
+        assert session_payload['metadata']['versions']['threshold'] == '1.0.0'
 
 class TestImageOverlay:
     """

@@ -1,0 +1,35 @@
+{
+  "session_id": "sess-0002",
+  "athlete_id": "ath-0001",
+  "test_name": "single_leg_squat",
+  "threshold_version": "v2.1",
+  "aggregated_scores": {
+    "mean_composite": 72.0,
+    "std_composite": 6.2,
+    "valid_rep_count": 4,
+    "total_rep_count": 5
+  },
+  "validation": {
+    "state": "WARN",
+    "messages": ["One rep flagged for low stability"],
+    "qc_gate_result": {
+      "gate_name": "B4_sigma",
+      "passed": true,
+      "criteria_met": ["B4_sigma >= 3.0"]
+    }
+  },
+  "reps": [
+    {"rep_id": "rep-0101", "state": "VALID"},
+    {"rep_id": "rep-0102", "state": "VALID"},
+    {"rep_id": "rep-0103", "state": "WARN"},
+    {"rep_id": "rep-0104", "state": "VALID"},
+    {"rep_id": "rep-0105", "state": "VALID"}
+  ],
+  "metadata": {
+    "processed_at": "2025-11-03T10:00:00Z",
+    "versions": {
+      "threshold": "v2.1",
+      "schema": "1.0.0"
+    }
+  }
+}

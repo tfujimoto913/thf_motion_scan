@@ -39,11 +39,10 @@ python cli/rep_cli.py --video test.mp4 --dump-trace false
 
 ## 出力ファイル
 
-- **`result.json`**: scores, class, versions, representative_frames含む
+- **`result.json`**: scores, class, versions, static_frames含む
 - **`trace.csv`**: 時系列データ（time, angle_x/y/z, events, class_trace）
-- **`best.png`**: 最高スコアフレーム＋骨格オーバーレイ（--overlay true時）
-- **`worst.png`**: 最低スコアフレーム＋骨格オーバーレイ（--overlay true時）
-- **`median.png`**: 中央値スコアフレーム＋骨格オーバーレイ（--overlay true時）
+- **`{session_id}_{rep_id}_{type}.jpg` ×3**: 代表フレーム（type: best / worst / repr、--overlay true時）
+- **S3アップロード (任意)**: `THF_FRAME_BUCKET` を設定すると `s3://<bucket>/<session>/<rep>/<type>.jpg` に保存
 
 ### result.json 例
 ```json
@@ -73,7 +72,7 @@ python cli/rep_cli.py --video non_existent.mp4
 
 ## オーバーレイ仕様
 
-代表フレーム3枚（best/worst/median）に以下を描画：
+代表フレーム3枚（best/worst/repr）に以下を描画：
 - **肩線**：両肩ランドマークを結ぶ直線（緑）
 - **骨盤線**：左右hip ランドマークを結ぶ直線（青）
 - **体幹軸**：首〜骨盤中心のベクトル（黄）
@@ -81,6 +80,13 @@ python cli/rep_cli.py --video non_existent.mp4
 - **スコア注記**：overall score、例："Score: 75.0"
 
 可視性不足時は描画スキップ＋ flags=["low_visibility"] 付与
+
+### 環境変数
+
+| 変数 | 説明 |
+|------|------|
+| `THF_FRAME_BUCKET` | 静止画をアップロードするS3バケット（未設定時はローカル保存のみ） |
+| `THF_FRAME_PREFIX` | S3キーのプレフィックス（例: `dev/frames`） |
 
 ## 制約・今後の改善
 

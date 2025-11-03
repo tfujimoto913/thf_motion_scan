@@ -2324,7 +2324,7 @@ Week 1デプロイ後の追加要求として、以下3つの機能が必要と�
   - **出力ファイル構造**:
     - `result.json`: {session_id, rep_id, scores, class, class_prob, uncertainty, flags, versions, representative_frames}
     - `trace.csv`: 時系列データ（time, angle_x/y/z, events, class_trace）
-    - `best.png`, `worst.png`, `median.png`: 代表フレーム3枚（骨格オーバーレイ付き）
+    - `{session_id}_{rep_id}_{best|worst|repr}.jpg`: 代表フレーム3枚（骨格オーバーレイ付き）
 - Stage別実装履歴:
   - **Stage 1 (CLI骨格)**: argparse、入力検証（FileNotFoundError）、エラーハンドリング（原因+次アクション提示）、6テスト
   - **Stage 2-1 (Pose抽出)**: PoseExtractor統合、ランドマークデータ生成、versions生成、2テスト追加
@@ -2638,7 +2638,7 @@ Phase 0-4 適用ルール（Validation Ops Hub）を本番運用に組み込む�
 - `processing/worker.py` に QC Gate 呼び出しとログ出力 (`log_qc_gate`) を追加。
 - `processing/logger.py` に QC Gate 用ロガーを追加。
 - `tests/processing/test_qc_gate.py` で gate 評価の単体テストを実装。
-- `schema/rep_result.schema.jsonl`, `schema/session_result.schema.json`, `examples/*.sample` を QC Gate 語彙（band / metric / violations）に合わせて更新。
+- `schema/rep_result.schema.json`, `schema/session_result.schema.json`, `examples/*.sample` を QC Gate 語彙（band / metric / violations）に合わせて更新。
 - CI の schema 検証に `tests/fixtures/schemas/**` と公開サンプルを含めた。
 
 ### Consequences
@@ -2754,10 +2754,10 @@ Task A（thresholds_v2自動生成）とTask B（ValidationEngine統合）完了
   - config/thresholds_v2.jsonを唯一の真実源として導入
   - run_pipelineでversions.thresholds_versionとvalidation.state付与
 - rep/sessionレコードビルダー追加
-  - CLIがrep_result.jsonl / session_result.jsonを出力（cli/rep_cli.py:332-520）
+  - CLIがrep_result.json / session_result.jsonを出力（cli/rep_cli.py:332-520）
   - result.jsonと並行して詳細情報をエクスポート
 - スキーマ緩和
-  - rep/sessionスキーマで長いテストコード対応（schema/rep_result.schema.jsonl:25-96）
+  - rep/sessionスキーマで長いテストコード対応（schema/rep_result.schema.json:25-96）
   - ローカルビルドSHA対応（schema/session_result.schema.json:20-83）
   - ランタイムエクスポートがスキーマ検証をパス
 - CLIテストスイート強化
@@ -2780,14 +2780,14 @@ Task A（thresholds_v2自動生成）とTask B（ValidationEngine統合）完了
 - ローカルビルドSHAも許容（開発時の柔軟性）
 
 **end-to-endテスト**:
-- 生成されたrep_result.jsonl / session_result.jsonがスキーマ検証パス
+- 生成されたrep_result.json / session_result.jsonがスキーマ検証パス
 - 回帰防止とCI統合準備
 
 ### Consequences（影響）
 **影響範囲**:
 - cli/rep_cli.py: エクスポートヘルパー実装（332-520行、codex実装）
 - config/thresholds_v2.json: 唯一の真実源（1-22行、Task A成果物）
-- schema/rep_result.schema.jsonl: スキーマ緩和（25-96行、codex実装）
+- schema/rep_result.schema.json: スキーマ緩和（25-96行、codex実装）
 - schema/session_result.schema.json: スキーマ緩和（20-83行、codex実装）
 - tests/test_rep_cli.py: スタブ・end-to-endテスト追加（22-99, 433-485行、codex実装）
 - tests/test_result_schemas.py: 既存テスト維持（1-87行、全パス）
@@ -2799,7 +2799,7 @@ Task A（thresholds_v2自動生成）とTask B（ValidationEngine統合）完了
 
 **破壊的変更**: なし
 - result.jsonは従来通り出力
-- rep_result.jsonl / session_result.jsonは追加出力（既存フローに影響なし）
+- rep_result.json / session_result.jsonは追加出力（既存フローに影響なし）
 - スキーマ緩和は後方互換性維持
 
 **次のステップ（Next Step）**:
@@ -2813,7 +2813,7 @@ Task A（thresholds_v2自動生成）とTask B（ValidationEngine統合）完了
 **参照**:
 - cli/rep_cli.py:332-520（エクスポートヘルパー）
 - config/thresholds_v2.json:1-22（唯一の真実源）
-- schema/rep_result.schema.jsonl:25-96（スキーマ緩和）
+- schema/rep_result.schema.json:25-96（スキーマ緩和）
 - schema/session_result.schema.json:20-83（スキーマ緩和）
 - tests/test_rep_cli.py:22-99, 433-485（スタブ・end-to-endテスト）
 - tests/test_result_schemas.py:1-87（既存テスト維持）
@@ -2935,7 +2935,7 @@ Phase 2.5→5横断で、Notion Templates → thresholds_v2.json → ValidationE
 - dashboard/validation_badge.py実装（Claude Code）
 - セッション単位のvalidation state表示（OK=緑/WARN=黄/ERROR=赤）
 - violations/reasons両対応（後方互換性）
-- tests/fixtures/session_result/warn1.json追加（WARN状態テスト）
+- tests/fixtures/session_result/valid/valid_warn_low_count.json追加（WARN状態テスト）
 - dashboard/session_pages.py統合（318-330行）
 
 ### Rationale（理由）
@@ -2959,11 +2959,11 @@ Phase 2.5→5横断で、Notion Templates → thresholds_v2.json → ValidationE
 **OK/WARN/ERROR統一語彙**:
 - CLI/Lambda/Dashboardで同一ステータス使用
 - Phase 2.5（ValidationEngine）→ Phase 5（Dashboard）横断で整合性担保
-- rep_result.jsonl / session_result.jsonにvalidation.state付与
+- rep_result.json / session_result.jsonにvalidation.state付与
 
 **後方互換性維持**:
 - 既存フローは非破壊（result.jsonは従来通り出力）
-- rep_result.jsonl / session_result.jsonは追加出力
+- rep_result.json / session_result.jsonは追加出力
 - validation未取得時もクラッシュしない（フォールバック実装）
 
 ### Consequences（影響）
@@ -2988,13 +2988,13 @@ Phase 2.5→5横断で、Notion Templates → thresholds_v2.json → ValidationE
 **Task D成果物**:
 - dashboard/validation_badge.py（新規145行、Claude Code実装）
 - dashboard/session_pages.py（318-330行、Claude Code実装）
-- dashboard/session_result_loader.py（warn1フィクスチャ追加、Claude Code実装）
-- tests/fixtures/session_result/warn1.json（新規、Claude Code実装）
+- dashboard/session_result_loader.py（デモフィクスチャ自動検出、Claude Code実装）
+- tests/fixtures/session_result/valid/valid_warn_low_count.json（新規、Claude Code実装）
 - README.md（740-772行 → 統合セクションに変更、Claude Code実装）
 
 **CLI Export Pipeline統合（Task B+C横断）**:
 - cli/rep_cli.py: エクスポートヘルパー実装（332-520行、codex実装）
-- schema/rep_result.schema.jsonl: スキーマ緩和（25-96行、codex実装）
+- schema/rep_result.schema.json: スキーマ緩和（25-96行、codex実装）
 - schema/session_result.schema.json: スキーマ緩和（20-83行、codex実装）
 - tests/test_rep_cli.py: end-to-endテスト追加（22-99, 433-485行、codex実装）
 
@@ -3062,6 +3062,6 @@ Phase 2.5→5横断で、Notion Templates → thresholds_v2.json → ValidationE
 - Task A: tools/build_thresholds.py, config/thresholds_v2.json
 - Task B: src/config/compat.py, src/config/loader.py
 - Task C: dashboard/version_display.py, config/required_versions.json
-- Task D: dashboard/validation_badge.py, tests/fixtures/session_result/warn1.json
+- Task D: dashboard/validation_badge.py, tests/fixtures/session_result/valid/valid_warn_low_count.json
 - CLI統合: cli/rep_cli.py:332-520, schema/*_result.schema.*
 - README: README.md 統合セクション（~200文字概要 + Task A-D箇条書き）

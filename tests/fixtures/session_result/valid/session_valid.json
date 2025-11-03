@@ -1,11 +1,11 @@
 {
-  "session_id": "sess-ok-all",
-  "athlete_id": "ath-ok-001",
+  "session_id": "sess-0001",
+  "athlete_id": "ath-0001",
   "test_name": "single_leg_squat",
   "threshold_version": "v2.1",
   "aggregated_scores": {
-    "mean_composite": 82.4,
-    "std_composite": 1.1,
+    "mean_composite": 86.2,
+    "std_composite": 2.5,
     "valid_rep_count": 5,
     "total_rep_count": 5
   },
@@ -19,14 +19,14 @@
     }
   },
   "reps": [
-    {"rep_id": "rep-ok-001", "state": "VALID"},
-    {"rep_id": "rep-ok-002", "state": "VALID"},
-    {"rep_id": "rep-ok-003", "state": "VALID"},
-    {"rep_id": "rep-ok-004", "state": "VALID"},
-    {"rep_id": "rep-ok-005", "state": "VALID"}
+    {"rep_id": "rep-0001", "state": "VALID"},
+    {"rep_id": "rep-0002", "state": "VALID"},
+    {"rep_id": "rep-0003", "state": "VALID"},
+    {"rep_id": "rep-0004", "state": "VALID"},
+    {"rep_id": "rep-0005", "state": "VALID"}
   ],
   "metadata": {
-    "processed_at": "2025-11-04T09:00:00Z",
+    "processed_at": "2025-11-03T09:00:00Z",
     "versions": {
       "threshold": "v2.1",
       "schema": "1.0.0"

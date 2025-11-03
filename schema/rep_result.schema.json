@@ -17,17 +17,14 @@
   "properties": {
     "rep_id": {
       "type": "string",
-      "description": "Unique identifier of the rep (UUID).",
       "pattern": "^[A-Za-z0-9\\-]{6,64}$"
     },
     "session_id": {
       "type": "string",
-      "description": "Identifier of the parent session.",
       "pattern": "^[A-Za-z0-9\\-]{6,64}$"
     },
     "test_name": {
       "type": "string",
-      "description": "One of the 7 THF motion scan test names.",
       "enum": [
         "single_leg_squat",
         "skater_lunge",
@@ -40,8 +37,7 @@
     },
     "threshold_version": {
       "type": "string",
-      "description": "Threshold definition version that produced this rep.",
-      "pattern": "^v\\d+\\.\\d+$"
+      "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
     },
     "scores": {
       "type": "object",
@@ -90,8 +86,7 @@
           "items": {
             "type": "string",
             "minLength": 1
-          },
-          "description": "Human readable validation observations."
+          }
         }
       }
     },

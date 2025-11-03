@@ -5,11 +5,12 @@ Phase 0-4 の適用ルール（Validation Ops Hub）の要点を CI / 前処理 
 
 ## 1. CI 連携
 - `.github/workflows/validate-thresholds-v2.yml` を既存 CI に追加し、以下を自動検証
-  - `tests/fixtures/thresholds_v2/valid/` → pass
+  - `tests/fixtures/thresholds_v2/{valid,warn}/` → pass
   - `tests/fixtures/thresholds_v2/invalid/` → fail
-  - `tests/fixtures/schemas/**/valid/` → pass
-  - `tests/fixtures/schemas/**/invalid/` → fail
-  - `examples/rep_result.sample.jsonl` / `examples/session_result.sample.json` → smoke test
+  - `tests/fixtures/rep_result/{valid,warn}/` → pass
+  - `tests/fixtures/session_result/{valid,warn}/` → pass
+  - `tests/fixtures/rep_result/invalid/`, `tests/fixtures/session_result/invalid/` → fail
+  - `examples/rep_result.sample.json` / `examples/session_result.sample.json` → smoke test
 - 2025-11 までは警告モード。2025-12 リリースで必須チェックに格上げ予定（README `Result Schema Contracts` 参照）。
 
 ## 2. 前処理 (QC Gate)

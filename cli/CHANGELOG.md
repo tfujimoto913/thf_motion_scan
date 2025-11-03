@@ -2,6 +2,23 @@
 
 versions差分を扱うための変更ログ
 
+## v0.3.0 (2025-11-06) - Static Frame Selector
+
+### Added
+- 静止画選出ロジック刷新（best/worst/repr、生データは processing.frame_selector に集約）
+- 画像ファイル命名規約 `{session_id}_{rep_id}_{type}.jpg` を実装（type: best/worst/repr）
+- S3アップロードサポート（`THF_FRAME_BUCKET`/`THF_FRAME_PREFIX` 環境変数、boto3利用）
+- セレクタ用ユニットテスト追加（tests/processing/test_frame_selector.py）
+- result.json に `static_frames` / `frame_assets` メタデータを付与
+
+### Changed
+- 代表フレームキー `median` → `repr`（後方互換のため alias を維持）
+- best/worst 判定タイブレークを angle/stability score に基づき安定化
+- representative frame をセッション平均に最も近いフレームへ変更
+
+### Deprecated
+- 旧PNG出力（best.png / worst.png / median.png）→ v0.3.0 で廃止
+
 ## v0.2.0 (2025-11-02) - Overlay Release
 
 ### Added

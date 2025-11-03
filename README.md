@@ -722,7 +722,8 @@ Notion Templates → thresholds_v2.json → ValidationEngine → Dashboard の�
 ### 実装ファイル
 - `config/thresholds_v2.json`: 唯一の真実源
 - `cli/rep_cli.py`: rep/sessionにvalidation.state付与
-- `tests/fixtures/session_result/`: セッション集計フィクスチャ（`valid/`3件・`invalid/`5件）
+- `processing/frame_selector.py`: 静止画best/worst/repr選定・S3命名規約
+- `tests/fixtures/session_result/`: セッション集計フィクスチャ（`valid/`4件・`warn/`1件・`invalid/`6件）
 - **`src/validation_engine/validator_rep.py`**: Rep-level検証（必須キー、型、バージョン互換性）
 - **`src/validation_engine/validator_session.py`**: Session-level集約（過半数判定、統計算出）
 
@@ -730,51 +731,72 @@ Notion Templates → thresholds_v2.json → ValidationEngine → Dashboard の�
 
 **Rep-level検証**:
 ```python
-from src.validation_engine.validator_rep import validate_rep
+import json
+from pathlib import Path
+from src.validation_engine import apply_rep
 
-rep_data = {
-    "session_id": "session-001",
-    "rep_index": 0,
-    "test_code": "T02_B2",
-    "rules_version": "2.1.0",
-    "thresholds_version": "1.0.0",
+thresholds = json.loads(Path("config/thresholds_v2.json").read_text(encoding="utf-8"))
+
+# MediaPipe evaluatorが計算した指標（thresholdsのcodeに対応）
+rep_metrics = {
+    "T02_B2": 0.12,
+    "T02_B4": 0.09
+}
+
+rep_metadata = {
+    "rules_version": "0.2.0",
+    "thresholds_version": "v2.1",
     "normalization_version": "none",
-    "metrics": {"score": 75.5},
-    "validation": {"state": "OK", "violations": []}
 }
 
-expected_versions = {
-    "rules_version": "2.1.0",
-    "thresholds_version": "1.0.0",
-    "normalization_version": "none"
-}
-
-result = validate_rep(rep_data, expected_versions)
-# result: {"state": "OK", "violations": []}
+result = apply_rep(rep_metrics, rep_metadata, thresholds)
+# result["validation"]["state"] -> "OK" | "WARN" | "ERROR"
+# CLI層では STATE_MAP を用いて VALID/WARN/INVALID に正規化して書き出す
 ```
 
 **Session-level集約**:
 ```python
-from src.validation_engine.validator_session import aggregate_session
+from src.validation_engine import apply_session
+from cli.rep_cli import build_session_result_record
 
-# 5 reps（3 OK + 2 WARN）
-reps = [...]  # JSONLファイルから読み込み
+session_metrics = {
+    "overall_score": 78.4
+}
+session_metadata = {
+    "rules_version": "0.2.0",
+    "thresholds_version": "v2.1",
+    "normalization_version": "none",
+}
 
-result = aggregate_session(reps, metric_key="score")
-# result: {
-#   "qc_pass_count": 5,  # OK + WARN
-#   "total_reps": 5,
-#   "aggregates": {
-#     "mean": 74.84,
-#     "sd": 4.36,
-#     "p95": 78.2,  # nearest-rank: sorted[3]
-#     "rep_states": ["OK", "OK", "OK", "WARN", "WARN"]
-#   },
-#   "validation": {
-#     "state": "WARN",  # 最悪ステータス採用
-#     "violations": [...]
-#   }
-# }
+session_validation = apply_session(session_metrics, session_metadata, thresholds)
+# session_validation["validation"]["state"] -> "OK" | "WARN" | "ERROR"
+
+# Export時は rep_cli のビルダで schema に準拠した JSON を生成
+rep_records = [
+    {
+        "rep_id": "rep-0001",
+        "session_id": "sess-1234",
+        "test_name": "single_leg_squat",
+        "threshold_version": "v2.1",
+        "scores": {"angle_score": 80.1, "stability_score": 79.3, "composite_score": 79.7},
+        "validation": {"state": "VALID", "messages": []}
+    }
+]
+
+record = build_session_result_record(
+    result={
+        "session_id": "sess-1234",
+        "athlete_id": "ath-5678",
+        "test_type": "single_leg_squat",
+        "versions": session_metadata,
+        "metadata": {"processed_at": "2025-11-04T12:00:00Z"},
+        "scores": {"overall": 78.4, "A_execution": 79.1, "B_total": 77.8},
+        "validation": session_validation["validation"]
+    },
+    rep_records=rep_records
+)
+# record["validation"]["state"] -> "VALID" | "WARN" | "INVALID"
+# record["aggregated_scores"] には mean/std/rep count が格納される
 ```
 
 **過半数ルール**:
@@ -789,6 +811,107 @@ result = aggregate_session(reps, metric_key="score")
 - `tests/validation_engine/fixtures/insufficient.jsonl` - 2 OK, 3 ERROR（過半数未達）
 
 詳細は ADR-034〜037 および各実装ファイルのコメントを参照してください。
+
+---
+
+## 🎬 Rep-level Selection (Phase 2 Overlay)
+
+### 概要
+複数reps（例：10本）から代表3本（best/worst/repr）を客観的基準で選定し、Overlay注記とともに表示。N/A処理・正規化スコア・タイブレーク規則により公平な比較を実現。
+
+### 選定アルゴリズム
+
+**前処理**:
+1. 各repのN/A率と有効KPI数を計算
+2. 有効KPI数 < 全KPI数 * 0.5（50%）のrepを除外
+3. 正規化スコア計算: `normalized_score = sum(有効KPI) / count(有効KPI)`
+
+**選定ルール**:
+- **Best**: normalized_score最大、同点時はN/A率最小、それでも同点なら早いrep_number
+- **Worst**: normalized_score最小、同点時はN/A率最小、それでも同点なら早いrep_number
+- **Representative**: normalized_scoreの中央値に最も近い、同点時はN/A率最小、それでも同点なら早いrep_number
+
+### N/A処理方針
+
+**正規化**:
+- N/A項目を除外して有効項目のみでスコア計算
+- N/Aの定義: `None`, `NaN`, 欠損キー
+
+**有効項目閾値**:
+- 全KPI数の50%未満のrepは候補から除外
+- 例: Hip Hinge Test（12 KPI）なら6項目以上必要
+
+**タイブレーク規則**:
+1. N/A率が低い方を優先
+2. それでも同点なら rep_number（撮影順）が若い方
+
+### 使用例
+
+```python
+from processing.frame_selector import select_representative_reps, build_rep_annotation
+
+# Rep data (from DynamoDB or local processing)
+reps = [
+    {
+        "rep_number": 0,
+        "kpi_scores": {"hip_angle": 87.3, "knee_angle": None, "torso_angle": 45.2, ...},
+        "kpi_classes": {"hip_angle": "B", "torso_angle": "A", ...},
+        "kpi_p_values": {"hip_angle": 0.92, "torso_angle": 0.88, ...},
+        "versions": {
+            "rules_version": "v2.1",
+            "thresholds_version": "v2.0",
+            "normalization_version": "v1.0"
+        }
+    },
+    # ... more reps
+]
+
+# Select representative reps
+selections = select_representative_reps(reps, min_valid_kpi_ratio=0.5)
+# → {"best": {...}, "worst": {...}, "repr": {...}}
+
+# Build annotation for overlay display
+if selections["best"]:
+    annotation = build_rep_annotation(selections["best"], selection_reason="best")
+    # → {
+    #     "kpi_values": {...},
+    #     "kpi_classes": {...},
+    #     "kpi_p_values": {...},
+    #     "versions": {...},
+    #     "metadata": {
+    #         "na_rate": 0.15,
+    #         "valid_kpi_count": 10,
+    #         "total_kpi_count": 12,
+    #         "selection_reason": "best",
+    #         "rep_number": 0
+    #     }
+    # }
+```
+
+### Overlay注記要素
+
+選定されたrepのannotationには以下が含まれます：
+- **kpi_values**: 各KPIの実測値
+- **kpi_classes**: 各KPIのクラス（A/B/C）
+- **kpi_p_values**: 各KPIのp値（信頼度）
+- **versions**: トレーサビリティ用バージョン情報
+- **metadata**: N/A率、有効KPI数、選定理由、rep番号
+
+### テストカバレッジ
+
+**受入条件（8ケース、100%パス）**:
+- ✅ ケースA: 正常系（10 reps、N/A率10%）
+- ✅ ケースB: N/A多数（4 reps除外）
+- ✅ ケースC: 同点（タイブレーク）
+- ✅ ケースD: 空データ
+- ✅ ケースE: versions不一致
+- ✅ ケースF: 注記要素
+- ✅ Edge case: 全rep除外
+- ✅ Edge case: タイブレーク詳細
+
+**テストファイル**: `tests/processing/test_frame_selector_reps.py`
+
+詳細は `processing/frame_selector.py` のコメントを参照してください。
 
 ---
 
@@ -1010,8 +1133,9 @@ python tools/build_thresholds.py \
 
 | ディレクトリ | 役割 | 内容 |
 |--------------|------|------|
-| `tests/fixtures/thresholds_v2/valid/` | スキーマに準拠した3件 | 単一テスト / secondary付き / 複合ユニット |
-| `tests/fixtures/thresholds_v2/invalid/` | 失敗期待の5件 | versions欠落 / code書式 / 演算子 / range長 / artifact_sha |
+| `tests/fixtures/thresholds_v2/valid/` | スキーマ準拠サンプル | v2.1固定、基準となる閾値セット |
+| `tests/fixtures/thresholds_v2/warn/` | ガード調整サンプル | warn/invalid境界を微調整した例 |
+| `tests/fixtures/thresholds_v2/invalid/` | 失敗期待 | rules欠落など構造不備 |
 
 CIでは `.github/workflows/validate-thresholds-v2.yml` がこれらのフィクスチャを検証し、`tools/build_thresholds.py --dry-run` を実行してビルドが成功することを保証します。
 
@@ -1026,10 +1150,10 @@ CIでは `.github/workflows/validate-thresholds-v2.yml` がこれらのフィク
 
 ## 📦 Result Schema Contracts
 
-- **互換ポリシー**: `schema/rep_result.schema.jsonl` / `schema/session_result.schema.json` は Draft-07 準拠。後方互換を維持したい場合は「任意フィールドの追加」のみで対応し、既存キーの型変更・必須化は禁止。破壊的変更を行う場合は `versions.rules_version` / `versions.thresholds_version` の MAJOR を更新し、ValidationEngine・Dashboard・CLI を同一リリースウィンドウで展開する。
+- **互換ポリシー**: `schema/rep_result.schema.json` / `schema/session_result.schema.json` / `schema/thresholds_v2.schema.json` は Draft 2020-12 準拠。後方互換を維持したい場合は「任意フィールドの追加」のみに留め、既存キーの型変更・必須化は禁止。破壊的変更を行う場合は `metadata.versions.schema` を MAJOR 更新し、ValidationEngine・Dashboard・CLI を同一リリースウィンドウで展開する。
 - **Non-breaking 例**: `validation.violations[*].hint` のようなオプションフィールド追加、`aggregates.extra_metrics` の追加は OK。**Breaking 例**: `validation.state` 語彙の変更、`versions.artifact_sha` の削除、`rep_index` の型変更など。
-- **マイグレーション注意点**: 既存データで `versions.*` が欠落している場合は `build_thresholds.py` 出力のメタデータを反映し、ValidationEngine が `validation.state` を再計算できるようにする。CI の `schema-fixtures` ジョブ（`tests/fixtures/schemas/**`）と `tests/test_result_schemas.py` を通過させること。
-- **運用チェックリスト**: 変更前後で `examples/rep_result.sample.jsonl` / `examples/session_result.sample.json` を `jsonschema --instance` で検証し、`qc_pass_count <= total_reps` の事後チェックを必須化。
+- **マイグレーション注意点**: 既存データで `threshold_version` が欠落している場合は `build_thresholds.py` 出力のメタデータを反映し、ValidationEngine が `validation.state` を再計算できるようにする。CI の schema 検証ジョブ（`tests/fixtures/rep_result/**`, `tests/fixtures/session_result/**`, `tests/fixtures/thresholds_v2/**`）と `tests/test_result_schemas.py` を通過させること。
+- **運用チェックリスト**: 変更前後で `examples/rep_result.sample.json` / `examples/session_result.sample.json` / `tests/fixtures/thresholds_v2/valid/v2_1.json` を `jsonschema --instance` で検証し、`aggregated_scores.valid_rep_count <= total_rep_count` を必須確認。
 - **関連仕様**: Validation Ops Hub「出力ルール＆処方マップ」、Streamlit Dashboard 統合仕様 v2.1、Rep CLI MVP。
 
 ---

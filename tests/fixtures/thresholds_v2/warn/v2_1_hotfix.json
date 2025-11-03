@@ -1,0 +1,16 @@
+{
+  "version": "v2.2",
+  "created_at": "2025-11-02T08:30:00Z",
+  "created_by": "qa-team",
+  "description": "Adjusted warn thresholds for pelvis stability.",
+  "rules": [
+    {
+      "test_name": "skater_lunge",
+      "angle_min": 15,
+      "angle_max": 115,
+      "stability_min": 70,
+      "warn_threshold": 8,
+      "invalid_threshold": 15
+    }
+  ]
+}

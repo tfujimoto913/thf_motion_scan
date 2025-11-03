@@ -329,7 +329,8 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
 
     if session_result_payload.available and session_result_payload.data:
         validation = session_result_payload.data.get("validation")
-        versions = session_result_payload.data.get("versions")
+        versions = ((session_result_payload.data.get("metadata") or {}).get("versions")
+                    or session_result_payload.data.get("versions"))
         render_validation_badge(validation, versions, show_legend=True)
     else:
         st.caption("ℹ️ session_result.json が利用できないため、Validation情報は表示できません。")
@@ -340,7 +341,8 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
 
     # ========== Versions情報表示 ==========
     version_summary = _extract_session_versions(session)
-    session_versions = (session_result_payload.data or {}).get('versions') or {}
+    session_versions = ((session_result_payload.data or {}).get('metadata') or {}).get('versions') or \
+        (session_result_payload.data or {}).get('versions') or {}
 
     rules_display = session_versions.get('rules_version') or rules_version or "-"
     thresholds_display = session_versions.get('thresholds_version') or "-"
@@ -615,7 +617,8 @@ def _store_session_result_state(
         'athlete_id': athlete_id,
         'session_id': session_id,
         'data': payload.data,
-        'versions': (payload.data or {}).get('versions', {}),
+        'versions': ((payload.data or {}).get('metadata') or {}).get('versions')
+        or (payload.data or {}).get('versions', {}),
         'source': payload.source,
         'error': payload.error,
     }
@@ -645,8 +648,9 @@ def _render_session_result_summary(
             return None
 
         data = payload.data or {}
-        qc_pass = data.get('qc_pass_count')
-        total_reps = data.get('total_reps')
+        aggregated = data.get("aggregated_scores") or {}
+        qc_pass = aggregated.get("valid_rep_count", data.get("qc_pass_count"))
+        total_reps = aggregated.get("total_rep_count", data.get("total_reps"))
         validation = data.get('validation') or {}
         validation_state = validation.get('state')
         violations = validation.get('violations') or []
@@ -663,7 +667,7 @@ def _render_session_result_summary(
             st.markdown(f"**{t('validation_state')}**")
             _render_validation_badge(validation_state, violations)
 
-        versions = data.get('versions') or {}
+        versions = (data.get("metadata") or {}).get("versions") or data.get('versions') or {}
         if versions:
             rules_v = versions.get('rules_version', '-')
             thresholds_v = versions.get('thresholds_version', '-')
@@ -779,7 +783,12 @@ def _render_pdf_generation(
                     use_container_width=True,
                 )
 
-            versions_meta = result_state.get('versions') or session_result.get('versions') or {}
+            versions_meta = (
+                result_state.get('versions')
+                or (session_result.get('metadata') or {}).get('versions')
+                or session_result.get('versions')
+                or {}
+            )
             if versions_meta:
                 st.caption(
                     f"{t('pdf_versions_caption')}: "
@@ -800,7 +809,8 @@ def _render_pdf_generation(
                         st.session_state[result_key] = {
                             'path': str(pdf_path),
                             'bytes': pdf_bytes,
-                            'versions': session_result.get('versions', {}),
+                            'versions': (session_result.get('metadata') or {}).get('versions')
+                            or session_result.get('versions', {}),
                             'generated_at': datetime.now(timezone.utc).isoformat(),
                         }
                         st.session_state.pop(confirm_key, None)
@@ -851,12 +861,18 @@ def _generate_session_pdf(
     c.drawString(margin, cursor_y, f"Session: {session.get('session_id', '-')}")
     cursor_y -= 16
 
-    processed_at = session.get('processed_at') or session_result.get('processed_at') or "-"
+    processed_at = (
+        session.get('processed_at')
+        or (session_result.get('metadata') or {}).get('processed_at')
+        or session_result.get('processed_at')
+        or "-"
+    )
     c.drawString(margin, cursor_y, f"Processed at: {processed_at}")
     cursor_y -= 16
 
-    qc_pass = session_result.get('qc_pass_count', 'N/A')
-    total_reps = session_result.get('total_reps', 'N/A')
+    aggregated_scores = session_result.get('aggregated_scores') or {}
+    qc_pass = aggregated_scores.get('valid_rep_count', session_result.get('qc_pass_count', 'N/A'))
+    total_reps = aggregated_scores.get('total_rep_count', session_result.get('total_reps', 'N/A'))
     c.drawString(margin, cursor_y, f"QC pass count: {qc_pass}/{total_reps}")
     cursor_y -= 16
 
@@ -864,7 +880,7 @@ def _generate_session_pdf(
     c.drawString(margin, cursor_y, f"Validation state: {validation_state}")
     cursor_y -= 24
 
-    aggregates = session_result.get('aggregates') or {}
+    aggregates = session_result.get('aggregates') or aggregated_scores
     if aggregates:
         c.setFont("Helvetica-Bold", 12)
         c.drawString(margin, cursor_y, "Aggregates")
@@ -874,7 +890,7 @@ def _generate_session_pdf(
         cursor_y = _draw_multiline_text(c, aggregates_text, margin, cursor_y, page_height, margin)
         cursor_y -= 18
 
-    versions = session_result.get('versions') or {}
+    versions = (session_result.get('metadata') or {}).get('versions') or session_result.get('versions') or {}
     if versions:
         if cursor_y < margin + 72:
             c.showPage()

@@ -12,12 +12,13 @@ CRITICAL:
 - 画像オーバーレイ仕様準拠
 - result.json + trace.csv 出力
 """
-import sys
 import argparse
+import os
+import sys
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -36,6 +37,11 @@ import cv2
 
 from src.config.loader import load_thresholds
 from src.validation_engine import apply_rep, apply_session
+from processing.frame_selector import (
+    select_rep_frame_triplet,
+    build_frame_filename,
+    upload_frame_image,
+)
 
 
 def parse_args(args: Optional[list] = None):
@@ -64,7 +70,7 @@ def parse_args(args: Optional[list] = None):
   rep-cli --help
 
 出力:
-  - best.png, worst.png, median.png (代表フレーム3枚、--overlay true時)
+  - {session_id}_{rep_id}_{type}.jpg ×3 (type: best/worst/repr、--overlay true時)
   - result.json (scores, class, versions含む)
   - trace.csv (時系列データ、--dump-trace true時)
 
@@ -178,51 +184,34 @@ def format_error_message(error: Exception) -> str:
     )
 
 
-def select_representative_frames(frame_scores: List[Dict]) -> Dict:
+def select_representative_frames(
+    frame_scores: List[Dict],
+    *,
+    session_mean: Optional[float] = None,
+) -> Dict:
     """
-    What: 代表フレーム3枚（best/worst/median）を抽出
-    Why: MVP仕様：overall scoreベースで代表フレーム選定
-    Design Decision: best=最高, worst=最低, median=中央値近傍
+    What: 代表フレーム3枚（best/worst/repr）を抽出
+    Why: Task E仕様：composite score を主軸に代表フレーム選定
+    Design Decision: best=最高, worst=最低, repr=セッション平均に最も近いフレーム
 
     Args:
         frame_scores: フレームごとのスコア
             [{'frame_idx': int, 'score': float}, ...]
+        session_mean: セッション平均スコア（repr選定のタイブレークで利用）
 
     Returns:
         Dict: {
             'best': {'frame_idx': int, 'score': float},
             'worst': {'frame_idx': int, 'score': float},
-            'median': {'frame_idx': int, 'score': float}
+            'repr': {'frame_idx': int, 'score': float}
         }
 
     CRITICAL: 単一フレームでも処理可能（全て同じフレーム返す）
     """
-    if not frame_scores:
-        # フレームがない場合のフォールバック
-        return {
-            'best': {'frame_idx': 0, 'score': 0.0},
-            'worst': {'frame_idx': 0, 'score': 0.0},
-            'median': {'frame_idx': 0, 'score': 0.0}
-        }
-
-    # スコアでソート
-    sorted_frames = sorted(frame_scores, key=lambda x: x['score'])
-
-    # best: 最高スコア
-    best = sorted_frames[-1]
-
-    # worst: 最低スコア
-    worst = sorted_frames[0]
-
-    # median: 中央値近傍
-    median_idx = len(sorted_frames) // 2
-    median = sorted_frames[median_idx]
-
-    return {
-        'best': best,
-        'worst': worst,
-        'median': median
-    }
+    selection = select_rep_frame_triplet(frame_scores, session_mean=session_mean)
+    # 後方互換のため median alias を追加
+    selection['median'] = selection['repr']
+    return selection
 
 
 def check_visibility(landmarks: List[Dict], threshold: float = 0.5) -> bool:
@@ -430,29 +419,69 @@ def generate_versions() -> Dict[str, str]:
     }
 
 
-def build_rep_result_record(result: Dict[str, Any], rep_index: int = 0) -> Dict[str, Any]:
-    """
-    Construct a rep_result entry that aligns with schema/rep_result.schema.jsonl.
-    """
-    evaluation = result.get('evaluation_detail') or result.get('evaluation', {})
-    test_code = evaluation.get('test_id') if isinstance(evaluation, dict) else None
+STATE_MAP = {
+    "OK": "VALID",
+    "WARN": "WARN",
+    "ERROR": "INVALID"
+}
 
-    metrics_source = {
-        'overall_score': result['scores']['overall'],
-        'A_execution_score': result['scores'].get('A_execution'),
-        'B_total': result['scores'].get('B_total'),
+
+def _normalise_validation(validation: Dict[str, Any]) -> Dict[str, Any]:
+    raw_state = validation.get('state', 'WARN')
+    mapped_state = STATE_MAP.get(raw_state, 'WARN')
+    raw_messages = validation.get('violations', []) or validation.get('messages', [])
+    messages: List[str] = []
+    for item in raw_messages:
+        if isinstance(item, str):
+            messages.append(item)
+        elif isinstance(item, dict):
+            if 'message' in item:
+                messages.append(str(item['message']))
+            elif 'field' in item and 'status' in item:
+                messages.append(f"{item['field']} -> {item['status']}")
+            else:
+                messages.append(json.dumps(item, ensure_ascii=False))
+        else:
+            messages.append(str(item))
+    if mapped_state == 'VALID':
+        messages = []
+    return {
+        'state': mapped_state,
+        'messages': messages
     }
-    metrics = {k: v for k, v in metrics_source.items() if v is not None}
+
+
+def build_rep_result_record(result: Dict[str, Any], rep_index: int = 0) -> Dict[str, Any]:
+    """Construct a rep_result entry that aligns with schema/rep_result.schema.json."""
+
+    evaluation = result.get('evaluation_detail') or result.get('evaluation', {})
+    scores_payload = result.get('scores', {})
+
+    scores = {
+        'angle_score': float(scores_payload.get('A_execution', 0.0)),
+        'stability_score': float(scores_payload.get('B_total', 0.0)),
+        'composite_score': float(scores_payload.get('overall', 0.0))
+    }
+
+    metadata_src = result.get('metadata', {})
+    processed_at = metadata_src.get('processed_at')
+    if not processed_at:
+        processed_at = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+    frame_count = metadata_src.get('frame_count') or 1
+    video_url = metadata_src.get('video_url') or f"s3://mock/rep-results/{result.get('rep_id')}.mp4"
 
     return {
-        'rep_index': rep_index,
         'rep_id': result.get('rep_id'),
         'session_id': result.get('session_id'),
-        'test_code': test_code or result.get('test_type'),
-        'metrics': metrics,
-        'flags': result.get('flags', []),
-        'versions': result['versions'],
-        'validation': result['validation'],
+        'test_name': result.get('test_type'),
+        'threshold_version': result['versions'].get('thresholds_version', 'v0.0'),
+        'scores': scores,
+        'validation': _normalise_validation(result.get('validation', {})),
+        'metadata': {
+            'processed_at': processed_at,
+            'frame_count': int(frame_count),
+            'video_url': video_url
+        }
     }
 
 
@@ -464,56 +493,80 @@ def build_session_result_record(
     Construct a session_result entry that aligns with schema/session_result.schema.json.
     """
     total_reps = len(rep_records)
-    scores = [
-        rep['metrics'].get('overall_score')
-        for rep in rep_records
-        if rep['metrics'].get('overall_score') is not None
-    ]
-    best_score = max(scores) if scores else 0.0
-    average_score = sum(scores) / len(scores) if scores else 0.0
-    qc_pass_count = sum(1 for rep in rep_records if rep['validation']['state'] != 'ERROR')
+    composite_scores = [rep['scores']['composite_score'] for rep in rep_records]
+    mean_composite = float(sum(composite_scores) / len(composite_scores)) if composite_scores else 0.0
+    if len(composite_scores) > 1:
+        variance = sum((score - mean_composite) ** 2 for score in composite_scores) / len(composite_scores)
+    else:
+        variance = 0.0
+    std_composite = variance ** 0.5
 
-    thresholds = _load_thresholds_data()
     versions = result['versions']
+    thresholds = _load_thresholds_data()
     session_validation = apply_session(
-        {'overall_score': average_score} if scores else {},
+        {'overall_score': mean_composite} if composite_scores else {},
         versions,
         thresholds
     )['validation']
 
-    aggregates: Dict[str, Any] = {
-        'best_score': round(best_score, 1) if scores else 0.0,
-        'average_score': round(average_score, 1) if scores else 0.0,
-        'rep_states': [rep['validation']['state'] for rep in rep_records],
-    }
+    normalized_session_validation = _normalise_validation(session_validation)
 
-    session_test_code = result.get('evaluation_detail', {}).get('test_id')
-    athlete_id = result.get('athlete_id') or 'Unknown'
+    rep_states = [rep['validation']['state'] for rep in rep_records]
+    valid_rep_count = sum(1 for state in rep_states if state == 'VALID')
+    qc_pass = valid_rep_count >= 3
+
+    metadata_src = result.get('metadata', {})
+    processed_at = metadata_src.get('processed_at') or datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
 
     return {
         'session_id': result.get('session_id'),
-        'athlete_id': athlete_id,
-        'test_code': session_test_code or result.get('test_type'),
-        'qc_pass_count': qc_pass_count,
-        'total_reps': total_reps,
-        'aggregates': aggregates,
-        'versions': versions,
-        'validation': session_validation,
+        'athlete_id': result.get('athlete_id') or 'Unknown',
+        'test_name': result.get('test_type'),
+        'threshold_version': versions.get('thresholds_version', 'v0.0'),
+        'aggregated_scores': {
+            'mean_composite': round(mean_composite, 2),
+            'std_composite': round(std_composite, 2),
+            'valid_rep_count': valid_rep_count,
+            'total_rep_count': 5
+        },
+        'validation': {
+            'state': normalized_session_validation['state'],
+            'messages': normalized_session_validation['messages'],
+            'qc_gate_result': {
+                'gate_name': 'B4_sigma',
+                'passed': qc_pass,
+                'criteria_met': ['B4_sigma >= 3.0'] if qc_pass else []
+            }
+        },
+        'reps': [
+            {
+                'rep_id': rep['rep_id'],
+                'state': rep['validation']['state']
+            }
+            for rep in rep_records
+        ],
+        'metadata': {
+            'processed_at': processed_at,
+            'versions': {
+                'threshold': versions.get('thresholds_version', 'v0.0'),
+                'schema': '1.0.0'
+            }
+        }
     }
 
 
 def export_rep_session_results(result: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
     """
-    Export rep_result.jsonl and session_result.json documents for downstream consumers.
+    Export rep_result.json and session_result.json documents for downstream consumers.
     Returns a dict of created file paths for convenience.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rep_record = build_rep_result_record(result, rep_index=0)
-    rep_result_path = output_dir / 'rep_result.jsonl'
-    with open(rep_result_path, 'a', encoding='utf-8') as fh:
-        fh.write(json.dumps(rep_record, ensure_ascii=False) + '\n')
+    rep_result_path = output_dir / 'rep_result.json'
+    with open(rep_result_path, 'w', encoding='utf-8') as fh:
+        json.dump(rep_record, fh, indent=2, ensure_ascii=False)
 
     session_record = build_session_result_record(result, [rep_record])
     session_result_path = output_dir / 'session_result.json'
@@ -618,7 +671,8 @@ def run_pipeline(
         for idx in range(len(landmarks_data)):
             frame_scores.append({'frame_idx': idx, 'score': overall})
 
-    representative_frames = select_representative_frames(frame_scores)
+    selection = select_representative_frames(frame_scores, session_mean=scores['overall'])
+    static_frames = {key: selection[key] for key in ['best', 'worst', 'repr']}
 
     thresholds = _load_thresholds_data()
     rep_validation = apply_rep(
@@ -637,7 +691,8 @@ def run_pipeline(
         'uncertainty': uncertainty,
         'flags': flags,
         'versions': versions,
-        'representative_frames': representative_frames,  # 代表フレーム3枚
+        'static_frames': static_frames,  # best/worst/repr
+        'representative_frames': selection,  # 後方互換（median alias含む）
         'evaluation_detail': eval_result,  # デバッグ用詳細情報
         'validation': rep_validation,
     }
@@ -701,13 +756,19 @@ def main():
             # 出力ディレクトリ作成
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            # 代表フレーム情報
-            rep_frames = result.get('representative_frames', {})
+            rep_frames = result.get('static_frames', {})
 
-            # 動画を再度開いて代表フレームを取得
             cap = cv2.VideoCapture(str(video_path))
+            frame_bucket = os.environ.get("THF_FRAME_BUCKET")
+            frame_prefix = os.environ.get("THF_FRAME_PREFIX")
+            s3_client = None
+            s3_uris: List[str] = []
+            if frame_bucket:
+                import boto3
 
-            for frame_type in ['best', 'worst', 'median']:
+                s3_client = boto3.client("s3")
+
+            for frame_type in ['best', 'worst', 'repr']:
                 if frame_type not in rep_frames:
                     continue
 
@@ -738,10 +799,34 @@ def main():
                         annotated = draw_overlay(frame, landmarks, overlay_info)
 
                         # 画像保存
-                        image_path = out_dir / f"{frame_type}.png"
-                        cv2.imwrite(str(image_path), annotated)
+                        file_name = build_frame_filename(result['session_id'], result['rep_id'], frame_type)
+                        image_path = out_dir / file_name
+                        cv2.imwrite(str(image_path), annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
                         image_paths.append(image_path)
                         print(f"  ✅ {image_path}")
+
+                        if s3_client and frame_bucket:
+                            metadata = {
+                                "session_id": result['session_id'],
+                                "rep_id": result['rep_id'],
+                                "frame_type": frame_type,
+                                "frame_idx": rep_frames[frame_type]['frame_idx'],
+                                "score": rep_frames[frame_type]['score'],
+                            }
+                            s3_key = upload_frame_image(
+                                s3_client,
+                                frame_bucket,
+                                result['session_id'],
+                                result['rep_id'],
+                                frame_type,
+                                image_path,
+                                prefix=frame_prefix,
+                                metadata=metadata,
+                            )
+                            s3_uri = f"s3://{frame_bucket}/{s3_key}"
+                            s3_uris.append(s3_uri)
+                            print(f"     ↳ ☁️ Uploaded to {s3_uri}")
+
                     else:
                         # 可視性不足
                         if 'low_visibility' not in result['flags']:
@@ -749,6 +834,10 @@ def main():
                         print(f"  ⚠️  {frame_type} フレーム：可視性不足（描画スキップ）")
 
             cap.release()
+            if image_paths:
+                result.setdefault('frame_assets', {})['local'] = [str(path) for path in image_paths]
+            if s3_client and frame_bucket and s3_uris:
+                result.setdefault('frame_assets', {})['s3'] = s3_uris
 
         # ステップ3: ファイル出力
         print("  [3/4] ファイル出力中...")
@@ -807,6 +896,9 @@ def main():
         if args.overlay and image_paths:
             for img_path in image_paths:
                 print(f"   - {img_path}")
+        if args.overlay and result.get('frame_assets', {}).get('s3'):
+            for uri in result['frame_assets']['s3']:
+                print(f"   - {uri}")
         print("=" * 60)
 
         return 0

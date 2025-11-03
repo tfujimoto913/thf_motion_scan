@@ -1,0 +1,20 @@
+{
+  "rep_id": "rep-0001",
+  "session_id": "sess-0001",
+  "test_name": "single_leg_squat",
+  "threshold_version": "v2.1",
+  "scores": {
+    "angle_score": 85.0,
+    "stability_score": 90.0,
+    "composite_score": 88.0
+  },
+  "validation": {
+    "state": "VALID",
+    "messages": []
+  },
+  "metadata": {
+    "processed_at": "2025-11-03T09:00:00Z",
+    "frame_count": 420,
+    "video_url": "s3://thf-motion-scan-results/dev/videos/rep-0001.mp4"
+  }
+}

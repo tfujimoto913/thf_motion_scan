@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://thf-motion-scan.dev/schema/session_result.schema.json",
   "title": "THF Motion Scan Session Result",
-  "description": "Session-level aggregate across five repetitions with validation state and QC gate outcome.",
+  "description": "Session level aggregation for five repetitions with validation state and QC gate outcome.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -37,7 +37,7 @@
     },
     "threshold_version": {
       "type": "string",
-      "pattern": "^v\\d+\\.\\d+$"
+      "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
     },
     "aggregated_scores": {
       "type": "object",
@@ -122,7 +122,6 @@
     },
     "reps": {
       "type": "array",
-      "description": "Overall validation state per repetition.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -168,7 +167,7 @@
           "properties": {
             "threshold": {
               "type": "string",
-              "pattern": "^v\\d+\\.\\d+$"
+              "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
             },
             "schema": {
               "type": "string",

@@ -83,71 +83,54 @@ jobs:
               raise SystemExit(f"Unexpected schema pass for: {failures}")
           PY
 
-      - name: Validate rep/session result schemas
+      - name: Validate rep/session/threshold schemas
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          from jsonschema import Draft7Validator
+          from jsonschema import Draft202012Validator
 
-          def load_schema(path: Path) -> Draft7Validator:
-              raw = path.read_text(encoding="utf-8")
-              try:
-                  payload = json.loads(raw)
-              except json.JSONDecodeError:
-                  lines = [json.loads(line) for line in raw.splitlines() if line.strip()]
-                  if len(lines) != 1:
-                      raise
-                  payload = lines[0]
-              return Draft7Validator(payload)
+          def load_schema(path: Path) -> Draft202012Validator:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              return Draft202012Validator(payload)
 
-          def iter_docs(path: Path):
-              if path.suffix == ".jsonl":
-                  for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                      if not line.strip():
-                          continue
-                      yield line_no, json.loads(line)
-              else:
-                  yield 1, json.loads(path.read_text(encoding="utf-8"))
+          def validate_files(validator: Draft202012Validator, fixtures):
+              for fixture in fixtures:
+                  document = json.loads(fixture.read_text(encoding="utf-8"))
+                  errors = list(validator.iter_errors(document))
+                  if errors:
+                      raise SystemExit(f"{fixture}: {errors[0].message}")
 
-          fixtures_root = Path("tests/fixtures/schemas")
           schemas = {
-              "rep_result": load_schema(Path("schema/rep_result.schema.jsonl")),
+              "rep_result": load_schema(Path("schema/rep_result.schema.json")),
               "session_result": load_schema(Path("schema/session_result.schema.json")),
+              "thresholds_v2": load_schema(Path("schema/thresholds_v2.schema.json")),
           }
 
-          # Validate known-good fixtures
-          for name, validator in schemas.items():
-              for fixture in sorted((fixtures_root / name / "valid").glob("*.json*")):
-                  for line_no, document in iter_docs(fixture):
-                      errors = list(validator.iter_errors(document))
-                      if errors:
-                          raise SystemExit(f"{fixture}:{line_no} {errors[0].message}")
-                      if name == "session_result":
-                          qc = document.get("qc_pass_count")
-                          total = document.get("total_reps")
-                          if isinstance(qc, int) and isinstance(total, int) and qc > total:
-                              raise SystemExit(
-                                  f"{fixture}:{line_no} qc_pass_count ({qc}) cannot exceed total_reps ({total})"
-                              )
+          base = Path("tests/fixtures")
 
-          # Ensure invalid fixtures fail
-          for name, validator in schemas.items():
-              for fixture in sorted((fixtures_root / name / "invalid").glob("*.json*")):
-                  seen_error = False
-                  for line_no, document in iter_docs(fixture):
-                      errors = list(validator.iter_errors(document))
-                      if errors:
-                          seen_error = True
-                          break
-                      if name == "session_result":
-                          qc = document.get("qc_pass_count")
-                          total = document.get("total_reps")
-                          if isinstance(qc, int) and isinstance(total, int) and qc > total:
-                              seen_error = True
-                              break
-                  if not seen_error:
-                      raise SystemExit(f"{fixture} unexpectedly passed schema validation")
+          validate_files(schemas["rep_result"], sorted((base / "rep_result" / "valid").glob("*.json")))
+          validate_files(schemas["rep_result"], sorted((base / "rep_result" / "warn").glob("*.json")))
+          for invalid in sorted((base / "rep_result" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["rep_result"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          validate_files(schemas["session_result"], sorted((base / "session_result" / "valid").glob("*.json")))
+          validate_files(schemas["session_result"], sorted((base / "session_result" / "warn").glob("*.json")))
+          for invalid in sorted((base / "session_result" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["session_result"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          validate_files(schemas["thresholds_v2"], sorted((base / "thresholds_v2" / "valid").glob("*.json")))
+          validate_files(schemas["thresholds_v2"], sorted((base / "thresholds_v2" / "warn").glob("*.json")))
+          for invalid in sorted((base / "thresholds_v2" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["thresholds_v2"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          PY
 
           # Validate published examples as smoke test
           examples = {
