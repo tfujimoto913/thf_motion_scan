@@ -1,0 +1,31 @@
+{
+  "session_id": "session-warn-low",
+  "athlete_id": "athlete-002",
+  "test_code": "T02_upper_body_swing",
+  "qc_pass_count": 2,
+  "total_reps": 5,
+  "aggregates": {
+    "best_score": 68.0,
+    "average_score": 54.5,
+    "rep_states": ["OK", "WARN", "WARN", "ERROR", "WARN"]
+  },
+  "versions": {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.1.0",
+    "artifact_sha": "local-dev"
+  },
+  "validation": {
+    "state": "WARN",
+    "violations": [
+      {
+        "category": "compatibility",
+        "field": "thresholds_version",
+        "status": "WARN",
+        "current": "1.0.0",
+        "expected": "1.1.0",
+        "severity": "WARN",
+        "message": "Minor thresholds update available"
+      }
+    ]
+  }
+}

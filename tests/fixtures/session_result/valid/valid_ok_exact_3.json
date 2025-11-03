@@ -1,0 +1,25 @@
+{
+  "session_id": "session-ok-three",
+  "athlete_id": "athlete-003",
+  "test_code": "T03_push_pull",
+  "qc_pass_count": 3,
+  "total_reps": 3,
+  "aggregates": {
+    "best_score": 74.0,
+    "average_score": 70.0,
+    "rep_summaries": [
+      {"rep_index": 0, "overall": 72.0},
+      {"rep_index": 1, "overall": 70.0},
+      {"rep_index": 2, "overall": 68.0}
+    ]
+  },
+  "versions": {
+    "rules_version": "2.2.0",
+    "thresholds_version": "1.2.0",
+    "artifact_sha": "local-dev"
+  },
+  "validation": {
+    "state": "OK",
+    "violations": []
+  }
+}

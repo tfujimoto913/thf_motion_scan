@@ -2841,8 +2841,8 @@ Task A-Cで確立されたvalidation.state（OK/WARN/ERROR）語彙をDashboard�
   - session_result_loader.load_session_result()で情報取得
   - display_versionsと併存（非破壊的統合）
 - テストフィクスチャ拡張
-  - tests/fixtures/session_result/warn1.json追加（WARN状態）
-  - valid3.json（OK状態）、invalid5.json（ERROR状態）と合わせて3状態テスト可能
+  - tests/fixtures/session_result/valid/*.json（OK/WARNシナリオ3件）
+  - tests/fixtures/session_result/invalid/*.json（想定外シナリオ5件）
 - README更新
   - Validation State Badgeセクション追加（740-772行）
   - 表示仕様、ツールチップ、フォールバック、テストフィクスチャを文書化
@@ -2869,8 +2869,8 @@ Task A-Cで確立されたvalidation.state（OK/WARN/ERROR）語彙をDashboard�
 **影響範囲**:
 - dashboard/validation_badge.py: 新規作成（145行、Claude Code実装）
 - dashboard/session_pages.py: バッジ統合（318-330行、Claude Code実装）
-- dashboard/session_result_loader.py: warn1フィクスチャ追加（29行、Claude Code実装）
-- tests/fixtures/session_result/warn1.json: 新規作成（Claude Code実装）
+    - dashboard/session_result_loader.py: デモフィクスチャ自動検出ロジック追加
+    - tests/fixtures/session_result/valid/valid_warn_low_count.json: 新規作成（Claude Code実装）
 - README.md: Validation State Badgeセクション追加（740-772行、Claude Code実装）
 
 **DoD達成状況**:
@@ -2892,9 +2892,9 @@ Task A-Cで確立されたvalidation.state（OK/WARN/ERROR）語彙をDashboard�
 - Commit: e9ace62（Task D実装）
 - dashboard/validation_badge.py:1-145
 - dashboard/session_pages.py:318-330（バッジ統合）
-- tests/fixtures/session_result/valid3.json（OK状態）
-- tests/fixtures/session_result/warn1.json（WARN状態）
-- tests/fixtures/session_result/invalid5.json（ERROR状態）
+- tests/fixtures/session_result/valid/valid_ok_all_pass.json（OK状態）
+- tests/fixtures/session_result/valid/valid_warn_low_count.json（WARN状態）
+- tests/fixtures/session_result/invalid/invalid_bad_state.json（ERROR状態）
 - README.md:740-772（Validation State Badge仕様）
 
 ## ADR-037: Validation System Integration（Task A〜D統合）
@@ -3026,7 +3026,7 @@ Phase 2.5→5横断で、Notion Templates → thresholds_v2.json → ValidationE
 ### Follow-up（今後の展開）
 
 **即座の次ステップ**:
-- Demo Mode動作確認（valid3/warn1/invalid5フィクスチャ切り替え）
+- Demo Mode動作確認（valid/invalid フィクスチャ切り替え）
 - スクリーンショット取得（OK/WARN/ERRORの3パターン）
 - PR作成・レビュー
 

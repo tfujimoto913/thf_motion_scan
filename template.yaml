@@ -58,6 +58,10 @@ Parameters:
     Type: String
     Description: DynamoDB table name for motion scan results.
     Default: motion-scan-results
+  RescoreDefaultThresholdVersion:
+    Type: String
+    Description: Default threshold version used for bulk rescore launcher.
+    Default: v2.1
   InfoRetentionInDays:
     Type: Number
     Description: Retention period for informational logs.
@@ -80,6 +84,15 @@ Conditions:
     Fn::And:
       - !Equals [!Ref EnableAlertsEmailSubscription, 'true']
       - !Not [!Equals [!Ref AlertsEmail, '']]
+
+Mappings:
+  RescoreConcurrencyMap:
+    dev:
+      MaxConcurrency: 4
+    staging:
+      MaxConcurrency: 8
+    prod:
+      MaxConcurrency: 16
 
 Globals:
   Function:
@@ -160,6 +173,204 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-AdminEdit'
       RetentionInDays: !Ref InfoRetentionInDays
 
+  RepRescoreLauncherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreLauncher'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreWorker'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreDiffReporterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreDiffReporter'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreDLQRedriveLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreDLQRedrive'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreLauncherFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreLauncherLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreLauncher'
+      Runtime: python3.11
+      Handler: rep_rescore/launcher.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ResultsTable
+          STATE_MACHINE_ARN: !GetAtt RepRescoreStateMachine.Arn
+          VERSION_TOGGLE: !Ref RescoreDefaultThresholdVersion
+      Events:
+        RepRescoreApi:
+          Type: Api
+          Properties:
+            Path: /admin/rep-rescore
+            Method: POST
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !GetAtt RepRescoreStateMachine.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+              Resource: !GetAtt ResultsTable.Arn
+
+  RepRescoreWorkerFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreWorkerLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreWorker'
+      Runtime: python3.11
+      Handler: rep_rescore/worker.lambda_handler
+      CodeUri: lambda/
+      Timeout: 120
+      MemorySize: 512
+      ReservedConcurrentExecutions: 20
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ResultsTable
+          DLQ_URL: !Ref RepRescoreDLQ
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt RepRescoreDLQ.Arn
+
+  RepRescoreDiffReporterFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreDiffReporterLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreDiffReporter'
+      Runtime: python3.11
+      Handler: rep_rescore/diff_reporter.lambda_handler
+      CodeUri: lambda/
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          REPORT_BUCKET: !Ref RescoreReportBucket
+          REPORT_PREFIX: 'diffs/'
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RescoreReportBucket
+
+  RepRescoreDLQRedriveFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreDLQRedriveLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreDLQRedrive'
+      Runtime: python3.11
+      Handler: rep_rescore/dlq_redrive.lambda_handler
+      CodeUri: lambda/
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          DLQ_URL: !Ref RepRescoreDLQ
+          STATE_MACHINE_ARN: !GetAtt RepRescoreStateMachine.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt RepRescoreDLQ.Arn
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !GetAtt RepRescoreStateMachine.Arn
+
+  RepRescoreStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub '${AWS::StackName}-RepRescore'
+      DefinitionBody:
+        Fn::Sub: |
+          {
+            "Comment": "THF Motion Scan rep rescore pipeline",
+            "StartAt": "RescoreReps",
+            "States": {
+              "RescoreReps": {
+                "Type": "Map",
+                "ItemsPath": "$.rep_ids",
+                "MaxConcurrency": ${MaxConcurrency},
+                "Parameters": {
+                  "rep_id.$": "$$.Map.Item.Value",
+                  "threshold_version.$": "$.threshold_version",
+                  "execution_id.$": "$.execution_id",
+                  "artifact_sha.$": "$.artifact_sha",
+                  "rules_version.$": "$.rules_version"
+                },
+                "Iterator": {
+                  "StartAt": "InvokeWorker",
+                  "States": {
+                    "InvokeWorker": {
+                      "Type": "Task",
+                      "Resource": "${RepRescoreWorkerArn}",
+                      "ResultPath": "$.result",
+                      "End": true
+                    }
+                  }
+                },
+                "ResultSelector": {
+                  "rep_id.$": "$$.Map.Item.Value",
+                  "status.$": "$.result.status",
+                  "old_threshold_version.$": "$.result.old_threshold_version",
+                  "new_threshold_version.$": "$.result.new_threshold_version",
+                  "old_validation_state.$": "$.result.old_validation_state",
+                  "new_validation_state.$": "$.result.new_validation_state",
+                  "old_score.$": "$.result.old_score",
+                  "new_score.$": "$.result.new_score",
+                  "score_delta.$": "$.result.score_delta",
+                  "error.$": "$.result.error"
+                },
+                "ResultPath": "$.rescore_results",
+                "Next": "GenerateReport"
+              },
+              "GenerateReport": {
+                "Type": "Task",
+                "Resource": "${RepRescoreDiffReporterArn}",
+                "Parameters": {
+                  "execution_id.$": "$.execution_id",
+                  "threshold_version.$": "$.threshold_version",
+                  "artifact_sha.$": "$.artifact_sha",
+                  "rules_version.$": "$.rules_version",
+                  "results.$": "$.rescore_results"
+                },
+                "ResultPath": "$.report",
+                "End": true
+              }
+            }
+          }
+      DefinitionSubstitutions:
+        RepRescoreWorkerArn: !GetAtt RepRescoreWorkerFunction.Arn
+        RepRescoreDiffReporterArn: !GetAtt RepRescoreDiffReporterFunction.Arn
+        MaxConcurrency: !FindInMap [RescoreConcurrencyMap, !Ref Environment, MaxConcurrency]
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RepRescoreWorkerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RepRescoreDiffReporterFunction
+
   # S3バケット: アップロード用
   VideosBucket:
     Type: AWS::S3::Bucket
@@ -206,6 +417,16 @@ Resources:
               - TransitionInDays: 90
                 StorageClass: GLACIER
 
+  RescoreReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'thf-motion-scan-reports-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   # SQSキュー
   ProcessingQueue:
     Type: AWS::SQS::Queue
@@ -223,6 +444,13 @@ Resources:
     Properties:
       QueueName: thf-motion-scan-dlq
       MessageRetentionPeriod: 1209600  # 14日
+
+  RepRescoreDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'rep-rescore-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 60
 
   # SQSポリシー（S3からの通知を許可）
   QueuePolicy:
@@ -1220,6 +1448,24 @@ Outputs:
     Value: !GetAtt AdminEditFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-AdminEditArn'
+
+  RepRescoreStateMachineArn:
+    Description: "Step Functions State Machine ARN for rep rescoring"
+    Value: !GetAtt RepRescoreStateMachine.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RepRescoreStateMachineArn'
+
+  RepRescoreLauncherFunctionArn:
+    Description: "Launcher Lambda ARN for rep rescore workflow"
+    Value: !GetAtt RepRescoreLauncherFunction.Arn
+
+  RepRescoreReportBucketName:
+    Description: "S3 bucket storing rescore difference reports"
+    Value: !Ref RescoreReportBucket
+
+  RepRescoreDLQUrl:
+    Description: "SQS dead-letter queue URL for rep rescore workflow"
+    Value: !Ref RepRescoreDLQ
 
   # CloudWatch Monitoring
   AlertsTopicArn:

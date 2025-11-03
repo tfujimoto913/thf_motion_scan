@@ -23,12 +23,40 @@ from utils import log_dashboard_event, record_error
 
 # Fixture setup for demo mode
 FIXTURE_DIR = Path(__file__).parent.parent / "tests" / "fixtures" / "session_result"
-DEFAULT_FIXTURE = "valid3"
-DEMO_FIXTURES = {
-    "valid3": FIXTURE_DIR / "valid3.json",
-    "warn1": FIXTURE_DIR / "warn1.json",
-    "invalid5": FIXTURE_DIR / "invalid5.json",
-}
+VALID_DIR = FIXTURE_DIR / "valid"
+INVALID_DIR = FIXTURE_DIR / "invalid"
+
+
+@dataclass(frozen=True)
+class FixtureEntry:
+    """Metadata for demo fixtures used in dashboard demo mode."""
+
+    path: Path
+    category: str  # "valid" or "invalid"
+
+
+def _discover_demo_fixtures() -> Dict[str, FixtureEntry]:
+    """Scan fixture directory and collect available session_result samples."""
+    fixtures: Dict[str, FixtureEntry] = {}
+
+    for category, directory in (("valid", VALID_DIR), ("invalid", INVALID_DIR)):
+        if not directory.exists():
+            continue
+        for json_path in sorted(directory.glob("*.json")):
+            fixtures[json_path.stem] = FixtureEntry(path=json_path, category=category)
+
+    return fixtures
+
+
+_FIXTURE_REGISTRY = _discover_demo_fixtures()
+DEMO_FIXTURES = {name: entry.path for name, entry in _FIXTURE_REGISTRY.items()}
+DEMO_FIXTURE_META = {name: entry.category for name, entry in _FIXTURE_REGISTRY.items()}
+
+DEFAULT_FIXTURE = (
+    "valid_ok_all_pass"
+    if "valid_ok_all_pass" in DEMO_FIXTURES
+    else next(iter(DEMO_FIXTURES), None)
+)
 
 # Local search roots for developers running without S3
 LOCAL_SEARCH_ROOTS = [
@@ -67,13 +95,14 @@ def load_session_result(
         2. Local outputs in output_v2.1_test*/processed
         3. S3 (results bucket)
     """
-    if demo_mode:
-        name = fixture_name or DEFAULT_FIXTURE
+    if demo_mode and DEMO_FIXTURES:
+        name = fixture_name or DEFAULT_FIXTURE or next(iter(DEMO_FIXTURES))
         fixture_path = DEMO_FIXTURES.get(name)
         if fixture_path and fixture_path.exists():
             data = _load_json_file(fixture_path)
             if data:
-                return SessionResultLoadResult(data=data, source=f"fixture:{name}")
+                category = DEMO_FIXTURE_META.get(name, "valid")
+                return SessionResultLoadResult(data=data, source=f"fixture:{category}:{name}")
         # Fall through to local/S3 lookup if fixture missing
 
     local_path = _find_local_session_result(athlete_id, session_id)

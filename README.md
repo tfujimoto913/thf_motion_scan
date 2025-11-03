@@ -579,6 +579,7 @@ GitHub UIでPull Request作成時、以下を含めてください：
 - **Phase0-4適用ルール運用**: [docs/phase0-4_deployment_rules.md](docs/phase0-4_deployment_rules.md)
 - **撮影ガイド v2**: [docs/filming_guide_v2.md](docs/filming_guide_v2.md)
 - **Canary監視/ロールバック手順**: [docs/canary_monitoring.md](docs/canary_monitoring.md)
+- **Rep Rescore Runbook**: [docs/rep_rescore_runbook.md](docs/rep_rescore_runbook.md)
 
 ### 外部ドキュメント
 
@@ -721,9 +722,73 @@ Notion Templates → thresholds_v2.json → ValidationEngine → Dashboard の�
 ### 実装ファイル
 - `config/thresholds_v2.json`: 唯一の真実源
 - `cli/rep_cli.py`: rep/sessionにvalidation.state付与
-- `tests/fixtures/session_result/`: テストフィクスチャ（valid3/warn1/invalid5）
+- `tests/fixtures/session_result/`: セッション集計フィクスチャ（`valid/`3件・`invalid/`5件）
+- **`src/validation_engine/validator_rep.py`**: Rep-level検証（必須キー、型、バージョン互換性）
+- **`src/validation_engine/validator_session.py`**: Session-level集約（過半数判定、統計算出）
 
-詳細は ADR-034〜036 および各実装ファイルのコメントを参照してください。
+### Validator使用例
+
+**Rep-level検証**:
+```python
+from src.validation_engine.validator_rep import validate_rep
+
+rep_data = {
+    "session_id": "session-001",
+    "rep_index": 0,
+    "test_code": "T02_B2",
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "normalization_version": "none",
+    "metrics": {"score": 75.5},
+    "validation": {"state": "OK", "violations": []}
+}
+
+expected_versions = {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "normalization_version": "none"
+}
+
+result = validate_rep(rep_data, expected_versions)
+# result: {"state": "OK", "violations": []}
+```
+
+**Session-level集約**:
+```python
+from src.validation_engine.validator_session import aggregate_session
+
+# 5 reps（3 OK + 2 WARN）
+reps = [...]  # JSONLファイルから読み込み
+
+result = aggregate_session(reps, metric_key="score")
+# result: {
+#   "qc_pass_count": 5,  # OK + WARN
+#   "total_reps": 5,
+#   "aggregates": {
+#     "mean": 74.84,
+#     "sd": 4.36,
+#     "p95": 78.2,  # nearest-rank: sorted[3]
+#     "rep_states": ["OK", "OK", "OK", "WARN", "WARN"]
+#   },
+#   "validation": {
+#     "state": "WARN",  # 最悪ステータス採用
+#     "violations": [...]
+#   }
+# }
+```
+
+**過半数ルール**:
+- 5 reps中3以上がOK/WARN → session有効
+- 3未満 → `state="INSUFFICIENT"`（再撮影必要）
+- 統計対象: WARN含む・ERROR除外
+
+**テストフィクスチャ**:
+- `tests/validation_engine/fixtures/all_ok.jsonl` - 全5本OK
+- `tests/validation_engine/fixtures/error_mixed.jsonl` - 2 OK, 1 WARN, 2 ERROR
+- `tests/validation_engine/fixtures/warn_mixed.jsonl` - 3 OK, 2 WARN
+- `tests/validation_engine/fixtures/insufficient.jsonl` - 2 OK, 3 ERROR（過半数未達）
+
+詳細は ADR-034〜037 および各実装ファイルのコメントを参照してください。
 
 ---
 

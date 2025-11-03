@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thf-motion-scan.dev/schema/rep_result.schema.json",
+  "title": "THF Motion Scan Rep Result",
+  "description": "Per-repetition evaluation result emitted by the rescore pipeline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rep_id",
+    "session_id",
+    "test_name",
+    "threshold_version",
+    "scores",
+    "validation",
+    "metadata"
+  ],
+  "properties": {
+    "rep_id": {
+      "type": "string",
+      "description": "Unique identifier of the rep (UUID).",
+      "pattern": "^[A-Za-z0-9\\-]{6,64}$"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Identifier of the parent session.",
+      "pattern": "^[A-Za-z0-9\\-]{6,64}$"
+    },
+    "test_name": {
+      "type": "string",
+      "description": "One of the 7 THF motion scan test names.",
+      "enum": [
+        "single_leg_squat",
+        "skater_lunge",
+        "stride_mimic",
+        "upper_body_swing",
+        "push_pull",
+        "jump_landing",
+        "cross_step"
+      ]
+    },
+    "threshold_version": {
+      "type": "string",
+      "description": "Threshold definition version that produced this rep.",
+      "pattern": "^v\\d+\\.\\d+$"
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "angle_score",
+        "stability_score",
+        "composite_score"
+      ],
+      "properties": {
+        "angle_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "stability_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "composite_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "messages"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "VALID",
+            "WARN",
+            "INVALID"
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Human readable validation observations."
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "processed_at",
+        "frame_count",
+        "video_url"
+      ],
+      "properties": {
+        "processed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "frame_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "video_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

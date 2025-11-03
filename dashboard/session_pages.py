@@ -24,7 +24,13 @@ from data_loader import load_results_items
 from utils import record_error, emit_ui_metric, convert_decimals
 from config import TEST_TYPES, TEST_TYPE_DISPLAY, TEST_SHORT_MAP
 from i18n import t
-from session_result_loader import DEMO_FIXTURES, SessionResultLoadResult, load_session_result
+from session_result_loader import (
+    DEMO_FIXTURES,
+    DEMO_FIXTURE_META,
+    DEFAULT_FIXTURE,
+    SessionResultLoadResult,
+    load_session_result,
+)
 from validation_badge import render_validation_badge
 
 
@@ -266,7 +272,9 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
         st.session_state.pop('selected_session', None)
         st.rerun()
 
-    default_fixture = 'invalid5' if session.get('has_version_mismatch') else 'valid3'
+    default_fixture = (
+        "invalid_bad_state" if session.get('has_version_mismatch') else DEFAULT_FIXTURE
+    )
     fixture_name = None
     if demo_mode:
         fixture_name = _select_demo_session_result_fixture(default_fixture)
@@ -332,18 +340,24 @@ def session_detail_page(dynamodb, resources, demo_mode=False):
 
     # ========== Versions情報表示 ==========
     version_summary = _extract_session_versions(session)
-    normalization_version = version_summary.get('normalization_version')
-    artifact_sha = version_summary.get('artifact_sha')
+    session_versions = (session_result_payload.data or {}).get('versions') or {}
+
+    rules_display = session_versions.get('rules_version') or rules_version or "-"
+    thresholds_display = session_versions.get('thresholds_version') or "-"
+    artifact_sha = session_versions.get('artifact_sha') or version_summary.get('artifact_sha')
 
     vcol1, vcol2, vcol3 = st.columns(3)
-    vcol1.metric("rules_version", rules_version or "-")
-    vcol2.metric("normalization_version", normalization_version or "-")
+    vcol1.metric("rules_version", rules_display)
+    vcol2.metric("thresholds_version", thresholds_display)
     artifact_display = "-"
     if artifact_sha:
         artifact_display = artifact_sha if len(artifact_sha) <= 12 else f"{artifact_sha[:12]}…"
     vcol3.metric("artifact_sha", artifact_display)
     if artifact_sha and len(artifact_sha) > 12:
         vcol3.caption(artifact_sha)
+
+    if not session_versions.get('normalization_version'):
+        st.caption(f"ℹ️ {t('normalization_future')}")
 
     st.markdown("---")
 
@@ -564,23 +578,28 @@ def _extract_test_scores(session: Dict[str, Any]) -> List[Dict[str, Any]]:
     return result
 
 
-def _select_demo_session_result_fixture(default_fixture: str) -> Optional[str]:
+def _select_demo_session_result_fixture(default_fixture: Optional[str]) -> Optional[str]:
     """Render selectbox to choose demo session_result fixture."""
     if not DEMO_FIXTURES:
         return default_fixture
 
-    options = list(DEMO_FIXTURES.keys())
+    options = sorted(
+        DEMO_FIXTURES.keys(),
+        key=lambda name: (0 if DEMO_FIXTURE_META.get(name) == "valid" else 1, name),
+    )
     default_index = options.index(default_fixture) if default_fixture in options else 0
-    label_map = {
-        "valid3": f"valid3 – {t('status_ok')}",
-        "invalid5": f"invalid5 – {t('status_warn')}/{t('status_error')}",
-    }
+
+    def _format_option(key: str) -> str:
+        category = DEMO_FIXTURE_META.get(key, "valid")
+        category_label = t('fixture_category_valid') if category == 'valid' else t('fixture_category_invalid')
+        friendly = key.replace('_', ' ')
+        return f"{category_label}: {friendly}"
 
     return st.selectbox(
         "Session result fixture (demo)",
         options,
         index=default_index,
-        format_func=lambda key: label_map.get(key, key),
+        format_func=_format_option,
         key="session_result_fixture",
         help="デモ専用: session_result.json のシナリオを切り替えます"
     )
