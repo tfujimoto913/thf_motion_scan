@@ -378,4 +378,246 @@ class TestExtractFrameKpis:
             assert result1[i]["na_count"] == result2[i]["na_count"]
 
 
-# TODO: Stage 2-5 tests will be added after Stage 1 implementation
+# ========== Stage 4: 複合スコア設計 ==========
+
+
+class TestCalculateCompositeScore:
+    """
+    Stage 4: Test composite score calculation with weights.
+
+    What: Calculate weighted composite score from KPI values.
+    Why: Provide tiebreak mechanism and overall quality metric.
+    Design Decision: Default equal weights (1/8 each), customizable via parameter.
+    """
+
+    def test_calculate_default_equal_weights(self):
+        """
+        Test: デフォルト均等重み（1/8）での計算
+        Expected: sum(kpis) / 8
+        """
+        # Red: calculate_composite_score() doesn't exist yet
+        from processing.frame_selector import calculate_composite_score
+
+        kpis = {
+            "B1_core_stability": 4.0,
+            "B2_support_foundation": 9.5,
+            "B3_3joint_coordination": 3.2,
+            "B4_pelvis_horizontal": 8.0,
+            "B5_knee_stability": 5.5,
+            "B6_ankle_mobility": 6.0,
+            "B7_upper_body_control": 2.5,
+            "B8_breathing_pattern": 3.0,
+        }
+
+        score = calculate_composite_score(kpis)
+
+        # Expected: (4.0 + 9.5 + 3.2 + 8.0 + 5.5 + 6.0 + 2.5 + 3.0) / 8 = 41.7 / 8 = 5.2125
+        expected = sum(kpis.values()) / 8
+        assert score == pytest.approx(expected)
+
+    def test_calculate_custom_weights(self):
+        """
+        Test: カスタム重み指定
+        Expected: sum(w_i * kpi_i)
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        kpis = {
+            "B1_core_stability": 4.0,
+            "B2_support_foundation": 9.5,
+            "B3_3joint_coordination": 3.2,
+            "B4_pelvis_horizontal": 8.0,
+            "B5_knee_stability": 5.5,
+            "B6_ankle_mobility": 6.0,
+            "B7_upper_body_control": 2.5,
+            "B8_breathing_pattern": 3.0,
+        }
+
+        # Custom weights (major KPIs have higher weights)
+        weights = {
+            "B1_core_stability": 0.3,  # Major
+            "B2_support_foundation": 0.2,  # Major
+            "B3_3joint_coordination": 0.1,
+            "B4_pelvis_horizontal": 0.2,  # Major
+            "B5_knee_stability": 0.05,
+            "B6_ankle_mobility": 0.05,
+            "B7_upper_body_control": 0.05,
+            "B8_breathing_pattern": 0.05,
+        }
+
+        score = calculate_composite_score(kpis, weights=weights)
+
+        # Expected: 4.0*0.3 + 9.5*0.2 + 3.2*0.1 + 8.0*0.2 + 5.5*0.05 + 6.0*0.05 + 2.5*0.05 + 3.0*0.05
+        expected = sum(kpis[k] * weights[k] for k in kpis)
+        assert score == pytest.approx(expected)
+
+    def test_calculate_with_na_values_excluded(self):
+        """
+        Test: N/A値除外時の挙動
+        Expected: N/A（None）を除外して有効KPIのみで計算
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        kpis = {
+            "B1_core_stability": 4.0,
+            "B2_support_foundation": 9.5,
+            "B3_3joint_coordination": None,  # N/A
+            "B4_pelvis_horizontal": 8.0,
+            "B5_knee_stability": None,  # N/A
+            "B6_ankle_mobility": 6.0,
+            "B7_upper_body_control": 2.5,
+            "B8_breathing_pattern": 3.0,
+        }
+
+        score = calculate_composite_score(kpis)
+
+        # Only 6 valid KPIs, so weight becomes 1/6 for each valid KPI
+        valid_kpis = [v for v in kpis.values() if v is not None]
+        expected = sum(valid_kpis) / len(valid_kpis)
+        assert score == pytest.approx(expected)
+
+    def test_calculate_all_na_returns_zero(self):
+        """
+        Test: 全KPIがN/Aの場合
+        Expected: 0.0を返す
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        kpis = {
+            "B1_core_stability": None,
+            "B2_support_foundation": None,
+            "B3_3joint_coordination": None,
+            "B4_pelvis_horizontal": None,
+            "B5_knee_stability": None,
+            "B6_ankle_mobility": None,
+            "B7_upper_body_control": None,
+            "B8_breathing_pattern": None,
+        }
+
+        score = calculate_composite_score(kpis)
+
+        assert score == 0.0
+
+    def test_calculate_sigma_margin_warning(self):
+        """
+        Test: σマージン（0.18）判定
+        Expected: スコア差が0.18未満の場合は「実質同値」として判定可能
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        kpis1 = {
+            "B1_core_stability": 4.0,
+            "B2_support_foundation": 9.5,
+            "B3_3joint_coordination": 3.2,
+            "B4_pelvis_horizontal": 8.0,
+            "B5_knee_stability": 5.5,
+            "B6_ankle_mobility": 6.0,
+            "B7_upper_body_control": 2.5,
+            "B8_breathing_pattern": 3.0,
+        }
+
+        kpis2 = {
+            "B1_core_stability": 4.1,  # Slightly different
+            "B2_support_foundation": 9.6,
+            "B3_3joint_coordination": 3.3,
+            "B4_pelvis_horizontal": 8.1,
+            "B5_knee_stability": 5.6,
+            "B6_ankle_mobility": 6.1,
+            "B7_upper_body_control": 2.6,
+            "B8_breathing_pattern": 3.1,
+        }
+
+        score1 = calculate_composite_score(kpis1)
+        score2 = calculate_composite_score(kpis2)
+
+        # Check if difference is less than sigma margin (0.18)
+        diff = abs(score1 - score2)
+        # This test just verifies the scores are calculable; actual margin check
+        # will be done in selection logic (Stage 2)
+        assert diff < 0.18  # Should be a small difference
+
+    def test_calculate_normalized_kpis(self):
+        """
+        Test: 正規化されたKPI値での計算
+        Expected: 0.0-1.0範囲の値で正しく計算
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        # Normalized KPIs (0.0-1.0 range)
+        kpis = {
+            "B1_core_stability": 0.5,
+            "B2_support_foundation": 0.8,
+            "B3_3joint_coordination": 0.3,
+            "B4_pelvis_horizontal": 0.7,
+            "B5_knee_stability": 0.6,
+            "B6_ankle_mobility": 0.65,
+            "B7_upper_body_control": 0.4,
+            "B8_breathing_pattern": 0.45,
+        }
+
+        score = calculate_composite_score(kpis)
+
+        expected = sum(kpis.values()) / 8
+        assert score == pytest.approx(expected)
+        assert 0.0 <= score <= 1.0  # Score should be in normalized range
+
+    def test_calculate_zero_values_valid(self):
+        """
+        Test: 0.0は有効値として扱う
+        Expected: 0.0がそのまま計算に含まれる
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        kpis = {
+            "B1_core_stability": 0.0,  # Valid zero
+            "B2_support_foundation": 0.0,
+            "B3_3joint_coordination": 0.0,
+            "B4_pelvis_horizontal": 0.0,
+            "B5_knee_stability": 0.0,
+            "B6_ankle_mobility": 0.0,
+            "B7_upper_body_control": 0.0,
+            "B8_breathing_pattern": 0.0,
+        }
+
+        score = calculate_composite_score(kpis)
+
+        assert score == 0.0  # All zeros should result in 0.0 score
+
+    def test_calculate_reproducibility_fixed_seed(self):
+        """
+        Test: 再現性確認（決定論的テスト）
+        Expected: 同じ入力で同じ出力
+        """
+        from processing.frame_selector import calculate_composite_score
+
+        random.seed(20251104)
+        np.random.seed(20251104)
+
+        kpis = {
+            f"B{i}_{name}": random.uniform(0, 10)
+            for i, name in enumerate(
+                [
+                    "core_stability",
+                    "support_foundation",
+                    "3joint_coordination",
+                    "pelvis_horizontal",
+                    "knee_stability",
+                    "ankle_mobility",
+                    "upper_body_control",
+                    "breathing_pattern",
+                ],
+                start=1,
+            )
+        }
+
+        # Run twice with same seed
+        random.seed(20251104)
+        score1 = calculate_composite_score(kpis)
+
+        random.seed(20251104)
+        score2 = calculate_composite_score(kpis)
+
+        assert score1 == score2  # Should be deterministic
+
+
+# TODO: Stage 2-3, 5 tests will be added after Stage 4 implementation

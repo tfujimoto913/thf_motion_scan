@@ -724,3 +724,77 @@ def extract_frame_kpis(
         )
 
     return result
+
+
+# ========== Stage 4: Composite Score Calculation ==========
+
+# Default equal weights for B1-B8 (1/8 each)
+DEFAULT_WEIGHTS = {key: 1.0 / len(B_PRINCIPLES_KEYS) for key in B_PRINCIPLES_KEYS}
+
+
+def calculate_composite_score(
+    kpis: Mapping[str, Optional[float]],
+    weights: Optional[Mapping[str, float]] = None,
+) -> float:
+    """
+    Calculate weighted composite score from KPI values.
+
+    What: Compute weighted average of KPI values, excluding N/A.
+    Why: Provide tiebreak mechanism and overall quality metric for frame selection.
+    Design Decision: Default equal weights (1/8), customizable. N/A values excluded.
+                     All N/A returns 0.0. Weights are normalized to sum to 1.0.
+
+    Args:
+        kpis: Dict of {kpi_name: value}, where None represents N/A
+        weights: Optional custom weights dict. If None, uses equal weights (1/8 each).
+
+    Returns:
+        float: Composite score (weighted average of valid KPIs)
+
+    CRITICAL:
+    - N/A values (None) are excluded from calculation
+    - Weights are auto-normalized to sum to 1.0 for valid KPIs
+    - All N/A returns 0.0
+    - 0.0 is a valid KPI value (not N/A)
+    """
+    if not kpis:
+        return 0.0
+
+    # Use default weights if not provided
+    if weights is None:
+        weights = DEFAULT_WEIGHTS
+
+    # Extract valid KPIs (non-None)
+    valid_kpis = []
+    valid_weights = []
+
+    for key, value in kpis.items():
+        if value is not None:  # Exclude N/A
+            try:
+                val = float(value)
+                # Check for NaN (should not happen if extract_frame_kpis worked correctly)
+                if not math.isnan(val):
+                    valid_kpis.append(val)
+                    # Get weight for this KPI (default to equal weight if not in weights dict)
+                    weight = weights.get(key, 1.0 / len(B_PRINCIPLES_KEYS))
+                    valid_weights.append(weight)
+            except (TypeError, ValueError):
+                # Cannot convert to float, skip
+                continue
+
+    # All N/A case
+    if not valid_kpis:
+        return 0.0
+
+    # Normalize weights to sum to 1.0
+    total_weight = sum(valid_weights)
+    if total_weight == 0.0:
+        # Fallback to equal weights
+        normalized_weights = [1.0 / len(valid_kpis)] * len(valid_kpis)
+    else:
+        normalized_weights = [w / total_weight for w in valid_weights]
+
+    # Calculate weighted score
+    score = sum(kpi * weight for kpi, weight in zip(valid_kpis, normalized_weights))
+
+    return score
