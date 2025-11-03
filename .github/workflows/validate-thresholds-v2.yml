@@ -178,3 +178,81 @@ jobs:
             --thresholds-version 2.0.0 \
             --artifact-sha $(git rev-parse --short HEAD) \
             --dry-run
+
+      - name: Build direction fixtures (lower/higher)
+        run: |
+          # Test direction="lower" builds correctly
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_lower.json \
+            --out /tmp/thresholds_direction_lower.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          # Test direction="higher" builds correctly
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_higher.json \
+            --out /tmp/thresholds_direction_higher.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          # Test backward compatibility (no direction field)
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_none_backward_compat.json \
+            --out /tmp/thresholds_direction_none.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          echo "✔ All direction fixtures built successfully"
+
+      - name: Verify direction field in output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          # Verify direction="lower" is preserved
+          lower = json.loads(Path("/tmp/thresholds_direction_lower.json").read_text())
+          assert lower["tests"][0]["direction"] == "lower", "direction=lower not preserved"
+          assert lower["tests"][0]["code"] == "T01_B1_pelvis_drop", "wrong test code"
+          print("✔ direction=lower preserved correctly")
+
+          # Verify direction="higher" is preserved
+          higher = json.loads(Path("/tmp/thresholds_direction_higher.json").read_text())
+          assert higher["tests"][0]["direction"] == "higher", "direction=higher not preserved"
+          assert higher["tests"][0]["code"] == "T02_B2_stability_score", "wrong test code"
+          print("✔ direction=higher preserved correctly")
+
+          # Verify backward compatibility (no direction field)
+          none = json.loads(Path("/tmp/thresholds_direction_none.json").read_text())
+          assert "direction" not in none["tests"][0], "direction field should not exist"
+          assert none["tests"][0]["code"] == "T03_legacy", "wrong test code"
+          print("✔ backward compatibility confirmed (no direction field)")
+          PY
+
+      - name: Ensure invalid direction fails
+        run: |
+          set +e
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_invalid_value.json \
+            --out /tmp/thresholds_direction_invalid.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD) 2>&1 | tee /tmp/build_error.log
+          status=$?
+          set -e
+
+          if [ $status -eq 0 ]; then
+            echo "::error ::Expected invalid direction to fail build, but it succeeded."
+            exit 1
+          fi
+
+          if ! grep -q "Invalid direction value" /tmp/build_error.log; then
+            echo "::error ::Expected 'Invalid direction value' error message"
+            cat /tmp/build_error.log
+            exit 1
+          fi
+
+          echo "✔ Invalid direction correctly rejected"

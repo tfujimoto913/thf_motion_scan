@@ -184,6 +184,13 @@ def convert_to_thresholds_v2(templates: List[Dict[str, Any]], versions: Dict[str
             }
         }
 
+        # directionがある場合は追加（後方互換性のためoptional）
+        if "direction" in template:
+            direction_value = template["direction"]
+            if direction_value not in ["lower", "higher"]:
+                raise ValueError(f"Invalid direction value '{direction_value}' for test '{test_code}'. Must be 'lower' or 'higher'.")
+            test_entry["direction"] = direction_value
+
         # secondaryがある場合は追加
         if "secondary" in template:
             secondary_definition = template["secondary"]

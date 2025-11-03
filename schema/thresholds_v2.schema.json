@@ -2,75 +2,147 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://thf-motion-scan.dev/schema/thresholds_v2.schema.json",
   "title": "THF Motion Scan Thresholds Definition v2",
-  "description": "Threshold configuration used to evaluate reps with VALID/WARN/INVALID states.",
+  "description": "Threshold configuration used to evaluate reps with VALID/WARN/INVALID states. Format A:実運用フォーマット（apply.py, build_thresholds.py使用）",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "version",
-    "created_at",
-    "created_by",
-    "description",
-    "rules"
+    "versions",
+    "tests"
   ],
   "properties": {
-    "version": {
-      "type": "string",
-      "pattern": "^v\\d+\\.\\d+$"
+    "versions": {
+      "type": "object",
+      "required": [
+        "rules_version",
+        "thresholds_version",
+        "normalization_version",
+        "artifact_sha"
+      ],
+      "properties": {
+        "rules_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer format (e.g., 0.2.0)"
+        },
+        "thresholds_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer format (e.g., 2.0.0)"
+        },
+        "normalization_version": {
+          "type": "string",
+          "description": "SemVer or 'none' (e.g., 1.0.0 or none)"
+        },
+        "artifact_sha": {
+          "type": "string",
+          "description": "Git commit SHA (short or full)"
+        }
+      }
     },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "created_by": {
-      "type": "string",
-      "description": "Identifier of the author who published this threshold version."
-    },
-    "description": {
-      "type": "string"
-    },
-    "rules": {
+    "tests": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "test_name",
-          "angle_min",
-          "angle_max",
-          "stability_min",
-          "warn_threshold",
-          "invalid_threshold"
+          "code",
+          "metric",
+          "unit",
+          "primary"
         ],
         "properties": {
-          "test_name": {
+          "code": {
             "type": "string",
-            "enum": [
-              "single_leg_squat",
-              "skater_lunge",
-              "stride_mimic",
-              "upper_body_swing",
-              "push_pull",
-              "jump_landing",
-              "cross_step"
-            ]
+            "description": "Test code identifier (e.g., T01_B1, overall_score)"
           },
-          "angle_min": {
-            "type": "number"
+          "metric": {
+            "type": "string",
+            "description": "Metric name (e.g., hip_external_rotation_deg)"
           },
-          "angle_max": {
-            "type": "number"
+          "unit": {
+            "type": "string",
+            "description": "Measurement unit (e.g., deg, norm, score)"
           },
-          "stability_min": {
-            "type": "number"
+          "direction": {
+            "type": "string",
+            "enum": ["lower", "higher"],
+            "description": "Direction of threshold evaluation. 'lower' means lower values are better (e.g., pelvis_drop_deg), 'higher' means higher values are better (e.g., stability_score). Optional for backward compatibility; defaults to 'higher' if not specified."
           },
-          "warn_threshold": {
-            "type": "number",
-            "description": "Delta at which validation state transitions to WARN."
+          "primary": {
+            "type": "object",
+            "required": ["bands"],
+            "properties": {
+              "bands": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["name", "op", "value"],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "enum": ["pass", "border", "fail"],
+                      "description": "Band classification name"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["lt", "lte", "gt", "gte", "eq", "range_inc", "range_exc"],
+                      "description": "Comparison operator"
+                    },
+                    "value": {
+                      "oneOf": [
+                        {"type": "number"},
+                        {"type": "boolean"},
+                        {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 2,
+                          "items": {"type": "number"}
+                        }
+                      ],
+                      "description": "Threshold value or range [min, max]"
+                    }
+                  }
+                }
+              }
+            }
           },
-          "invalid_threshold": {
-            "type": "number",
-            "description": "Delta at which validation state transitions to INVALID."
+          "secondary": {
+            "type": "object",
+            "required": ["bands"],
+            "properties": {
+              "bands": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["name", "op", "value"],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "enum": ["pass", "border", "fail"]
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": ["lt", "lte", "gt", "gte", "eq", "range_inc", "range_exc"]
+                    },
+                    "value": {
+                      "oneOf": [
+                        {"type": "number"},
+                        {"type": "boolean"},
+                        {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 2,
+                          "items": {"type": "number"}
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

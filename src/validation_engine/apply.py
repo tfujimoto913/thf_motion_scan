@@ -50,10 +50,24 @@ def _compare_metrics(
     metric_name: str,
     metric_value: Any,
     bands: Iterable[Dict[str, Any]],
+    direction: str = "higher",
 ) -> Optional[Dict[str, Any]]:
     """
     What: Evaluate metric against ordered bands
     Why: Determine best-fit classification; return violation if not pass/border
+    Design Decision: direction field added for explicit documentation (lower/higher is better)
+
+    Args:
+        code: Test code identifier
+        metric_name: Metric name
+        metric_value: Actual metric value
+        bands: Threshold bands (pass/border/fail)
+        direction: Direction of evaluation ('lower' or 'higher'). Defaults to 'higher'.
+
+    Returns:
+        None if pass, otherwise violation dict
+
+    CRITICAL: direction is mainly for documentation; actual logic uses op (lt/gte/etc)
     """
     # materialize to list in case caller passes generator
     band_list = list(bands)
@@ -157,8 +171,11 @@ def _evaluate_metrics(
             continue  # Unknown metric; treat as informational
         primary_bands = thresholds_entry["primary"]["bands"]
         metric_name = thresholds_entry.get("metric", code)
-        result = _compare_metrics(code, metric_name, metric_value, primary_bands)
+        direction = thresholds_entry.get("direction", "higher")  # Default to "higher" for backward compatibility
+        result = _compare_metrics(code, metric_name, metric_value, primary_bands, direction)
         if result:
+            # Add direction to violation metadata for transparency
+            result["direction"] = direction
             violations.append(result)
     return violations
 

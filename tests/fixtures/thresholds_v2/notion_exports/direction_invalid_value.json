@@ -1,0 +1,20 @@
+{
+  "templates": [
+    {
+      "test_code": "T04_invalid_direction",
+      "metric": "invalid_metric",
+      "unit": "unit",
+      "direction": "invalid_direction_value",
+      "thresholds": {
+        "pass": {
+          "op": "gte",
+          "value": 50
+        },
+        "fail": {
+          "op": "lt",
+          "value": 50
+        }
+      }
+    }
+  ]
+}

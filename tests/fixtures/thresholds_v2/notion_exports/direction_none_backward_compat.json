@@ -1,0 +1,23 @@
+{
+  "templates": [
+    {
+      "test_code": "T03_legacy",
+      "metric": "legacy_metric",
+      "unit": "unit",
+      "thresholds": {
+        "pass": {
+          "op": "gte",
+          "value": 50
+        },
+        "border": {
+          "op": "range_inc",
+          "value": [30, 50]
+        },
+        "fail": {
+          "op": "lt",
+          "value": 30
+        }
+      }
+    }
+  ]
+}
