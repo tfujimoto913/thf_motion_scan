@@ -620,4 +620,181 @@ class TestCalculateCompositeScore:
         assert score1 == score2  # Should be deterministic
 
 
-# TODO: Stage 2-3, 5 tests will be added after Stage 4 implementation
+# ========== Stage 2: best/worst選出 ==========
+
+
+class TestSelectBestWorstFrames:
+    """
+    Stage 2: Test best/worst frame selection based on major KPI priority.
+
+    What: Select best (minimum KPIs) and worst (maximum KPIs) frames.
+    Why: Provide objective basis for coaching feedback.
+    Design Decision: Priority B1 > B4 > B2, composite score tiebreak, timestamp fallback.
+    """
+
+    def test_select_best_by_b1_minimum(self):
+        """
+        Test: B1が最小のフレームがbestとして選出される
+        Expected: frame 1 (B1=3.0)
+        """
+        # Red: select_best_worst_frames() doesn't exist yet
+        from processing.frame_selector import select_best_worst_frames
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 4.0,
+                    "B2_support_foundation": 9.5,
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": 8.0,
+                    "B5_knee_stability": 5.5,
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 3.0,  # Minimum B1
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": 7.5,
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": 2.5,
+                },
+            },
+        ]
+
+        result = select_best_worst_frames(frame_kpis)
+
+        assert result["best"]["frame_idx"] == 1
+        assert result["worst"]["frame_idx"] == 0
+
+    def test_select_best_by_b4_when_b1_equal(self):
+        """
+        Test: B1同値時にB4で判定
+        Expected: frame 1 (B1=4.0, B4=7.0)
+        """
+        from processing.frame_selector import select_best_worst_frames
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 4.0,
+                    "B2_support_foundation": 9.5,
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": 8.0,  # Higher B4
+                    "B5_knee_stability": 5.5,
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 4.0,  # Same B1
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": 7.0,  # Lower B4 (better)
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": 2.5,
+                },
+            },
+        ]
+
+        result = select_best_worst_frames(frame_kpis)
+
+        assert result["best"]["frame_idx"] == 1  # B4 is lower
+
+    def test_select_with_na_values_excluded(self):
+        """
+        Test: N/A値除外時の挙動
+        Expected: N/Aを除外して残りのKPIで判定
+        """
+        from processing.frame_selector import select_best_worst_frames
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 4.0,
+                    "B2_support_foundation": None,  # N/A
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": 8.0,
+                    "B5_knee_stability": None,  # N/A
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 3.0,  # Lower (better)
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": 7.5,
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": None,  # N/A
+                },
+            },
+        ]
+
+        result = select_best_worst_frames(frame_kpis)
+
+        assert result["best"]["frame_idx"] == 1  # B1 is lower despite N/A
+
+    def test_select_all_major_kpis_missing_uses_composite_score(self):
+        """
+        Test: 主要KPI全欠損時は複合スコアで判定
+        Expected: 複合スコアが低いフレームがbest
+        """
+        from processing.frame_selector import select_best_worst_frames
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": None,  # N/A
+                    "B2_support_foundation": None,  # N/A
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": None,  # N/A
+                    "B5_knee_stability": 8.0,  # Higher
+                    "B6_ankle_mobility": 9.0,
+                    "B7_upper_body_control": 7.5,
+                    "B8_breathing_pattern": 8.5,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": None,  # N/A
+                    "B2_support_foundation": None,  # N/A
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": None,  # N/A
+                    "B5_knee_stability": 5.0,  # Lower (better composite)
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 4.0,
+                    "B8_breathing_pattern": 4.5,
+                },
+            },
+        ]
+
+        result = select_best_worst_frames(frame_kpis)
+
+        # Frame 1 has lower composite score
+        assert result["best"]["frame_idx"] == 1
+        assert result["worst"]["frame_idx"] == 0
+
+
+# TODO: Stage 3, 5 tests will be added later

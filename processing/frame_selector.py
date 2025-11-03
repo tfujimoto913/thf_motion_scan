@@ -798,3 +798,167 @@ def calculate_composite_score(
     score = sum(kpi * weight for kpi, weight in zip(valid_kpis, normalized_weights))
 
     return score
+
+
+# ========== Stage 2: Best/Worst Frame Selection ==========
+
+
+def _get_major_kpi_priority_key(frame: Mapping[str, Any]) -> tuple:
+    """
+    Generate sort key for major KPI priority (B1 > B4 > B2).
+
+    What: Create tuple for sorting frames by major KPI values.
+    Why: Implement priority order for best/worst selection.
+    Design Decision: Lower values are better (min for best, max for worst).
+                     None (N/A) is treated as infinity (worst).
+
+    Args:
+        frame: Frame dict with 'kpis' field
+
+    Returns:
+        tuple: (B1, B4, B2) values for sorting (None → inf)
+
+    CRITICAL:
+    - N/A (None) is replaced with float('inf') for sorting
+    - Lower values are better
+    - Used for both best (min) and worst (max) selection
+    """
+    kpis = frame.get("kpis", {})
+
+    b1 = kpis.get("B1_core_stability")
+    b4 = kpis.get("B4_pelvis_horizontal")
+    b2 = kpis.get("B2_support_foundation")
+
+    # Replace None with inf (worst value)
+    b1_val = b1 if b1 is not None else float("inf")
+    b4_val = b4 if b4 is not None else float("inf")
+    b2_val = b2 if b2 is not None else float("inf")
+
+    return (b1_val, b4_val, b2_val)
+
+
+def select_best_worst_frames(
+    frame_kpis: Sequence[Mapping[str, Any]],
+    weights: Optional[Mapping[str, float]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Select best and worst frames based on major KPI priority.
+
+    What: Select best (minimum KPIs) and worst (maximum KPIs) frames from list.
+    Why: Provide objective basis for coaching feedback on performance extremes.
+    Design Decision: Priority B1 > B4 > B2, then composite score, then frame_idx.
+                     N/A values handled as inf (worst). Major KPI absence triggers
+                     fallback to composite score.
+
+    Args:
+        frame_kpis: List of frame dicts from extract_frame_kpis()
+                    [{frame_idx: int, kpis: {...}, na_count: int, ...}, ...]
+        weights: Optional custom weights for composite score (default: equal)
+
+    Returns:
+        dict: {
+            'best': {
+                'frame_idx': int,
+                'kpis': {...},
+                'composite_score': float,
+                'selection_reason': str,
+                'tiebreak': None | 'B4' | 'B2' | 'composite' | 'timestamp'
+            },
+            'worst': {...}
+        }
+
+    CRITICAL:
+    - Priority: B1 (core stability) > B4 (pelvis horizontal) > B2 (support foundation)
+    - N/A (None) treated as float('inf') for sorting
+    - All major KPIs missing → fallback to composite score
+    - Composite score tiebreak → timestamp (frame_idx) tiebreak
+    - Empty input returns placeholder with frame_idx=0
+    """
+    if not frame_kpis:
+        placeholder = {
+            "frame_idx": 0,
+            "kpis": {},
+            "composite_score": 0.0,
+            "selection_reason": "empty_input",
+            "tiebreak": None,
+        }
+        return {"best": placeholder, "worst": placeholder}
+
+    # Calculate composite scores for all frames
+    frames_with_scores = []
+    for frame in frame_kpis:
+        kpis = frame.get("kpis", {})
+        composite_score = calculate_composite_score(kpis, weights=weights)
+        frames_with_scores.append(
+            {
+                **frame,
+                "composite_score": composite_score,
+            }
+        )
+
+    # Sort key: major KPI priority → composite score → frame_idx (timestamp)
+    def sort_key_best(f: Mapping[str, Any]) -> tuple:
+        major_kpis = _get_major_kpi_priority_key(f)
+        composite = f["composite_score"]
+        frame_idx = f.get("frame_idx", 0)
+        return (*major_kpis, composite, frame_idx)
+
+    def sort_key_worst(f: Mapping[str, Any]) -> tuple:
+        major_kpis = _get_major_kpi_priority_key(f)
+        composite = f["composite_score"]
+        frame_idx = f.get("frame_idx", 0)
+        # Reverse for worst (max values)
+        return tuple(-v if v != float("inf") else -float("inf") for v in (*major_kpis, composite, -frame_idx))
+
+    # Select best (minimum)
+    best_frame = min(frames_with_scores, key=sort_key_best)
+
+    # Select worst (maximum)
+    worst_frame = max(frames_with_scores, key=sort_key_best)
+
+    # Determine selection reason and tiebreak
+    def analyze_selection(frame: Mapping[str, Any]) -> Dict[str, Any]:
+        major_kpis_missing = frame.get("major_kpis_missing", False)
+
+        if major_kpis_missing:
+            selection_reason = "composite_score_fallback"
+            tiebreak = "composite"
+        else:
+            # Check which level of priority was used
+            b1 = frame["kpis"].get("B1_core_stability")
+            b4 = frame["kpis"].get("B4_pelvis_horizontal")
+            b2 = frame["kpis"].get("B2_support_foundation")
+
+            if b1 is not None:
+                selection_reason = "B1_priority"
+                # Check if tiebreak occurred
+                same_b1_frames = [
+                    f for f in frames_with_scores if f["kpis"].get("B1_core_stability") == b1
+                ]
+                if len(same_b1_frames) > 1:
+                    # B1 tie, check B4
+                    tiebreak = "B4"
+                else:
+                    tiebreak = None
+            elif b4 is not None:
+                selection_reason = "B4_priority"
+                tiebreak = None
+            elif b2 is not None:
+                selection_reason = "B2_priority"
+                tiebreak = None
+            else:
+                selection_reason = "composite_score_fallback"
+                tiebreak = "composite"
+
+        return {
+            "frame_idx": frame["frame_idx"],
+            "kpis": frame["kpis"],
+            "composite_score": frame["composite_score"],
+            "selection_reason": selection_reason,
+            "tiebreak": tiebreak,
+        }
+
+    return {
+        "best": analyze_selection(best_frame),
+        "worst": analyze_selection(worst_frame),
+    }
