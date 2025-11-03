@@ -218,3 +218,94 @@ def draw_torso_axis(
     # PHASE 2: 手動破線実装は後回し、まず実線で描画
     cv2.line(image, shoulder_mid, pelvis_mid, COLOR_TORSO_AXIS, THICKNESS_AXIS)
     return True
+
+
+def draw_rotation_indicator(
+    image: np.ndarray,
+    landmarks: List[Dict],
+    rotation_angle: Optional[float] = None,
+    min_visibility: float = 0.5
+) -> bool:
+    """
+    What: 体幹回旋インジケーター矢印を描画
+    Why: 回旋方向の視覚化（左右どちらに回旋しているか）
+    Design Decision: 体幹軸に垂直、黄色矢印（ハンドオーバー仕様）
+
+    Args:
+        image: 描画対象画像（変更される）
+        landmarks: ランドマークリスト（33点）
+        rotation_angle: 回旋角度（deg、正=右回旋、負=左回旋）Noneの場合は自動計算
+        min_visibility: 最小visibility
+
+    Returns:
+        描画成功時True、スキップ時False
+
+    CRITICAL:
+    - rotation_angle=Noneの場合、肩線と骨盤線のずれから回旋方向を推定
+    - 矢印は体幹軸中点から垂直方向に描画
+    - 回旋角度が小さい（<5deg）場合はスキップ
+    """
+    left_shoulder = get_landmark_safe(landmarks, LEFT_SHOULDER, min_visibility)
+    right_shoulder = get_landmark_safe(landmarks, RIGHT_SHOULDER, min_visibility)
+    left_hip = get_landmark_safe(landmarks, LEFT_HIP, min_visibility)
+    right_hip = get_landmark_safe(landmarks, RIGHT_HIP, min_visibility)
+
+    if any(lm is None for lm in [left_shoulder, right_shoulder, left_hip, right_hip]):
+        return False
+
+    h, w = image.shape[:2]
+
+    # 肩線中点・骨盤線中点
+    shoulder_left_px = normalize_to_pixel(left_shoulder, w, h)
+    shoulder_right_px = normalize_to_pixel(right_shoulder, w, h)
+    shoulder_mid = calculate_midpoint(shoulder_left_px, shoulder_right_px)
+
+    hip_left_px = normalize_to_pixel(left_hip, w, h)
+    hip_right_px = normalize_to_pixel(right_hip, w, h)
+    pelvis_mid = calculate_midpoint(hip_left_px, hip_right_px)
+
+    torso_mid = calculate_midpoint(shoulder_mid, pelvis_mid)
+
+    # 回旋角度計算（rotation_angle=Noneの場合）
+    if rotation_angle is None:
+        # 肩線の角度
+        shoulder_dx = shoulder_right_px[0] - shoulder_left_px[0]
+        shoulder_dy = shoulder_right_px[1] - shoulder_left_px[1]
+        shoulder_angle = math.degrees(math.atan2(shoulder_dy, shoulder_dx))
+
+        # 骨盤線の角度
+        hip_dx = hip_right_px[0] - hip_left_px[0]
+        hip_dy = hip_right_px[1] - hip_left_px[1]
+        hip_angle = math.degrees(math.atan2(hip_dy, hip_dx))
+
+        # 回旋角度（肩-骨盤のずれ）
+        rotation_angle = shoulder_angle - hip_angle
+
+    # 小さい回旋はスキップ
+    if abs(rotation_angle) < 5.0:
+        return False
+
+    # 体幹軸の角度（垂直方向を計算）
+    torso_dx = pelvis_mid[0] - shoulder_mid[0]
+    torso_dy = pelvis_mid[1] - shoulder_mid[1]
+    torso_angle_rad = math.atan2(torso_dy, torso_dx)
+
+    # 垂直方向（右回旋なら右、左回旋なら左）
+    perpendicular_angle = torso_angle_rad + (math.pi / 2 if rotation_angle > 0 else -math.pi / 2)
+
+    # 矢印の長さ（画像幅の10%）
+    arrow_length = int(w * 0.1)
+    arrow_end_x = int(torso_mid[0] + arrow_length * math.cos(perpendicular_angle))
+    arrow_end_y = int(torso_mid[1] + arrow_length * math.sin(perpendicular_angle))
+    arrow_end = (arrow_end_x, arrow_end_y)
+
+    # 矢印描画
+    cv2.arrowedLine(
+        image,
+        torso_mid,
+        arrow_end,
+        COLOR_ROTATION_ARROW,
+        THICKNESS_AXIS,
+        tipLength=0.3
+    )
+    return True
