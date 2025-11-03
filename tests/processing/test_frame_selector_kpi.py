@@ -797,4 +797,237 @@ class TestSelectBestWorstFrames:
         assert result["worst"]["frame_idx"] == 0
 
 
-# TODO: Stage 3, 5 tests will be added later
+# ========== Stage 3: representative選出 + Stage 5: 統合テスト ==========
+
+
+class TestSelectRepresentativeFrame:
+    """
+    Stage 3: Test representative frame selection (closest to median).
+
+    What: Select frame closest to median KPI vector.
+    Why: Provide typical performance reference for coaching.
+    Design Decision: Min-max normalization, L2 distance, N/A dimension exclusion.
+    """
+
+    def test_select_representative_closest_to_median(self):
+        """
+        Test: 中央値に最も近いフレームが選出される
+        Expected: frame 1 (median values)
+        """
+        # Red: select_representative_frame() doesn't exist yet
+        from processing.frame_selector import select_representative_frame
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 2.0,  # Low
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 3.0,
+                    "B4_pelvis_horizontal": 7.0,
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": 2.5,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 4.0,  # Median
+                    "B2_support_foundation": 9.0,
+                    "B3_3joint_coordination": 3.5,
+                    "B4_pelvis_horizontal": 8.0,
+                    "B5_knee_stability": 5.5,
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+            },
+            {
+                "frame_idx": 2,
+                "kpis": {
+                    "B1_core_stability": 6.0,  # High
+                    "B2_support_foundation": 10.0,
+                    "B3_3joint_coordination": 4.0,
+                    "B4_pelvis_horizontal": 9.0,
+                    "B5_knee_stability": 6.0,
+                    "B6_ankle_mobility": 6.5,
+                    "B7_upper_body_control": 3.0,
+                    "B8_breathing_pattern": 3.5,
+                },
+            },
+        ]
+
+        result = select_representative_frame(frame_kpis)
+
+        # Frame 1 should be closest to median
+        assert result["frame_idx"] == 1
+        assert "repr_distance" in result
+        assert result["repr_distance"] >= 0.0
+
+    def test_select_with_na_dimensions_excluded(self):
+        """
+        Test: N/A次元除外時のL2距離計算
+        Expected: N/A次元を除外して距離計算
+        """
+        from processing.frame_selector import select_representative_frame
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 4.0,
+                    "B2_support_foundation": None,  # N/A
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": 8.0,
+                    "B5_knee_stability": None,  # N/A
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 4.5,
+                    "B2_support_foundation": 8.5,
+                    "B3_3joint_coordination": 3.5,
+                    "B4_pelvis_horizontal": 8.5,
+                    "B5_knee_stability": 5.5,
+                    "B6_ankle_mobility": 6.5,
+                    "B7_upper_body_control": 2.7,
+                    "B8_breathing_pattern": None,  # N/A
+                },
+            },
+        ]
+
+        result = select_representative_frame(frame_kpis)
+
+        # Should successfully select despite N/A values
+        assert result["frame_idx"] in [0, 1]
+        assert "repr_distance" in result
+
+
+class TestSelectFrameTriplet:
+    """
+    Stage 5: Integrated test for best/worst/repr selection.
+
+    What: Test full pipeline from KPI extraction to selection.
+    Why: Verify end-to-end functionality and metadata output.
+    """
+
+    def test_select_frame_triplet_integration(self):
+        """
+        Test: 3枚（best/worst/repr）の統合選出
+        Expected: 全てのメタデータが正しく出力される
+        """
+        from processing.frame_selector import select_frame_triplet
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 5.0,
+                    "B2_support_foundation": 9.5,
+                    "B3_3joint_coordination": 3.8,
+                    "B4_pelvis_horizontal": 8.5,
+                    "B5_knee_stability": 5.8,
+                    "B6_ankle_mobility": 6.2,
+                    "B7_upper_body_control": 2.8,
+                    "B8_breathing_pattern": 3.2,
+                },
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 3.0,  # Best (lowest B1)
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": 7.5,
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": 2.5,
+                },
+            },
+            {
+                "frame_idx": 2,
+                "kpis": {
+                    "B1_core_stability": 7.0,  # Worst (highest B1)
+                    "B2_support_foundation": 10.0,
+                    "B3_3joint_coordination": 4.5,
+                    "B4_pelvis_horizontal": 9.5,
+                    "B5_knee_stability": 6.5,
+                    "B6_ankle_mobility": 7.0,
+                    "B7_upper_body_control": 3.5,
+                    "B8_breathing_pattern": 4.0,
+                },
+            },
+        ]
+
+        result = select_frame_triplet(frame_kpis)
+
+        # Check structure
+        assert "best" in result
+        assert "worst" in result
+        assert "repr" in result
+        assert "metrics" in result
+
+        # Check best/worst
+        assert result["best"]["frame_idx"] == 1
+        assert result["worst"]["frame_idx"] == 2
+
+        # Check metrics
+        metrics = result["metrics"]
+        assert "best_worst_gap" in metrics
+        assert "repr_distance" in metrics
+        assert metrics["best_worst_gap"] > 0.0  # Should be different
+
+    def test_select_frame_triplet_with_na_values(self):
+        """
+        Test: N/A値を含む統合テスト
+        Expected: N/A処理が正しく動作し、3枚が選出される
+        """
+        from processing.frame_selector import select_frame_triplet
+
+        frame_kpis = [
+            {
+                "frame_idx": 0,
+                "kpis": {
+                    "B1_core_stability": 4.0,
+                    "B2_support_foundation": None,
+                    "B3_3joint_coordination": 3.2,
+                    "B4_pelvis_horizontal": 8.0,
+                    "B5_knee_stability": None,
+                    "B6_ankle_mobility": 6.0,
+                    "B7_upper_body_control": 2.5,
+                    "B8_breathing_pattern": 3.0,
+                },
+                "na_count": 2,
+            },
+            {
+                "frame_idx": 1,
+                "kpis": {
+                    "B1_core_stability": 3.0,
+                    "B2_support_foundation": 8.0,
+                    "B3_3joint_coordination": 2.8,
+                    "B4_pelvis_horizontal": 7.5,
+                    "B5_knee_stability": 5.0,
+                    "B6_ankle_mobility": 5.5,
+                    "B7_upper_body_control": 2.0,
+                    "B8_breathing_pattern": None,
+                },
+                "na_count": 1,
+            },
+        ]
+
+        result = select_frame_triplet(frame_kpis)
+
+        # Should successfully select all 3 despite N/A
+        assert result["best"]["frame_idx"] in [0, 1]
+        assert result["worst"]["frame_idx"] in [0, 1]
+        assert result["repr"]["frame_idx"] in [0, 1]
+
+
+# Final integration test

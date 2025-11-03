@@ -962,3 +962,301 @@ def select_best_worst_frames(
         "best": analyze_selection(best_frame),
         "worst": analyze_selection(worst_frame),
     }
+
+
+# ========== Stage 3: Representative Frame Selection ==========
+
+
+def _normalize_kpi_values(frame_kpis: Sequence[Mapping[str, Any]]) -> List[Dict[str, Dict[str, float]]]:
+    """
+    Normalize KPI values using min-max normalization.
+
+    What: Apply (value - min) / (max - min) for each KPI across frames.
+    Why: Enable L2 distance calculation across different KPI scales.
+    Design Decision: Min-max to [0, 1]. N/A excluded. Same value → 0.5.
+
+    Args:
+        frame_kpis: List of frame dicts with 'kpis' field
+
+    Returns:
+        List of normalized KPI dicts per frame
+
+    CRITICAL:
+    - N/A values remain None (not normalized)
+    - All frames same value → 0.5 (middle of [0, 1])
+    - Different scales KPIs brought to common [0, 1] range
+    """
+    if not frame_kpis:
+        return []
+
+    # Collect min/max for each KPI
+    kpi_ranges = {}
+    for kpi_key in B_PRINCIPLES_KEYS:
+        valid_values = []
+        for frame in frame_kpis:
+            val = frame["kpis"].get(kpi_key)
+            if val is not None:
+                valid_values.append(val)
+
+        if valid_values:
+            kpi_ranges[kpi_key] = {
+                "min": min(valid_values),
+                "max": max(valid_values),
+            }
+        else:
+            # All N/A
+            kpi_ranges[kpi_key] = {"min": 0.0, "max": 0.0}
+
+    # Normalize each frame
+    normalized_frames = []
+    for frame in frame_kpis:
+        normalized_kpis = {}
+        for kpi_key in B_PRINCIPLES_KEYS:
+            val = frame["kpis"].get(kpi_key)
+            if val is None:
+                normalized_kpis[kpi_key] = None  # Keep N/A
+            else:
+                kpi_min = kpi_ranges[kpi_key]["min"]
+                kpi_max = kpi_ranges[kpi_key]["max"]
+
+                if kpi_max == kpi_min:
+                    # All same value → middle of range
+                    normalized_kpis[kpi_key] = 0.5
+                else:
+                    normalized_kpis[kpi_key] = (val - kpi_min) / (kpi_max - kpi_min)
+
+        normalized_frames.append(
+            {
+                "frame_idx": frame.get("frame_idx", 0),
+                "normalized_kpis": normalized_kpis,
+                "original_kpis": frame["kpis"],
+            }
+        )
+
+    return normalized_frames
+
+
+def _calculate_median_vector(normalized_frames: Sequence[Mapping[str, Any]]) -> Dict[str, Optional[float]]:
+    """
+    Calculate median vector from normalized KPIs.
+
+    What: Compute median value for each KPI dimension across frames.
+    Why: Provide target vector for representative frame selection.
+    Design Decision: N/A values excluded from median calculation.
+
+    Args:
+        normalized_frames: List of frames with 'normalized_kpis' field
+
+    Returns:
+        dict: {kpi_key: median_value or None (if all N/A)}
+
+    CRITICAL:
+    - N/A values excluded from median calculation
+    - If all frames have N/A for a KPI, median is None
+    """
+    median_vector = {}
+
+    for kpi_key in B_PRINCIPLES_KEYS:
+        valid_values = []
+        for frame in normalized_frames:
+            val = frame["normalized_kpis"].get(kpi_key)
+            if val is not None:
+                valid_values.append(val)
+
+        if valid_values:
+            median_vector[kpi_key] = statistics.median(valid_values)
+        else:
+            median_vector[kpi_key] = None  # All N/A
+
+    return median_vector
+
+
+def _calculate_l2_distance(
+    normalized_kpis: Mapping[str, Optional[float]],
+    median_vector: Mapping[str, Optional[float]],
+) -> float:
+    """
+    Calculate L2 distance between normalized KPIs and median vector.
+
+    What: Compute Euclidean distance, excluding N/A dimensions.
+    Why: Measure similarity to typical performance.
+    Design Decision: N/A dimensions excluded from calculation.
+
+    Args:
+        normalized_kpis: Frame's normalized KPI values
+        median_vector: Median KPI vector
+
+    Returns:
+        float: L2 distance (0.0 if no valid dimensions)
+
+    CRITICAL:
+    - N/A dimensions excluded (both frame and median must be valid)
+    - Distance = sqrt(sum((kpi - median)^2 for valid dimensions))
+    - No valid dimensions → distance = 0.0
+    """
+    squared_diffs = []
+
+    for kpi_key in B_PRINCIPLES_KEYS:
+        frame_val = normalized_kpis.get(kpi_key)
+        median_val = median_vector.get(kpi_key)
+
+        # Both must be valid (non-None)
+        if frame_val is not None and median_val is not None:
+            squared_diffs.append((frame_val - median_val) ** 2)
+
+    if not squared_diffs:
+        return 0.0
+
+    return math.sqrt(sum(squared_diffs))
+
+
+def select_representative_frame(
+    frame_kpis: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Select representative frame (closest to median KPI vector).
+
+    What: Find frame with minimum L2 distance to median normalized KPIs.
+    Why: Provide typical performance reference for coaching.
+    Design Decision: Min-max normalization → median vector → L2 distance.
+                     N/A dimensions excluded from distance calculation.
+
+    Args:
+        frame_kpis: List of frame dicts from extract_frame_kpis()
+
+    Returns:
+        dict: {
+            'frame_idx': int,
+            'kpis': {...},
+            'repr_distance': float,
+            'selection_reason': 'closest_to_median',
+        }
+
+    CRITICAL:
+    - Min-max normalization applied first
+    - Median calculated per KPI dimension
+    - L2 distance excludes N/A dimensions
+    - Empty input returns placeholder
+    """
+    if not frame_kpis:
+        return {
+            "frame_idx": 0,
+            "kpis": {},
+            "repr_distance": 0.0,
+            "selection_reason": "empty_input",
+        }
+
+    # Step 1: Normalize KPIs
+    normalized_frames = _normalize_kpi_values(frame_kpis)
+
+    # Step 2: Calculate median vector
+    median_vector = _calculate_median_vector(normalized_frames)
+
+    # Step 3: Calculate L2 distance for each frame
+    frames_with_distance = []
+    for frame in normalized_frames:
+        distance = _calculate_l2_distance(frame["normalized_kpis"], median_vector)
+        frames_with_distance.append(
+            {
+                "frame_idx": frame["frame_idx"],
+                "original_kpis": frame["original_kpis"],
+                "repr_distance": distance,
+            }
+        )
+
+    # Step 4: Select frame with minimum distance (tiebreak by frame_idx)
+    repr_frame = min(
+        frames_with_distance,
+        key=lambda f: (f["repr_distance"], f["frame_idx"]),
+    )
+
+    return {
+        "frame_idx": repr_frame["frame_idx"],
+        "kpis": repr_frame["original_kpis"],
+        "repr_distance": repr_frame["repr_distance"],
+        "selection_reason": "closest_to_median",
+    }
+
+
+# ========== Stage 5: Integrated Selection with Metrics ==========
+
+
+def select_frame_triplet(
+    frame_kpis: Sequence[Mapping[str, Any]],
+    weights: Optional[Mapping[str, float]] = None,
+) -> Dict[str, Any]:
+    """
+    Select best/worst/repr frames and calculate observation metrics.
+
+    What: Integrated selection of 3 frames with metadata and metrics.
+    Why: Provide complete frame selection output for Phase2 pipeline.
+    Design Decision: Reuse Stage 1-4 functions, add observation metrics.
+
+    Args:
+        frame_kpis: List of frame dicts from extract_frame_kpis()
+        weights: Optional custom weights for composite score
+
+    Returns:
+        dict: {
+            'best': {frame_idx, kpis, composite_score, selection_reason, tiebreak},
+            'worst': {...},
+            'repr': {frame_idx, kpis, repr_distance, selection_reason},
+            'metrics': {
+                'best_worst_gap': float,
+                'repr_distance': float,
+                'na_rate': float,
+                'total_frames': int
+            }
+        }
+
+    CRITICAL:
+    - best_worst_gap = |best_composite_score - worst_composite_score|
+    - na_rate = overall N/A rate across all frames
+    - All functions handle N/A consistently
+    """
+    if not frame_kpis:
+        placeholder = {
+            "frame_idx": 0,
+            "kpis": {},
+            "composite_score": 0.0,
+            "selection_reason": "empty_input",
+        }
+        return {
+            "best": placeholder,
+            "worst": placeholder,
+            "repr": placeholder,
+            "metrics": {
+                "best_worst_gap": 0.0,
+                "repr_distance": 0.0,
+                "na_rate": 0.0,
+                "total_frames": 0,
+            },
+        }
+
+    # Select best/worst
+    best_worst = select_best_worst_frames(frame_kpis, weights=weights)
+
+    # Select representative
+    repr_frame = select_representative_frame(frame_kpis)
+
+    # Calculate metrics
+    best_score = best_worst["best"]["composite_score"]
+    worst_score = best_worst["worst"]["composite_score"]
+    best_worst_gap = abs(best_score - worst_score)
+
+    # Overall N/A rate
+    total_kpis = sum(frame.get("na_count", 0) for frame in frame_kpis)
+    total_possible = len(frame_kpis) * len(B_PRINCIPLES_KEYS)
+    na_rate = total_kpis / total_possible if total_possible > 0 else 0.0
+
+    return {
+        "best": best_worst["best"],
+        "worst": best_worst["worst"],
+        "repr": repr_frame,
+        "metrics": {
+            "best_worst_gap": best_worst_gap,
+            "repr_distance": repr_frame["repr_distance"],
+            "na_rate": na_rate,
+            "total_frames": len(frame_kpis),
+        },
+    }
