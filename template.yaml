@@ -390,18 +390,6 @@ Resources:
                     }
                   }
                 },
-                "ResultSelector": {
-                  "rep_id.$": "$.rep_id",
-                  "status.$": "$.result.status",
-                  "old_threshold_version.$": "$.result.old_threshold_version",
-                  "new_threshold_version.$": "$.result.new_threshold_version",
-                  "old_validation_state.$": "$.result.old_validation_state",
-                  "new_validation_state.$": "$.result.new_validation_state",
-                  "old_score.$": "$.result.old_score",
-                  "new_score.$": "$.result.new_score",
-                  "score_delta.$": "$.result.score_delta",
-                  "error.$": "$.result.error"
-                },
                 "ResultPath": "$.rescore_results",
                 "Next": "GenerateDiffReport"
               },
