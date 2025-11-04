@@ -5,6 +5,7 @@ on:
     paths:
       - "schema/thresholds_v2.schema.json"
       - "tools/build_thresholds.py"
+      - "tools/validate_direction_consistency.py"
       - "tests/fixtures/thresholds_v2/**"
       - "config/thresholds_v2.json"
       - ".github/workflows/validate-thresholds-v2.yml"
@@ -15,6 +16,7 @@ on:
     paths:
       - "schema/thresholds_v2.schema.json"
       - "tools/build_thresholds.py"
+      - "tools/validate_direction_consistency.py"
       - "tests/fixtures/thresholds_v2/**"
       - "config/thresholds_v2.json"
       - ".github/workflows/validate-thresholds-v2.yml"
@@ -256,3 +258,7 @@ jobs:
           fi
 
           echo "✔ Invalid direction correctly rejected"
+
+      - name: Validate direction-op consistency
+        run: |
+          python tools/validate_direction_consistency.py config/thresholds_v2.json
