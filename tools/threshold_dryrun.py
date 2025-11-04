@@ -480,3 +480,124 @@ def run_batch_dryrun(
         "execution_time_ms": duration_ms,
         "direction_summary": direction_summary,
     }
+
+
+# ============================================================================
+# P90/P75 Automatic Threshold Calculation (PR#4)
+# ============================================================================
+
+def calculate_percentile_thresholds(
+    df: pd.DataFrame,
+    metric_column: str,
+    direction: str,
+) -> dict[str, Any]:
+    """
+    What: Calculate P90/P75 thresholds from sample distribution
+    Why: Automate threshold setting based on observed data
+    Design Decision: Direction-aware percentile selection
+
+    CRITICAL:
+    - direction="lower": P90 (top 10% worst) = Fail, P75 (top 25% bad) = Warn
+    - direction="higher": P10 (bottom 10% worst) = Fail, P25 (bottom 25% bad) = Warn
+    - Returns fail_threshold and warn_threshold in direction-consistent order
+
+    Args:
+        df: Sample data DataFrame
+        metric_column: Column name containing metric values
+        direction: "lower" or "higher"
+
+    Returns:
+        Dict with keys:
+        - fail_threshold: Threshold for fail classification
+        - warn_threshold: Threshold for warn classification
+        - direction: Input direction (for verification)
+
+    Examples:
+        >>> df = pd.DataFrame({"metric": [5, 10, 15, 20, 25]})
+        >>> result = calculate_percentile_thresholds(df, "metric", "lower")
+        >>> result["fail_threshold"]  # P90
+        24.0
+        >>> result["warn_threshold"]  # P75
+        20.0
+    """
+    if direction not in ["lower", "higher"]:
+        raise ValueError(f"Invalid direction '{direction}'. Must be 'lower' or 'higher'.")
+
+    if metric_column not in df.columns:
+        raise KeyError(f"Column '{metric_column}' not found in DataFrame")
+
+    values = df[metric_column].dropna()
+
+    if direction == "lower":
+        # Lower is better: high percentiles are bad
+        fail_threshold = values.quantile(0.90)  # Top 10% (worst)
+        warn_threshold = values.quantile(0.75)  # Top 25% (bad)
+    else:  # higher
+        # Higher is better: low percentiles are bad
+        fail_threshold = values.quantile(0.10)  # Bottom 10% (worst)
+        warn_threshold = values.quantile(0.25)  # Bottom 25% (bad)
+
+    return {
+        "fail_threshold": float(fail_threshold),
+        "warn_threshold": float(warn_threshold),
+        "direction": direction,
+    }
+
+
+def generate_bands_from_percentiles(
+    percentile_result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    What: Convert percentile thresholds to band format
+    Why: Enable dry-run with auto-calculated thresholds
+    Design Decision: Direction-aware band ordering
+
+    CRITICAL:
+    - direction="lower": OK < warn < fail threshold structure
+    - direction="higher": fail < warn threshold, OK is >= warn
+    - Output format compatible with compute_label() and dry_run_threshold_change()
+
+    Args:
+        percentile_result: Output from calculate_percentile_thresholds()
+
+    Returns:
+        List of band dicts: [{"label": "OK", "max": X}, ...]
+
+    Examples:
+        >>> percentile_result = {
+        ...     "fail_threshold": 20.0,
+        ...     "warn_threshold": 15.0,
+        ...     "direction": "lower",
+        ... }
+        >>> bands = generate_bands_from_percentiles(percentile_result)
+        >>> bands[0]
+        {'label': 'OK', 'max': 15.0}
+        >>> bands[1]
+        {'label': 'WARN', 'max': 20.0}
+        >>> bands[2]
+        {'label': 'NG', 'max': None}
+    """
+    fail_threshold = percentile_result["fail_threshold"]
+    warn_threshold = percentile_result["warn_threshold"]
+    direction = percentile_result["direction"]
+
+    if direction == "lower":
+        # Lower is better: OK < warn < fail
+        # OK: < warn_threshold
+        # WARN: < fail_threshold
+        # NG: >= fail_threshold
+        return [
+            {"label": "OK", "max": warn_threshold},
+            {"label": "WARN", "max": fail_threshold},
+            {"label": "NG", "max": None},
+        ]
+    else:  # higher
+        # Higher is better: fail < warn, OK is >= warn
+        # OK: >= warn_threshold
+        # WARN: >= fail_threshold
+        # NG: < fail_threshold
+        return [
+            {"label": "OK", "max": warn_threshold},
+            {"label": "WARN", "max": fail_threshold},
+            {"label": "NG", "max": None},
+        ]

@@ -1116,3 +1116,174 @@ def test_batch_dryrun_direction_summary(multi_metric_samples):
     assert direction_summary["lower_count"] == 2
     assert direction_summary["higher_count"] == 1
     assert direction_summary["unspecified_count"] == 0
+
+
+# ============================================================================
+# Test: P90/P75 Automatic Threshold Calculation (PR#4)
+# ============================================================================
+
+def test_calculate_percentile_thresholds_lower_direction(multi_metric_samples):
+    """
+    What: Verify P90/P75 calculation for lower_is_better metrics
+    Why: Automatic threshold setting from sample distribution
+
+    Design Decision:
+    - direction="lower": P90 (top 10% worst) = Fail, P75 (top 25% bad) = Warn
+    - Lower values are better, so high percentiles are thresholds
+
+    CRITICAL: Must use direction-aware percentile selection
+    """
+    from tools.threshold_dryrun import calculate_percentile_thresholds
+
+    result = calculate_percentile_thresholds(
+        df=multi_metric_samples,
+        metric_column="trunk_lean_deg",
+        direction="lower",
+    )
+
+    # Verify structure
+    assert "fail_threshold" in result
+    assert "warn_threshold" in result
+    assert "direction" in result
+    assert result["direction"] == "lower"
+
+    # Verify values: fail (P90) > warn (P75) for lower direction
+    fail_threshold = result["fail_threshold"]
+    warn_threshold = result["warn_threshold"]
+
+    # Calculate expected values
+    expected_p90 = multi_metric_samples["trunk_lean_deg"].quantile(0.90)
+    expected_p75 = multi_metric_samples["trunk_lean_deg"].quantile(0.75)
+
+    assert abs(fail_threshold - expected_p90) < 0.01
+    assert abs(warn_threshold - expected_p75) < 0.01
+    assert fail_threshold > warn_threshold  # P90 > P75
+
+
+def test_calculate_percentile_thresholds_higher_direction(multi_metric_samples):
+    """
+    What: Verify P90/P75 calculation for higher_is_better metrics
+    Why: Reversed percentile logic for higher direction
+
+    Design Decision:
+    - direction="higher": P10 (bottom 10% worst) = Fail, P25 (bottom 25% bad) = Warn
+    - Higher values are better, so low percentiles are thresholds
+
+    CRITICAL: Percentile reversal for higher direction
+    """
+    from tools.threshold_dryrun import calculate_percentile_thresholds
+
+    result = calculate_percentile_thresholds(
+        df=multi_metric_samples,
+        metric_column="balance_score",
+        direction="higher",
+    )
+
+    # Verify structure
+    assert result["direction"] == "higher"
+
+    # Verify values: fail (P10) < warn (P25) for higher direction
+    fail_threshold = result["fail_threshold"]
+    warn_threshold = result["warn_threshold"]
+
+    # Calculate expected values
+    expected_p10 = multi_metric_samples["balance_score"].quantile(0.10)
+    expected_p25 = multi_metric_samples["balance_score"].quantile(0.25)
+
+    assert abs(fail_threshold - expected_p10) < 0.01
+    assert abs(warn_threshold - expected_p25) < 0.01
+    assert fail_threshold < warn_threshold  # P10 < P25
+
+
+def test_calculate_percentile_thresholds_invalid_direction(multi_metric_samples):
+    """
+    What: Verify invalid direction raises ValueError
+    Why: Fail-fast on incorrect usage
+    """
+    from tools.threshold_dryrun import calculate_percentile_thresholds
+
+    with pytest.raises(ValueError, match="Invalid direction"):
+        calculate_percentile_thresholds(
+            df=multi_metric_samples,
+            metric_column="trunk_lean_deg",
+            direction="invalid",
+        )
+
+
+def test_calculate_percentile_thresholds_missing_column(multi_metric_samples):
+    """
+    What: Verify missing column raises KeyError
+    Why: Detect data inconsistencies early
+    """
+    from tools.threshold_dryrun import calculate_percentile_thresholds
+
+    with pytest.raises(KeyError):
+        calculate_percentile_thresholds(
+            df=multi_metric_samples,
+            metric_column="nonexistent_column",
+            direction="lower",
+        )
+
+
+def test_generate_bands_from_percentiles_lower():
+    """
+    What: Verify band generation from percentile thresholds
+    Why: Convert percentile results to band format for dry-run
+
+    Design Decision:
+    - direction="lower": OK < warn < fail threshold structure
+    - Three bands: OK, WARN, NG
+    """
+    from tools.threshold_dryrun import generate_bands_from_percentiles
+
+    percentile_result = {
+        "fail_threshold": 20.0,
+        "warn_threshold": 15.0,
+        "direction": "lower",
+    }
+
+    bands = generate_bands_from_percentiles(percentile_result)
+
+    # Verify structure
+    assert len(bands) == 3
+    assert bands[0]["label"] == "OK"
+    assert bands[1]["label"] == "WARN"
+    assert bands[2]["label"] == "NG"
+
+    # Verify thresholds for lower direction
+    # OK: < 15.0, WARN: < 20.0, NG: >= 20.0
+    assert bands[0]["max"] == 15.0
+    assert bands[1]["max"] == 20.0
+    assert bands[2]["max"] is None
+
+
+def test_generate_bands_from_percentiles_higher():
+    """
+    What: Verify band generation for higher direction
+    Why: Reversed threshold ordering for higher_is_better
+
+    Design Decision:
+    - direction="higher": fail < warn threshold, OK is >= warn
+    - Three bands: OK, WARN, NG
+    """
+    from tools.threshold_dryrun import generate_bands_from_percentiles
+
+    percentile_result = {
+        "fail_threshold": 60.0,  # P10
+        "warn_threshold": 70.0,  # P25
+        "direction": "higher",
+    }
+
+    bands = generate_bands_from_percentiles(percentile_result)
+
+    # Verify structure
+    assert len(bands) == 3
+
+    # For higher direction, bands are ordered: OK (highest), WARN (middle), NG (lowest)
+    # OK: >= 70.0, WARN: >= 60.0, NG: < 60.0
+    assert bands[0]["label"] == "OK"
+    assert bands[0]["max"] == 70.0
+    assert bands[1]["label"] == "WARN"
+    assert bands[1]["max"] == 60.0
+    assert bands[2]["label"] == "NG"
+    assert bands[2]["max"] is None

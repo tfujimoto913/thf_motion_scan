@@ -1,0 +1,26 @@
+[
+  {
+    "code": "overall_score",
+    "reason": "Manual review required: special operator 'range_inc' found",
+    "bands": [
+      {
+        "name": "pass",
+        "op": "gte",
+        "value": 60
+      },
+      {
+        "name": "border",
+        "op": "range_inc",
+        "value": [
+          40,
+          60
+        ]
+      },
+      {
+        "name": "fail",
+        "op": "lt",
+        "value": 40
+      }
+    ]
+  }
+]
