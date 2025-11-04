@@ -1194,49 +1194,23 @@ Resources:
       OKActions:
         - !Ref AlertsTopic
 
-  DevLambdaInvocationsWarnAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub 'thf-lambda-invocations-5m-WARN-${Environment}'
-      AlarmDescription: 'WARN when 5-minute Lambda invocation total exceeds the configured threshold.'
-      ComparisonOperator: GreaterThanThreshold
-      EvaluationPeriods: 1
-      Threshold: !Ref LambdaInvocationsWarn5Min
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlertsTopic
-      OKActions:
-        - !Ref AlertsTopic
-      Metrics:
-        - Id: m1
-          Expression: "SEARCH('{AWS/Lambda,FunctionName} MetricName=\"Invocations\"', 'Sum', 300)"
-          ReturnData: false
-        - Id: total
-          Expression: "SUM(METRICS())"
-          Label: 'Lambda Invocations (Sum, 5m)'
-          ReturnData: true
+  # ==============================================================================
+  # Lambda Invocations Alarms - TEMPORARILY DISABLED
+  #
+  # Reason: CloudWatch API does not support SEARCH expressions with Period property.
+  # Error: "Period must not be null" occurs with both Expression-based metrics.
+  #
+  # Workaround Options:
+  # 1. Use MetricStat with individual Lambda functions (per-function alarms)
+  # 2. Use custom metrics aggregation
+  # 3. Monitor representative Lambda functions only
+  #
+  # Tracking: To be implemented in Phase 5.1
+  # Decision Log: ADR-040 (UI Monitoring 2-Tier Alert Design)
+  # ==============================================================================
 
-  DevLambdaInvocationsFailAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub 'thf-lambda-invocations-5m-FAIL-${Environment}'
-      AlarmDescription: 'FAIL when 5-minute Lambda invocation total exceeds the configured threshold.'
-      ComparisonOperator: GreaterThanThreshold
-      EvaluationPeriods: 1
-      Threshold: !Ref LambdaInvocationsFail5Min
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlertsTopic
-      OKActions:
-        - !Ref AlertsTopic
-      Metrics:
-        - Id: m1
-          Expression: "SEARCH('{AWS/Lambda,FunctionName} MetricName=\"Invocations\"', 'Sum', 300)"
-          ReturnData: false
-        - Id: total
-          Expression: "SUM(METRICS())"
-          Label: 'Lambda Invocations (Sum, 5m)'
-          ReturnData: true
+  # DevLambdaInvocationsWarnAlarm: DISABLED (see above)
+  # DevLambdaInvocationsFailAlarm: DISABLED (see above)
 
   # ==============================================================================
   # Metrics Monitoring Alarms（BCR/κ/override継続監視）
