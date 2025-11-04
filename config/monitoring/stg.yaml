@@ -1,0 +1,43 @@
+# Staging Environment Overrides
+# Purpose: Production-like thresholds for staging environment
+# Base: config/monitoring/base.yaml
+# Created: 2025-11-04
+# Decision Log: ADR-040 (UI Monitoring System)
+
+environment: stg
+
+# Override billing thresholds (closer to production)
+billing:
+  cost:
+    warn_threshold: 8.0   # $8 USD (higher budget for staging testing)
+    fail_threshold: 10.0  # $10 USD
+
+# Override UI performance thresholds (same as base/production)
+ui:
+  render_time_ms:
+    warn_threshold_p75: 800    # 800ms (same as base)
+    fail_threshold_p90: 1200   # 1200ms (same as base)
+
+  error_rate:
+    warn_threshold_p75: 0.05   # 5% error rate
+    fail_threshold_p90: 0.10   # 10% error rate
+
+  availability:
+    warn_threshold_percent: 99.0   # 99% uptime (same as production)
+    fail_threshold_percent: 95.0   # 95% uptime
+
+# Override incident response (same as production)
+incident_response:
+  primary_response_minutes: 5    # 5 minutes (production-like)
+  resolution_target_minutes: 30  # 30 minutes
+
+# Override mini-review triggers (same as base)
+mini_review:
+  triggers:
+    - condition: "false_positive_rate"
+      threshold: "+20%"
+      description: "False positive rate increased by 20%+"
+
+    - condition: "alarm_storm"
+      threshold: "5 alarms within 1 hour"
+      description: "Multiple alarms in short timeframe"

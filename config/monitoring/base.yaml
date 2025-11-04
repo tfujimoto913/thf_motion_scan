@@ -1,0 +1,248 @@
+# Monitoring Rules Configuration v1.0
+# Purpose: Define thresholds and alerting rules for billing and UI monitoring
+# Created: 2025-11-04 by Claude Code
+# Decision Log: ADR-TBD (UI Monitoring System)
+#
+# CRITICAL:
+# - WARN/FAIL 2-tier threshold system
+# - SNS topic integration for notifications
+# - Rollback conditions defined explicitly
+
+version: "1.0.0"
+
+# Billing monitoring configuration
+billing:
+  cost:
+    # Monthly cost thresholds (USD)
+    warn_threshold: 4.0  # 80% of budget
+    fail_threshold: 5.0  # 100% of budget
+    period_hours: 6      # Evaluation period (CloudWatch metric update frequency)
+
+  notification:
+    sns_topic: thf-alerts
+    email_enabled: true
+    slack_enabled: false  # Future enhancement
+
+  alarm_settings:
+    evaluation_periods: 1
+    datapoints_to_alarm: 1
+    treat_missing_data: notBreaching
+
+# UI performance monitoring configuration
+ui:
+  render_time_ms:
+    # Streamlit page render time thresholds
+    warn_threshold_p75: 800   # P75 percentile (milliseconds)
+    fail_threshold_p90: 1200  # P90 percentile (milliseconds)
+    sample_window_min: 5      # Sample collection window
+
+  error_rate:
+    # UI error rate thresholds (validation errors, exceptions)
+    warn_threshold_p75: null  # TBD: Set after baseline measurement
+    fail_threshold_p90: null  # TBD: Set after baseline measurement
+    sample_window_min: 5
+
+  availability:
+    # Dashboard availability threshold
+    warn_threshold_percent: 99.0   # 99% uptime
+    fail_threshold_percent: 95.0   # 95% uptime
+    check_interval_min: 1          # Health check frequency
+
+# Rollback conditions and operational rules
+rollback:
+  # Automatic rollback triggers
+  conditions:
+    - condition: "false_positive_rate_increase"
+      threshold: "+30%"
+      description: "Validation false positive rate increased by 30% or more"
+
+    - condition: "critical_event_miss"
+      threshold: 1
+      description: "Missed detection of 1 or more critical events (ground truth verified)"
+
+    - condition: "cost_overrun"
+      threshold: "$5.00"
+      description: "Monthly cost exceeded fail threshold"
+
+    - condition: "ui_degradation"
+      threshold: "P90>1200ms for 3 consecutive evaluations"
+      description: "UI performance degraded beyond acceptable limits"
+
+  # Rollback decision authority
+  responsible: tech_lead
+
+  # Rollback execution time requirement
+  max_duration_minutes: 10
+
+  # Post-rollback actions
+  post_rollback:
+    - "Create incident report in monitoring_events.jsonl"
+    - "Schedule mini-review meeting within 24h"
+    - "Document root cause analysis"
+
+# Incident response configuration
+incident_response:
+  # Response time SLA
+  primary_response_minutes: 5   # First acknowledgment
+  resolution_target_minutes: 30 # Issue resolution or escalation
+
+  # Escalation path
+  escalation:
+    - level: 1
+      role: on_call_engineer
+      timeout_minutes: 5
+
+    - level: 2
+      role: tech_lead
+      timeout_minutes: 10
+
+    - level: 3
+      role: engineering_manager
+      timeout_minutes: 15
+
+  # Communication channels
+  notification_channels:
+    - type: sns
+      priority: high
+
+    - type: dashboard_banner
+      priority: high
+      visible_to: all_users
+
+    - type: logging
+      priority: medium
+      path: logs/monitoring_events.jsonl
+
+# Mini-review triggers
+mini_review:
+  # Conditions requiring team review
+  triggers:
+    - condition: "false_positive_rate"
+      threshold: "+20%"
+      description: "False positive rate increased by 20%+"
+
+    - condition: "alarm_storm"
+      threshold: "5 alarms within 1 hour"
+      description: "Multiple alarms in short timeframe"
+
+    - condition: "repeated_rollback"
+      threshold: "2 rollbacks within 7 days"
+      description: "Frequent rollbacks indicate systemic issue"
+
+  # Review format
+  format:
+    duration_minutes: 30
+    participants:
+      - tech_lead
+      - feature_owner
+      - on_call_engineer
+
+    required_outputs:
+      - root_cause_analysis
+      - action_items
+      - threshold_adjustment_proposal
+
+# Metric collection configuration
+metrics:
+  # CloudWatch custom metrics
+  namespace: THF/MotionScan
+
+  dimensions:
+    - name: Environment
+      values: ["dev", "staging", "prod"]
+
+    - name: Component
+      values: ["billing", "ui", "validation"]
+
+  # Metric retention
+  retention_days: 90
+
+  # High-resolution metrics (1-second granularity)
+  high_resolution:
+    - billing.cost
+    - ui.render_time_ms
+
+  # Standard metrics (1-minute granularity)
+  standard:
+    - ui.error_rate
+    - ui.availability
+
+# Notification templates
+notifications:
+  billing_warn:
+    subject: "[WARN] THF Motion Scan - Billing Alert"
+    body_template: |
+      **Warning**: Billing cost is approaching the limit.
+
+      Current Cost: ${{current_cost}}
+      Threshold: ${{threshold}}
+      Percentage: {{percentage}}%
+
+      Action Required: Review resource usage and consider optimization.
+      Runbook: https://docs/runbooks/billing_emergency_stop.md
+
+  billing_fail:
+    subject: "[FAIL] THF Motion Scan - Billing CRITICAL"
+    body_template: |
+      **CRITICAL**: Billing cost has exceeded the limit!
+
+      Current Cost: ${{current_cost}}
+      Threshold: ${{threshold}}
+
+      IMMEDIATE ACTION REQUIRED:
+      1. Execute emergency stop procedure
+      2. Review runbook: https://docs/runbooks/billing_emergency_stop.md
+      3. Acknowledge this alert within 5 minutes
+
+  ui_performance_warn:
+    subject: "[WARN] THF Motion Scan - UI Performance Degradation"
+    body_template: |
+      **Warning**: UI render time is degraded.
+
+      Current P75: {{p75_ms}}ms
+      Threshold: {{threshold_ms}}ms
+
+      Action: Investigate dashboard performance issues.
+      Runbook: https://docs/runbooks/ui_monitoring.md
+
+# Logging configuration
+logging:
+  events_log_path: logs/monitoring_events.jsonl
+
+  # Log entry schema
+  entry_schema:
+    - timestamp: ISO8601 UTC
+    - event_type: str  # alarm_triggered, threshold_breached, rollback_initiated, etc.
+    - component: str   # billing, ui, validation
+    - severity: str    # info, warn, fail
+    - threshold: float
+    - actual_value: float
+    - action_taken: str
+    - actor: str
+    - metadata: dict
+
+  # Log rotation
+  rotation:
+    max_size_mb: 100
+    max_age_days: 90
+    compression: gzip
+
+# Health check endpoints
+health_checks:
+  dashboard:
+    endpoint: /health
+    method: GET
+    expected_status: 200
+    timeout_seconds: 5
+
+  billing_status:
+    endpoint: /api/billing/status
+    method: GET
+    expected_status: 200
+    timeout_seconds: 3
+
+  threshold_editor:
+    endpoint: /api/thresholds/validate
+    method: GET
+    expected_status: 200
+    timeout_seconds: 3
