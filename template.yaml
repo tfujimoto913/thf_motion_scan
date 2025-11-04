@@ -1202,7 +1202,6 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       EvaluationPeriods: 1
       Threshold: !Ref LambdaInvocationsWarn5Min
-      Period: 300
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlertsTopic
@@ -1225,7 +1224,6 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       EvaluationPeriods: 1
       Threshold: !Ref LambdaInvocationsFail5Min
-      Period: 300
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlertsTopic
