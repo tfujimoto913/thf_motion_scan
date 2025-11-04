@@ -107,10 +107,12 @@ def iso_now_id():
 
 from pathlib import Path
 import json
+import logging
 
-def append_jsonl(path: str, entry: dict):
+def append_jsonl(path: str, record: dict):
     """JSON Lines 形式でログを1行追加する（ファイルが無ければ作成）"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    logging.info({"event": "append_jsonl", "func": "append_jsonl", "status": "ok"})

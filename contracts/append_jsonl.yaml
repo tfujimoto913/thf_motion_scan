@@ -1,0 +1,83 @@
+# Contract: append_jsonl
+# Purpose: JSON Lines形式でログを1行追加（ファイルが無ければ作成）
+# Version: 1.0.0
+# Last Updated: 2025-11-04
+
+contract:
+  name: append_jsonl
+  module: thresholds_editor.changelog
+  version: "1.0.0"
+
+  signature:
+    parameters:
+      - name: path
+        type: str
+        description: "書き込み先のファイルパス"
+      - name: record
+        type: dict
+        description: "追記するJSONオブジェクト"
+    returns:
+      type: None
+      description: "戻り値なし"
+
+  behavior:
+    given: "ログファイルパスとエントリ辞書"
+    when: "append_jsonlを呼び出す"
+    then: "1行のJSONがファイルに追記される"
+
+  invariants:
+    - "既存の行は変更されない（トランケートしない）"
+    - "末尾に改行が追加される"
+    - "ファイルが存在しない場合は作成される"
+    - "親ディレクトリが存在しない場合は作成される"
+
+  side_effects:
+    file_write:
+      mode: append
+      format: jsonl
+      encoding: utf-8
+    logs:
+      level: INFO
+      required_keys:
+        - event
+        - func
+        - status
+
+  fixtures:
+    - name: "append_to_existing"
+      description: "既存ファイルに追記（既存行は保持）"
+      given:
+        file_exists: true
+        existing_lines: 1
+      when:
+        record: {"a": 2}
+      then:
+        total_lines: 2
+        first_line_unchanged: true
+
+    - name: "create_new_file"
+      description: "ファイルが存在しない場合は作成"
+      given:
+        file_exists: false
+      when:
+        record: {"x": 9}
+      then:
+        file_created: true
+        total_lines: 1
+        ends_with_newline: true
+
+    - name: "permission_error"
+      description: "書き込み権限がない場合はエラー"
+      given:
+        path: "/root/blocked.jsonl"
+      when:
+        record: {"a": 1}
+      then:
+        raises: Exception
+
+  acceptance_criteria:
+    - "シグネチャが (path: str, record: dict) -> None"
+    - "ログ出力に event, func, status が含まれる"
+    - "既存ファイルに追記しても先頭行が変わらない"
+    - "新規ファイル作成時に末尾改行がある"
+    - "権限エラー時に例外が発生する"
