@@ -21,6 +21,24 @@ This runbook covers:
 
 ---
 
+## 👥 Release Team Assignment
+
+**Before starting the release, assign the following roles:**
+
+| Role | Responsibility | Name | Contact |
+|------|----------------|------|---------|
+| **Release Owner** | Overall coordination, final go/no-go decision | __________ | __________ |
+| **Monitoring Lead** | Watch metrics, detect anomalies, trigger alerts | __________ | __________ |
+| **Rollback Executor** | Execute rollback if needed (AWS credentials required) | __________ | __________ |
+| **Escalation Contact** | Emergency contact for critical issues | __________ | __________ |
+
+**Communication Channels**:
+- Primary: Slack #releases (or specify channel)
+- Secondary: Email / Phone
+- Emergency: PagerDuty (or specify system)
+
+---
+
 ## 🔧 Prerequisites
 
 ### Required Tools
@@ -36,6 +54,16 @@ This runbook covers:
 - [ ] JSON schema validation passed (`sam validate`)
 - [ ] Unit tests passed (`pytest tests/`)
 - [ ] Changelog updated in `docs/adr/`
+
+### Operational Governance Checklist
+- [ ] Release team roles assigned (see Release Team Assignment above)
+- [ ] Monitoring dashboard accessible to all team members
+- [ ] SNS topic subscriptions confirmed (email notifications working)
+- [ ] Rollback executor has AWS credentials and tested rollback procedure
+- [ ] Communication channels tested (Slack, PagerDuty, etc.)
+- [ ] Post-deployment monitoring schedule agreed upon (30min, 1hr, 24hr)
+- [ ] Escalation path defined for WARN/FAIL scenarios
+- [ ] Canary deployment decision made (Yes/No - document reason)
 
 ---
 
@@ -233,6 +261,119 @@ Wait 15 minutes and confirm metrics return to OK state.
    ```
 
 4. Monitor production for 1 hour (repeat Step 4)
+
+---
+
+### Step 8: Canary Deployment (Optional - Advanced)
+
+**Purpose**: Gradually roll out new rules_version to minimize blast radius.
+
+**Concept**: Deploy new rules_version to 10% of user sessions, monitor for degradation, then expand to 100%.
+
+**Implementation Options**:
+
+#### Option A: Feature Flag (Recommended for MVP)
+1. Add feature flag configuration:
+   ```json
+   {
+     "canary_rules_version": "v2.2",
+     "canary_percentage": 10,
+     "default_rules_version": "v2.1"
+   }
+   ```
+
+2. Modify Lambda to randomly select rules_version:
+   ```python
+   import random
+
+   def select_rules_version(config):
+       if random.random() * 100 < config["canary_percentage"]:
+           return config["canary_rules_version"]
+       return config["default_rules_version"]
+   ```
+
+3. Monitor canary metrics separately:
+   - Dimension: `RulesVersion=v2.2`
+   - Compare BCR/Kappa/Override against v2.1 baseline
+
+4. Gradual rollout schedule:
+   - Hour 0-1: 10% canary
+   - Hour 1-2: 25% canary (if no alarms)
+   - Hour 2-4: 50% canary (if no alarms)
+   - Hour 4+: 100% rollout (if no alarms)
+
+#### Option B: Lambda Weighted Alias (Future Enhancement)
+- Use Lambda alias with traffic shifting
+- Requires Lambda function versioning
+- CloudFormation example: `AutoPublishAlias` with `DeploymentPreference`
+
+**Canary Monitoring Checklist**:
+- [ ] Canary BCR within ±5% of baseline
+- [ ] Canary Kappa within ±5% of baseline
+- [ ] Canary OverrideRatio within ±10% of baseline
+- [ ] No user-reported issues
+- [ ] CloudWatch Logs show no ERROR spikes
+
+**Rollback**: Set `canary_percentage: 0` to immediately stop canary traffic.
+
+---
+
+### Step 9: 24-Hour Monitoring
+
+**Purpose**: Detect latent issues that may not appear in first hour (e.g., time-of-day effects, data drift).
+
+**Monitoring Schedule**:
+
+| Time Window | Check Interval | Metrics to Monitor | Action If Degradation |
+|-------------|----------------|--------------------|-----------------------|
+| Hour 0-1 | Every 5 minutes | BCR, Kappa, Override | Immediate rollback (Step 6) |
+| Hour 1-6 | Every 30 minutes | BCR, Kappa, Override, Error Rate | Investigate + prepare rollback |
+| Hour 6-24 | Every 2 hours | BCR, Kappa, Override, P95 Duration | Schedule rollback if persistent |
+
+**Hourly Monitoring Script**:
+
+```bash
+#!/bin/bash
+# Check BCR/Kappa/Override for last hour
+
+METRIC_NAMES=("BalancedCorrectRate" "CohenKappa" "OverrideRatio")
+
+for METRIC in "${METRIC_NAMES[@]}"; do
+  VALUE=$(aws cloudwatch get-metric-statistics \
+    --namespace THF/MotionScan \
+    --metric-name "$METRIC" \
+    --dimensions Name=Environment,Value=prod Name=RulesVersion,Value=v2.2 \
+    --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+    --period 3600 \
+    --statistics Average \
+    --query 'Datapoints[0].Average' \
+    --output text)
+
+  echo "$(date): $METRIC = $VALUE"
+done
+```
+
+**Daily Checklist**:
+
+- [ ] **Hour 0**: Production deployment complete
+- [ ] **Hour 1**: First hour monitoring - no alarms
+- [ ] **Hour 2**: Review CloudWatch Logs for anomalies
+- [ ] **Hour 4**: Review user feedback channels (if applicable)
+- [ ] **Hour 8**: Business hours check - no degradation
+- [ ] **Hour 12**: Mid-day traffic peak - metrics stable
+- [ ] **Hour 24**: Full day complete - declare success or rollback
+
+**Success Criteria** (all must be true for 24 hours):
+- No WARN/FAIL alarms triggered
+- BCR > 0.5, Kappa > 0.3, Override < 30%
+- No user-reported issues
+- Lambda error rate < 1%
+- P95 duration within baseline ±20%
+
+**If Success**: Update CHANGELOG, notify stakeholders, archive monitoring logs.
+
+**If Failure**: Execute rollback (Step 6), conduct post-mortem (ADR).
 
 ---
 
