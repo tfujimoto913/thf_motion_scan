@@ -10,11 +10,27 @@
       "code": "overall_score",
       "metric": "overall_score",
       "unit": "score",
+      "direction": "higher",
       "primary": {
         "bands": [
-          {"name": "pass", "op": "gte", "value": 60},
-          {"name": "border", "op": "range_inc", "value": [40, 60]},
-          {"name": "fail", "op": "lt", "value": 40}
+          {
+            "name": "pass",
+            "op": "gte",
+            "value": 60
+          },
+          {
+            "name": "border",
+            "op": "range_inc",
+            "value": [
+              40,
+              60
+            ]
+          },
+          {
+            "name": "fail",
+            "op": "lt",
+            "value": 40
+          }
         ]
       }
     }
