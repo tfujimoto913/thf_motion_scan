@@ -27,6 +27,7 @@ import uuid
 # dashboard/config.py, demo_data.py, version_display をインポート
 sys.path.insert(0, str(Path(__file__).parent))
 from version_display import display_versions
+from billing_status import display_billing_status_sidebar
 from config import (
     DEFAULT_ENV,
     PERFORMANCE_LIMITS,
@@ -48,6 +49,8 @@ from utils import (  # type: ignore[import-untyped]
 )
 from session_dao import group_tests_by_session, get_latest_sessions
 from session_pages import session_list_page, session_detail_page
+from pages.threshold_editor import render_threshold_editor_page
+from pages.billing_status_page import render_billing_status_page
 
 
 # 種目別評価原則マッピング（各種目で評価される原則番号）
@@ -2085,6 +2088,10 @@ def main():
         help="AWS環境なしでUIを確認できます。サンプルデータを表示します。"
     )
 
+    st.session_state.demo_mode = demo_mode
+    st.sidebar.markdown("---")
+    display_billing_status_sidebar(selected_env, disabled=demo_mode)
+
     if demo_mode:
         st.sidebar.warning("🎭 デモモード ON")
         st.sidebar.info("サンプルデータ（5件）を表示中")
@@ -2207,7 +2214,7 @@ def main():
     st.sidebar.markdown("---")
 
     # デバッグモード時はデバッグページを追加
-    page_options = ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理"]
+    page_options = ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理", "⚙️ Thresholds", "💳 Billing Status"]
     if st.session_state.get('debug_mode'):
         page_options.append("🔧 デバッグ情報")
 
@@ -2255,6 +2262,16 @@ def main():
             incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mode)
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ 未完了セッション管理処理時間: {stats.duration_ms:.0f} ms")
+    elif page == "⚙️ Thresholds":
+        with execution_timer("threshold_editor_page") as stats:
+            render_threshold_editor_page()
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ Threshold Editor処理時間: {stats.duration_ms:.0f} ms")
+    elif page == "💳 Billing Status":
+        with execution_timer("billing_status_page") as stats:
+            render_billing_status_page()
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ Billing Status処理時間: {stats.duration_ms:.0f} ms")
     elif page == "🔧 デバッグ情報":
         with execution_timer("debug_info_page") as stats:
             debug_info_page(dynamodb, resources, demo_mode)

@@ -1,20 +1,21 @@
 {
+  "rep_index": 2,
   "rep_id": "rep-0003",
-  "session_id": "sess-0001",
-  "threshold_version": "v2.1",
-  "scores": {
-    "angle_score": 40.0,
-    "stability_score": 35.0,
-    "composite_score": 37.5
+  "session_id": "sess-0003",
+  "test_code": "T01_single_leg_squat",
+  "versions": {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "artifact_sha": "local-dev"
   },
   "validation": {
-    "state": "INVALID",
-    "messages": [
-      "Stability score below invalid threshold"
+    "state": "ERROR",
+    "violations": [
+      {
+        "severity": "ERROR",
+        "category": "data",
+        "message": "Missing B1/B4 metrics"
+      }
     ]
-  },
-  "metadata": {
-    "processed_at": "2025-11-03T09:10:00Z",
-    "frame_count": 395
   }
 }

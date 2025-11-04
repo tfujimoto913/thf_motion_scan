@@ -1,31 +1,21 @@
 {
-  "session_id": "sess-0003",
-  "athlete_id": "ath-0002",
-  "test_name": "single_leg_squat",
-  "threshold_version": "v2.1",
-  "aggregated_scores": {
-    "mean_composite": 55.0,
-    "std_composite": 12.0,
-    "valid_rep_count": 2,
-    "total_rep_count": 4
+  "session_id": "sess-invalid",
+  "athlete_id": "ath-bad-001",
+  "test_code": "T01_single_leg_squat",
+  "qc_pass_count": -1,
+  "total_reps": 3,
+  "aggregates": {
+    "best_score": 40.0,
+    "average_score": 45.0
   },
   "validation": {
-    "state": "INVALID",
-    "messages": ["QC gate failed: B4_sigma < 3.0"],
-    "qc_gate_result": {
-      "gate_name": "B4_sigma",
-      "passed": false,
-      "criteria_met": []
-    }
-  },
-  "reps": [
-    {"rep_id": "rep-0201", "state": "INVALID"}
-  ],
-  "metadata": {
-    "processed_at": "2025-11-03T11:00:00Z",
-    "versions": {
-      "threshold": "v2.1",
-      "schema": "1.0.0"
-    }
+    "state": "ERROR",
+    "violations": [
+      {
+        "severity": "ERROR",
+        "category": "qc",
+        "message": "Negative rep count"
+      }
+    ]
   }
 }

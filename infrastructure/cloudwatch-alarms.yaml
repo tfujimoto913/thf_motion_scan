@@ -1,0 +1,141 @@
+# CloudWatch Billing Alarms - SAM/CloudFormation Template
+# Purpose: Monitor AWS billing and trigger SNS notifications
+# Created: 2025-11-04 by Claude Code
+# Decision Log: Step 2 - Billing-Guard infrastructure
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Billing Guardrail - CloudWatch Alarms and SNS Notifications'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  WarnThresholdUSD:
+    Type: Number
+    Default: 4.0
+    Description: Warning threshold in USD (80% of budget)
+
+  FailThresholdUSD:
+    Type: Number
+    Default: 5.0
+    Description: Failure threshold in USD (100% of budget)
+
+  AlertEmail:
+    Type: String
+    Description: Email address for billing alerts
+    Default: ""
+
+  SlackWebhookUrl:
+    Type: String
+    Description: Slack webhook URL for notifications (optional)
+    Default: ""
+    NoEcho: true
+
+Resources:
+  # SNS Topic for billing alerts
+  BillingAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'thf-billing-alerts-${Environment}'
+      DisplayName: THF Motion Scan Billing Alerts
+      Subscription:
+        - !If
+          - HasEmail
+          - Protocol: email
+            Endpoint: !Ref AlertEmail
+          - !Ref AWS::NoValue
+
+  # CloudWatch Alarm: WARN threshold ($4)
+  BillingWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Warn'
+      AlarmDescription: 'Billing exceeded 80% of monthly budget ($4)'
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 21600  # 6 hours
+      EvaluationPeriods: 1
+      Threshold: !Ref WarnThresholdUSD
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      AlarmActions:
+        - !Ref BillingAlertsTopic
+      OKActions:
+        - !Ref BillingAlertsTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm: FAIL threshold ($5)
+  BillingFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Fail'
+      AlarmDescription: 'CRITICAL: Billing exceeded monthly budget ($5) - Auto-Suspend triggered'
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 21600  # 6 hours
+      EvaluationPeriods: 1
+      Threshold: !Ref FailThresholdUSD
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      AlarmActions:
+        - !Ref BillingAlertsTopic
+        - !GetAtt AutoSuspendInvokePermission.Arn  # Trigger Auto-Suspend Lambda
+      OKActions:
+        - !Ref BillingAlertsTopic
+      TreatMissingData: notBreaching
+
+  # Lambda invocation permission (placeholder for Step 3)
+  AutoSuspendInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Sub 'thf-billing-auto-suspend-${Environment}'
+      Action: 'lambda:InvokeFunction'
+      Principal: 'cloudwatch.amazonaws.com'
+      SourceArn: !GetAtt BillingFailAlarm.Arn
+
+  # SNS Topic Policy
+  BillingAlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BillingAlertsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - 'SNS:Publish'
+            Resource: !Ref BillingAlertsTopic
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Outputs:
+  BillingAlertsTopicArn:
+    Description: ARN of the billing alerts SNS topic
+    Value: !Ref BillingAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-BillingAlertsTopic'
+
+  BillingWarnAlarmName:
+    Description: Name of the WARN alarm
+    Value: !Ref BillingWarnAlarm
+
+  BillingFailAlarmName:
+    Description: Name of the FAIL alarm
+    Value: !Ref BillingFailAlarm

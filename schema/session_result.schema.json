@@ -1,182 +1,114 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://thf-motion-scan.dev/schema/session_result.schema.json",
-  "title": "THF Motion Scan Session Result",
-  "description": "Session level aggregation for five repetitions with validation state and QC gate outcome.",
+  "$id": "https://thf-motion-scan.dev/schema/session_result/draft-01",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Session Result (Draft 01)",
+  "description": "Schema for per-session aggregates that summarize repetitions and their validation.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "session_id",
-    "athlete_id",
-    "test_name",
-    "threshold_version",
-    "aggregated_scores",
-    "validation",
-    "metadata"
-  ],
+  "required": ["qc_pass_count", "total_reps", "aggregates", "versions", "validation"],
+  "additionalProperties": true,
   "properties": {
     "session_id": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9\\-]{6,64}$"
+      "minLength": 1,
+      "description": "Identifier for the athlete session (e.g. 20251031-1518-X)."
     },
     "athlete_id": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9\\-]{3,64}$"
+      "minLength": 1,
+      "description": "Identifier of the athlete or performer."
     },
-    "test_name": {
+    "test_code": {
       "type": "string",
-      "enum": [
-        "single_leg_squat",
-        "skater_lunge",
-        "stride_mimic",
-        "upper_body_swing",
-        "push_pull",
-        "jump_landing",
-        "cross_step"
-      ]
+      "pattern": "^T\\d{2}(?:_[A-Za-z0-9]+)+$",
+      "description": "Short code for the evaluated test (e.g., T01_single_leg_squat)."
     },
-    "threshold_version": {
-      "type": "string",
-      "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
+    "qc_pass_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of repetitions that passed QC heuristics."
     },
-    "aggregated_scores": {
+    "total_reps": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total repetitions processed for the session."
+    },
+    "aggregates": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "mean_composite",
-        "std_composite",
-        "valid_rep_count",
-        "total_rep_count"
-      ],
+      "minProperties": 1,
+      "description": "Aggregate metrics calculated across repetitions (e.g. best/avg scores).",
+      "additionalProperties": {
+        "anyOf": [
+          {"type": "number"},
+          {"type": "string"},
+          {"type": "boolean"},
+          {"type": "null"},
+          {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["number", "string", "boolean", "null"]
+            }
+          },
+          {"type": "array"}
+        ]
+      }
+    },
+    "versions": {
+      "type": "object",
+      "description": "Version metadata for compatibility checks.",
+      "required": ["rules_version", "thresholds_version", "artifact_sha"],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
       "properties": {
-        "mean_composite": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
+        "rules_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the rules package that produced the aggregates."
         },
-        "std_composite": {
-          "type": "number",
-          "minimum": 0
+        "thresholds_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the thresholds package that produced validation limits."
         },
-        "valid_rep_count": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 5
+        "normalization_version": {
+          "description": "Normalization pipeline version or 'none' when disabled.",
+          "oneOf": [
+            {"type": "string", "enum": ["none"]},
+            {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"}
+          ]
         },
-        "total_rep_count": {
-          "type": "integer",
-          "enum": [5]
+        "artifact_sha": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{7,40}|local-dev)$",
+          "description": "Git commit sha for traceability (short or full)."
         }
       }
     },
     "validation": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "state",
-        "messages",
-        "qc_gate_result"
-      ],
+      "description": "Outcome of validation_engine checks for the session aggregates.",
+      "required": ["state", "violations"],
+      "additionalProperties": true,
       "properties": {
         "state": {
           "type": "string",
-          "enum": [
-            "VALID",
-            "WARN",
-            "INVALID"
-          ]
+          "enum": ["OK", "WARN", "ERROR"],
+          "description": "Overall compatibility status (ValidationEngine aggregate)."
         },
-        "messages": {
+        "violations": {
           "type": "array",
+          "description": "List of validation issues that prevented an OK state.",
           "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "qc_gate_result": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "gate_name",
-            "passed",
-            "criteria_met"
-          ],
-          "properties": {
-            "gate_name": {
-              "type": "string",
-              "enum": ["B4_sigma"]
-            },
-            "passed": {
-              "type": "boolean"
-            },
-            "criteria_met": {
-              "type": "array",
-              "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "severity": {
                 "type": "string",
                 "minLength": 1
               }
             }
           }
-        }
-      }
-    },
-    "reps": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "rep_id",
-          "state"
-        ],
-        "properties": {
-          "rep_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9\\-]{6,64}$"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "VALID",
-              "WARN",
-              "INVALID"
-            ]
-          }
-        }
-      }
-    },
-    "metadata": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "processed_at",
-        "versions"
-      ],
-      "properties": {
-        "processed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "versions": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "threshold",
-            "schema"
-          ],
-          "properties": {
-            "threshold": {
-              "type": "string",
-              "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
-            },
-            "schema": {
-              "type": "string",
-              "pattern": "^\\d+\\.\\d+\\.\\d+$"
-            }
-          }
-        },
-        "notes": {
-          "type": "string"
         }
       }
     }

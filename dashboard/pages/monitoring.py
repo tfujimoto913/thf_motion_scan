@@ -20,7 +20,8 @@ from pathlib import Path
 
 # dashboard/config.py をインポート
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import get_aws_account_id
+from config import get_aws_account_id, DEFAULT_ENV
+from billing_status import display_billing_status_sidebar
 
 # AWS クライアント初期化
 @st.cache_resource
@@ -204,6 +205,10 @@ def main():
         page_icon="🚨",
         layout="wide"
     )
+
+    active_env = st.session_state.get("selected_env", DEFAULT_ENV)
+    demo_mode = st.session_state.get("demo_mode", False)
+    display_billing_status_sidebar(active_env, disabled=demo_mode)
 
     st.title("🚨 Dead Letter Queue (DLQ) 監視")
     st.markdown("---")

@@ -1,39 +1,28 @@
 {
   "session_id": "sess-warn-low",
-  "athlete_id": "ath-warn-002",
-  "test_name": "upper_body_swing",
-  "threshold_version": "v2.1",
-  "aggregated_scores": {
-    "mean_composite": 58.3,
-    "std_composite": 8.7,
-    "valid_rep_count": 2,
+  "athlete_id": "ath-ok-002",
+  "test_code": "T01_single_leg_squat",
+  "qc_pass_count": 3,
+  "total_reps": 5,
+  "aggregates": {
+    "best_score": 80.0,
+    "average_score": 72.3,
+    "valid_rep_count": 3,
     "total_rep_count": 5
+  },
+  "versions": {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "artifact_sha": "local-dev"
   },
   "validation": {
     "state": "WARN",
-    "messages": [
-      "Only two reps met stability threshold",
-      "Threshold minor version 2.2 available"
-    ],
-    "qc_gate_result": {
-      "gate_name": "B4_sigma",
-      "passed": false,
-      "criteria_met": []
-    }
-  },
-  "reps": [
-    {"rep_id": "rep-warn-001", "state": "WARN"},
-    {"rep_id": "rep-warn-002", "state": "WARN"},
-    {"rep_id": "rep-warn-003", "state": "INVALID"},
-    {"rep_id": "rep-warn-004", "state": "WARN"},
-    {"rep_id": "rep-warn-005", "state": "INVALID"}
-  ],
-  "metadata": {
-    "processed_at": "2025-11-04T11:30:00Z",
-    "versions": {
-      "threshold": "v2.1",
-      "schema": "1.0.0"
-    },
-    "notes": "QC gate failed but flagged as WARN per Phase 0 exceptions"
+    "violations": [
+      {
+        "severity": "WARN",
+        "category": "qc",
+        "message": "Outlier rep detected"
+      }
+    ]
   }
 }

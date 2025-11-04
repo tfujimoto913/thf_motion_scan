@@ -1,118 +1,122 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://thf-motion-scan.dev/schema/rep_result.schema.json",
-  "title": "THF Motion Scan Rep Result",
-  "description": "Per-repetition evaluation result emitted by the rescore pipeline.",
+  "$id": "https://thf-motion-scan.dev/schema/rep_result/draft-01",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rep Result (Draft 01)",
+  "description": "Schema for per-repetition validation output emitted as JSON Lines (one object per rep).",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "rep_id",
-    "session_id",
-    "test_name",
-    "threshold_version",
-    "scores",
-    "validation",
-    "metadata"
-  ],
+  "required": ["rep_index", "metrics", "versions", "validation"],
+  "additionalProperties": true,
   "properties": {
+    "rep_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based index of the repetition inside the session."
+    },
     "rep_id": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9\\-]{6,64}$"
+      "minLength": 1,
+      "description": "Opaque identifier for the evaluated repetition."
     },
     "session_id": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9\\-]{6,64}$"
+      "minLength": 1,
+      "description": "Identifier of the parent motion capture session."
     },
-    "test_name": {
+    "test_code": {
       "type": "string",
-      "enum": [
-        "single_leg_squat",
-        "skater_lunge",
-        "stride_mimic",
-        "upper_body_swing",
-        "push_pull",
-        "jump_landing",
-        "cross_step"
-      ]
+      "pattern": "^T\\d{2}(?:_[A-Za-z0-9]+)+$",
+      "description": "Short code for the evaluated test (e.g., T02_B2 or T01_single_leg_squat)."
     },
-    "threshold_version": {
+    "recorded_at": {
       "type": "string",
-      "pattern": "^(v\\d+\\.\\d+|\\d+\\.\\d+\\.\\d+)$"
+      "format": "date-time",
+      "description": "ISO8601 timestamp when the evaluation was produced."
     },
-    "scores": {
+    "metrics": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "angle_score",
-        "stability_score",
-        "composite_score"
-      ],
+      "minProperties": 1,
+      "description": "Key-value map of numeric metrics calculated for the repetition.",
+      "additionalProperties": {
+        "anyOf": [
+          {"type": "number"},
+          {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["number", "string", "boolean", "null"]
+            }
+          },
+          {"type": "array"},
+          {"type": "string"},
+          {"type": "boolean"},
+          {"type": "null"}
+        ]
+      }
+    },
+    "flags": {
+      "type": "array",
+      "description": "Optional set of qualitative flags emitted by the evaluation pipeline.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "versions": {
+      "type": "object",
+      "description": "Version metadata for compatibility checks.",
+      "required": ["rules_version", "thresholds_version", "artifact_sha"],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
       "properties": {
-        "angle_score": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
+        "rules_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the evaluation rules used to score the repetition."
         },
-        "stability_score": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
+        "thresholds_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "SemVer of the thresholds package that provides validation limits."
         },
-        "composite_score": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
+        "normalization_version": {
+          "description": "Normalization pipeline version or 'none' when normalization is disabled.",
+          "oneOf": [
+            {"type": "string", "enum": ["none"]},
+            {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"}
+          ]
+        },
+        "artifact_sha": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{7,40}|local-dev)$",
+          "description": "Git commit sha for traceability (short or full)."
         }
       }
     },
     "validation": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "state",
-        "messages"
-      ],
+      "description": "Outcome of validation_engine checks for this repetition.",
+      "required": ["state", "violations"],
+      "additionalProperties": true,
       "properties": {
         "state": {
           "type": "string",
-          "enum": [
-            "VALID",
-            "WARN",
-            "INVALID"
-          ]
+          "enum": ["OK", "WARN", "ERROR"],
+          "description": "Overall compatibility status (ValidationEngine aggregate)."
         },
-        "messages": {
+        "violations": {
           "type": "array",
+          "description": "List of validation issues that prevented an OK state.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "severity": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
-        }
-      }
-    },
-    "metadata": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "processed_at",
-        "frame_count",
-        "video_url"
-      ],
-      "properties": {
-        "processed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "frame_count": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "video_url": {
-          "type": "string",
-          "format": "uri"
-        },
-        "notes": {
-          "type": "string"
         }
       }
     }

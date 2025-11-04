@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterator, Tuple
 
 import pytest
-from jsonschema import Draft202012Validator
+from jsonschema import Draft7Validator
 
 
 ROOT = Path(__file__).parent.parent
@@ -21,9 +21,9 @@ SESSION_FIXTURES = ROOT / "tests" / "fixtures" / "session_result"
 THRESHOLDS_FIXTURES = ROOT / "tests" / "fixtures" / "thresholds_v2"
 
 
-def _load_schema(path: Path) -> Draft202012Validator:
+def _load_schema(path: Path) -> Draft7Validator:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return Draft202012Validator(payload)
+    return Draft7Validator(payload)
 
 
 def _iter_documents(path: Path) -> Iterator[Tuple[int, dict]]:
@@ -80,7 +80,7 @@ def test_session_result_schema_accepts_valid_documents(fixture_path: Path) -> No
     for line_no, document in _iter_documents(fixture_path):
         errors = list(validator.iter_errors(document))
         assert not errors, f"{fixture_path}:{line_no} { _format_errors(errors) }"
-        agg = document.get("aggregated_scores", {})
+        agg = document.get("aggregates", {})
         valid_count = agg.get("valid_rep_count")
         total_count = agg.get("total_rep_count")
         if isinstance(valid_count, int) and isinstance(total_count, int):

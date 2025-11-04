@@ -1,0 +1,17 @@
+## ADR-027: Dashboard Session Detail Enhancements（Radar NA / Version Header / UI Metrics）
+- 日付: 2025-11-07
+- 決定者: Human + Claude
+- 決定: セッション詳細ページのレーダーチャート、ヘッダー表示、ラベリング、および UI 操作の可観測性を改善し、Phase 5 Stage 3 の微調整タスクリストを実装
+- 理由:
+  - 欠測データを 0% で塗り潰さず、グレー点線＋“N/A”ラベルで明示して分析ミスを防ぐ
+  - データ鮮度と normalization / artifact 情報をヘッダーで可視化し、バージョン不整合の追跡を容易にする
+  - test_code の命名規則を単一ソース化し、UI 上の日本語表記とツールチップを一貫させる
+  - 環境切替・比較・キャッシュクリアなどの UI 操作を CloudWatch カスタムメトリクスに記録し、利用状況を可視化する
+- 影響:
+  - `dashboard/utils/logging.py`: CloudWatch へ `UIEvent` を送出する `emit_ui_metric` を追加（Environment/TestCode/SessionId/Timestamp を標準化し、デバウンス実装）
+  - `dashboard/app.py`: 環境セレクタとキャッシュクリアにメトリクスフックを挿入、Streamlit 側で共通マッピングを参照するよう調整
+  - `dashboard/session_pages.py`: ヘッダーメトリクスを再構成し、`rules_version / normalization_version / artifact_sha` を表示。鮮度表示を「今日/1日前/X日前」に統一。レーダー/比較レーダーで欠測を別レイヤ（グレー点線＋N/A）とし、比較トリガーで `UIEvent(compare_run)` を送信
+- フォローアップ:
+  - [ ] CloudWatch 上で `UIEvent` メトリクスの増減と Dimensions（Environment/TestCode/SessionId）を確認し、ダッシュボード整備を検討
+  - [ ] 欠測が頻発するセッションでのヒートマップ／一覧表示強化を評価（N/A の比率集計など）
+  - [ ] normalization_version / artifact_sha の記録を評価出力に標準化し、データ欠損時のグレー表示を緩和

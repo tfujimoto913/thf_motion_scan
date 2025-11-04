@@ -1,0 +1,10 @@
+generated_at,artifact_sha,cell_id,distance,resolution,illumination,sample_size,B1_mean,B1_std,B1_outlier_rate,B4_mean,B4_std,B4_outlier_rate,bcr,meets_min_samples,notes
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,near_low,near,low,low,4,4.0,0.06454972243679045,0.0,3.2,0.0516397779494321,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,near_medium,near,medium,medium,4,4.1,0.06454972243679005,0.0,3.3,0.0516397779494321,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,near_high,near,high,high,4,4.2,0.0645497224367904,0.0,3.4,0.051639777949432274,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,mid_low,mid,low,medium,4,3.9,0.06454972243679022,0.0,3.1,0.051639777949432274,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,mid_medium,mid,medium,high,4,3.8,0.06454972243679029,0.0,3.0,0.051639777949432274,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,mid_high,mid,high,medium,4,3.85,0.06454972243679022,0.0,3.05,0.0516397779494321,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,far_low,far,low,high,4,3.7,0.06454972243679029,0.0,2.9,0.051639777949432274,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,far_medium,far,medium,medium,4,3.6,0.06454972243679022,0.0,2.8,0.0516397779494321,0.0,0.0,False,N<15
+2025-11-03T16:08:35.889444+00:00,synthetic-fixture,far_high,far,high,low,4,3.75,0.5515130702591433,0.0,3.0,0.6408327915038887,0.0,0.5,False,N<15

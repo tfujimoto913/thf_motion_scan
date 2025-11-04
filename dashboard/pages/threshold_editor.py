@@ -29,6 +29,7 @@ from thresholds_editor import (  # type: ignore[import]
     require_apply_confirmation,
     should_block_apply,
 )
+from thresholds_editor.change_logger import get_logger  # type: ignore[import]
 
 THRESHOLD_PATH = ROOT / "config" / "thresholds" / "thresholds.json"
 CHANGELOG_PATH = THRESHOLD_PATH.parent / "changelog.jsonl"
@@ -112,6 +113,21 @@ def render_barchart(before: Dict[str, int], after: Dict[str, int]) -> None:
 
 
 def append_changelog(entry: ChangeLogEntry) -> None:
+    """
+    What: 閾値変更ログを記録
+    Why: Apply操作の監査証跡を残すため
+
+    Design Decision:
+    - 新しいchange_loggerを使用（idempotency保証、dry-runガード）
+    - 旧changelog.jsonlとの互換性のため、両方に記録
+
+    CRITICAL: DRY_RUN=true時は新ログには記録しない
+    """
+    # 新ロガー（idempotency保証あり）
+    logger = get_logger(base_dir=ROOT / "logs" / "change_log")
+    logger.log_apply(entry)
+
+    # 旧形式との互換性のため、従来のログも残す
     with CHANGELOG_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
 
@@ -131,6 +147,16 @@ def purge_old_snapshots() -> None:
 
 
 def undo_last_change(actor: str, env: str) -> bool:
+    """
+    What: 直前の閾値変更をロールバック
+    Why: 誤操作時の迅速な復旧のため
+
+    Design Decision:
+    - 新しいchange_loggerでlog_undo()を記録
+    - 旧形式との互換性のため、従来のログも残す
+
+    CRITICAL: DRY_RUN=true時は新ログには記録しない
+    """
     snapshots = sorted(SNAPSHOT_DIR.glob("thresholds-*.json"))
     if not snapshots:
         return False
@@ -138,6 +164,18 @@ def undo_last_change(actor: str, env: str) -> bool:
     previous_doc = load_document_from_file(latest)
     current_doc = load_document_from_file(THRESHOLD_PATH)
     save_document_to_file(previous_doc, THRESHOLD_PATH)
+
+    # 新ロガー（idempotency保証あり）
+    logger = get_logger(base_dir=ROOT / "logs" / "change_log")
+    logger.log_undo(
+        actor=actor or "unknown",
+        env=env,
+        rollback_of_id=f"snapshot_{latest.stem}",
+        reverted_snapshot_path=str(latest),
+        versions=current_doc.versions or {},
+    )
+
+    # 旧形式との互換性のため、従来のログも残す
     entry = ChangeLogEntry(
         id=f"undo_{latest.stem}",
         actor=actor or "unknown",
@@ -152,13 +190,21 @@ def undo_last_change(actor: str, env: str) -> bool:
         representatives={"upshift": [], "downshift": []},
         versions=current_doc.versions or {},
     )
-    append_changelog(entry)
+    with CHANGELOG_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+
     latest.unlink(missing_ok=True)
     return True
 
 
-def main() -> None:
-    st.set_page_config(page_title="Threshold Editor")
+def render_threshold_editor_page() -> None:
+    """
+    What: Threshold editor page for integration into app.py
+    Why: app.py calls st.set_page_config() once, so this function omits it
+    Design Decision: Separate render function for multi-page app integration
+
+    CRITICAL: Do not call st.set_page_config() here - app.py handles it
+    """
     st.title("Threshold Editor (MVP)")
 
     actor = st.sidebar.text_input("Actor", value=os.environ.get("USER", ""))
@@ -291,9 +337,249 @@ def main() -> None:
             st.info("No snapshot found.")
 
     st.markdown("---")
-    st.subheader("Recent Change Log")
-    for entry in load_changelog():
-        st.json(entry)
+    render_batch_dryrun_panel()
+
+    st.markdown("---")
+    st.subheader("📜 Recent Changes (Last 10)")
+
+    # Load from new change_logger (idempotency-protected)
+    logger = get_logger(base_dir=ROOT / "logs" / "change_log")
+    recent_logs = logger.load_recent_logs(n=10)
+
+    if recent_logs:
+        # Format for table display
+        table_data = []
+        for log in recent_logs:
+            table_data.append({
+                "Timestamp": log.get("timestamp", "N/A"),
+                "Action": log.get("action", "N/A"),
+                "Test": log.get("test", "N/A"),
+                "Metric": log.get("metric", "N/A"),
+                "Actor": log.get("actor", "N/A"),
+            })
+
+        df = pd.DataFrame(table_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No recent changes recorded.")
+
+
+def render_batch_dryrun_panel():
+    """
+    What: Batch dry-run UI panel for multiple metrics
+    Why: Allow operators to assess combined impact of threshold changes
+    Design Decision: Simple JSON input for MVP, form UI for future enhancement
+
+    CRITICAL:
+    - Performance display: execution time and overall reclassified rate
+    - Top3 metrics highlighted
+    - Representative examples (max 3)
+    """
+    import sys
+    from pathlib import Path
+
+    # Add tools directory to path
+    tools_path = ROOT / "tools"
+    if str(tools_path) not in sys.path:
+        sys.path.insert(0, str(tools_path))
+
+    from threshold_dryrun import run_batch_dryrun  # type: ignore[import]
+
+    st.subheader("🔄 Batch Dry-run (Multiple Metrics)")
+
+    with st.expander("ℹ️ How to use Batch Dry-run", expanded=False):
+        st.markdown("""
+        **Purpose**: Evaluate impact of threshold changes across multiple metrics simultaneously.
+
+        **Steps**:
+        1. Prepare sample data (CSV with columns for each metric)
+        2. Define metrics config (JSON format below)
+        3. Click "Run Batch Dry-run"
+        4. Review: overall rate, Top3 metrics, representative examples
+
+        **Metrics Config Format**:
+        ```json
+        {
+          "SLS:B1:trunk_lean_deg": {
+            "new_bands": [
+              {"label": "OK", "max": 12.0},
+              {"label": "WARN", "max": 22.0},
+              {"label": "NG", "max": null}
+            ],
+            "old_bands": [
+              {"label": "OK", "max": 10.0},
+              {"label": "WARN", "max": 20.0},
+              {"label": "NG", "max": null}
+            ],
+            "value_column": "trunk_lean_deg"
+          }
+        }
+        ```
+        """)
+
+    # Input: Sample data upload
+    st.markdown("### Step 1: Sample Data")
+    uploaded_file = st.file_uploader(
+        "Upload CSV with sample data",
+        type=["csv"],
+        help="CSV must contain 'sample_id' column and columns for each metric"
+    )
+
+    if uploaded_file:
+        samples_df = pd.read_csv(uploaded_file)
+        st.success(f"✅ Loaded {len(samples_df)} samples")
+        st.dataframe(samples_df.head(5), use_container_width=True)
+    else:
+        # Use demo data from sample_dataset
+        demo_path = SAMPLE_DATA_ROOT / "multi_metric_samples.csv"
+        if demo_path.exists():
+            samples_df = pd.read_csv(demo_path)
+            st.info(f"Using demo data: {len(samples_df)} samples (multi-metric)")
+        else:
+            samples_df = None
+            st.warning("No sample data. Upload CSV or generate demo data via: `python tools/generate_multi_metric_samples.py --output sample_dataset/multi_metric_samples.csv`")
+
+    # Input: Metrics config
+    st.markdown("### Step 2: Metrics Configuration")
+
+    default_config = {
+        "SLS:B1:trunk_lean_deg": {
+            "new_bands": [
+                {"label": "OK", "max": 12.0},
+                {"label": "WARN", "max": 22.0},
+                {"label": "NG", "max": None}
+            ],
+            "old_bands": [
+                {"label": "OK", "max": 10.0},
+                {"label": "WARN", "max": 20.0},
+                {"label": "NG", "max": None}
+            ],
+            "value_column": "trunk_lean_deg"
+        },
+        "SLS:B2:knee_valgus_deg": {
+            "new_bands": [
+                {"label": "OK", "max": 8.0},
+                {"label": "WARN", "max": 12.0},
+                {"label": "NG", "max": None}
+            ],
+            "old_bands": [
+                {"label": "OK", "max": 5.0},
+                {"label": "WARN", "max": 10.0},
+                {"label": "NG", "max": None}
+            ],
+            "value_column": "knee_valgus_deg"
+        }
+    }
+
+    import json
+    metrics_config_json = st.text_area(
+        "Metrics Config (JSON)",
+        value=json.dumps(default_config, indent=2),
+        height=300,
+        help="Define threshold bands for each metric"
+    )
+
+    seed = st.number_input("Random Seed", value=42, min_value=1, help="Fixed seed for reproducibility")
+
+    # Execution
+    if st.button("🚀 Run Batch Dry-run", type="primary"):
+        if samples_df is None or samples_df.empty:
+            st.error("❌ No sample data available. Upload CSV first.")
+            return
+
+        try:
+            metrics_config = json.loads(metrics_config_json)
+        except json.JSONDecodeError as e:
+            st.error(f"❌ Invalid JSON format: {e}")
+            return
+
+        if not metrics_config:
+            st.error("❌ Metrics config is empty.")
+            return
+
+        # Validate columns exist
+        missing_columns = []
+        for metric_id, config in metrics_config.items():
+            value_column = config.get("value_column")
+            if value_column not in samples_df.columns:
+                missing_columns.append(value_column)
+
+        if missing_columns:
+            st.error(f"❌ Missing columns in sample data: {missing_columns}")
+            return
+
+        # Run batch dry-run
+        with st.spinner("Running batch dry-run..."):
+            try:
+                result = run_batch_dryrun(
+                    metrics_config=metrics_config,
+                    samples_df=samples_df,
+                    seed=int(seed),
+                )
+
+                st.session_state["batch_dryrun_result"] = result
+
+            except Exception as e:
+                st.error(f"❌ Batch dry-run failed: {e}")
+                return
+
+    # Display results
+    batch_result = st.session_state.get("batch_dryrun_result")
+    if batch_result:
+        st.markdown("### 📊 Results")
+
+        # Overall metrics
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "Overall Reclassified Rate",
+                f"{batch_result['overall_reclassified_rate']:.1%}",
+                help="Weighted average across all metrics"
+            )
+        with col2:
+            st.metric(
+                "Execution Time",
+                f"{batch_result['execution_time_ms']}ms",
+                help="Total processing time"
+            )
+
+        # Summary table
+        st.markdown("#### Summary by Metric")
+        summary_df = batch_result["summary_df"].copy()
+        summary_df["reclassified_rate"] = summary_df["reclassified_rate"].apply(lambda x: f"{x:.1%}")
+        st.dataframe(summary_df, use_container_width=True)
+
+        # Top3 metrics
+        st.markdown("#### 🔝 Top 3 Metrics (by impact)")
+        top3 = batch_result["top3_metrics"]
+        for i, metric_id in enumerate(top3, 1):
+            metric_row = summary_df[summary_df["metric_id"] == metric_id].iloc[0]
+            st.info(f"**{i}. {metric_id}**: {metric_row['affected_count']} affected ({metric_row['reclassified_rate']})")
+
+        # Representative examples
+        st.markdown("#### 📍 Representative Examples")
+        examples = batch_result["representative_examples"]
+        if examples:
+            for ex in examples:
+                category_emoji = {"best": "✨", "worst": "⚠️", "neutral": "📍"}.get(ex["category"], "•")
+                st.markdown(f"{category_emoji} **{ex['category'].upper()}** ({ex['metric_id']})")
+                st.json({
+                    "sample_id": ex["sample_id"],
+                    "old_label": ex["old_label"],
+                    "new_label": ex["new_label"],
+                    "value": round(ex["metric_value"], 2)
+                })
+        else:
+            st.info("No examples available")
+
+
+def main() -> None:
+    """
+    What: Standalone entry point for threshold editor
+    Why: Allows running threshold_editor.py directly with `streamlit run`
+    """
+    st.set_page_config(page_title="Threshold Editor")
+    render_threshold_editor_page()
 
 
 if __name__ == "__main__":

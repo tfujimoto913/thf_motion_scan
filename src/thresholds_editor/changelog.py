@@ -80,3 +80,37 @@ class ChangeLogEntry:
             "versions": self.versions,
             "timestamp": self.timestamp.isoformat(),
         }
+
+def log_undo(actor, env, rollback_of_id, reverted_snapshot_path):
+    """直前の変更をロールバックした時のログエントリを追記する。"""
+    entry = {
+        "id": iso_now_id(),
+        "actor": actor,
+        "env": env,
+        "action": "undo",
+        "rollback_of": rollback_of_id,
+        "reverted_snapshot": reverted_snapshot_path,
+        "timestamp": iso_now(),
+    }
+    append_jsonl("config/thresholds/changelog.jsonl", entry)
+    return entry
+
+from datetime import datetime, timezone
+
+def iso_now():
+    """UTC ISO8601 タイムスタンプを返す"""
+    return datetime.now(timezone.utc).isoformat()
+
+def iso_now_id():
+    """変更IDを生成（chg_ + ISO8601）"""
+    return "chg_" + datetime.now(timezone.utc).isoformat().replace(":", "").replace(".", "")
+
+from pathlib import Path
+import json
+
+def append_jsonl(path: str, entry: dict):
+    """JSON Lines 形式でログを1行追加する（ファイルが無ければ作成）"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")

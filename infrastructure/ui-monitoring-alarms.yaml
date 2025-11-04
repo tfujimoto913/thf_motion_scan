@@ -1,0 +1,270 @@
+# UI Monitoring CloudWatch Alarms - SAM/CloudFormation Template
+# Purpose: Monitor UI performance and availability
+# Created: 2025-11-04 by Claude Code
+# Decision Log: ADR-TBD (UI Monitoring System v1)
+#
+# CRITICAL:
+# - WARN/FAIL 2-tier thresholds for render time and error rate
+# - Integration with existing thf-alerts SNS topic
+# - Custom metrics namespace: THF/MotionScan
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'UI Monitoring - CloudWatch Alarms for Performance and Availability'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  AlertEmail:
+    Type: String
+    Description: Email address for alerts
+    Default: ""
+
+  # UI Performance thresholds (from monitoring_rules.yaml)
+  RenderTimeWarnP75:
+    Type: Number
+    Default: 800
+    Description: WARN threshold for P75 render time (milliseconds)
+
+  RenderTimeFailP90:
+    Type: Number
+    Default: 1200
+    Description: FAIL threshold for P90 render time (milliseconds)
+
+  ErrorRateWarnP75:
+    Type: Number
+    Default: 0.05
+    Description: WARN threshold for P75 error rate (0-1 range, 5% = 0.05)
+
+  ErrorRateFailP90:
+    Type: Number
+    Default: 0.10
+    Description: FAIL threshold for P90 error rate (0-1 range, 10% = 0.10)
+
+  AvailabilityWarnPercent:
+    Type: Number
+    Default: 99.0
+    Description: WARN threshold for availability (percent)
+
+  AvailabilityFailPercent:
+    Type: Number
+    Default: 95.0
+    Description: FAIL threshold for availability (percent)
+
+Resources:
+  # Unified SNS Topic for all alerts
+  # NOTE: Use existing thf-billing-alerts topic if already deployed
+  # This creates a separate topic for UI alerts (can be unified later)
+  UiAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'thf-ui-alerts-${Environment}'
+      DisplayName: THF Motion Scan UI Alerts
+      Subscription:
+        - !If
+          - HasEmail
+          - Protocol: email
+            Endpoint: !Ref AlertEmail
+          - !Ref AWS::NoValue
+
+  # CloudWatch Alarm: UI Render Time WARN (P75 > 800ms)
+  UiRenderTimeWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-RenderTime-Warn'
+      AlarmDescription: 'UI render time P75 exceeded 800ms - performance degradation detected'
+      MetricName: RenderTimeMilliseconds
+      Namespace: THF/MotionScan
+      Statistic: Average  # Note: Use ExtendedStatistic for percentiles in production
+      ExtendedStatistic: p75
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2  # 2 consecutive periods
+      Threshold: !Ref RenderTimeWarnP75
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm: UI Render Time FAIL (P90 > 1200ms)
+  UiRenderTimeFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-RenderTime-Fail'
+      AlarmDescription: 'CRITICAL: UI render time P90 exceeded 1200ms - immediate action required'
+      MetricName: RenderTimeMilliseconds
+      Namespace: THF/MotionScan
+      ExtendedStatistic: p90
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 3  # 3 consecutive periods (15 minutes total)
+      Threshold: !Ref RenderTimeFailP90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm: UI Error Rate WARN (P75 > threshold)
+  UiErrorRateWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-ErrorRate-Warn'
+      AlarmDescription: 'UI error rate P75 exceeded threshold - validation or exception rate increased'
+      MetricName: ErrorRate
+      Namespace: THF/MotionScan
+      ExtendedStatistic: p75
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: !Ref ErrorRateWarnP75
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm: UI Error Rate FAIL (P90 > threshold)
+  UiErrorRateFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-ErrorRate-Fail'
+      AlarmDescription: 'CRITICAL: UI error rate P90 exceeded threshold - high failure rate detected'
+      MetricName: ErrorRate
+      Namespace: THF/MotionScan
+      ExtendedStatistic: p90
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 3
+      Threshold: !Ref ErrorRateFailP90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarm: UI Availability WARN (< 99%)
+  UiAvailabilityWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-Availability-Warn'
+      AlarmDescription: 'UI availability dropped below 99% - partial outage detected'
+      MetricName: Availability
+      Namespace: THF/MotionScan
+      Statistic: Average
+      Period: 60  # 1 minute
+      EvaluationPeriods: 5  # 5 consecutive periods (5 minutes total)
+      Threshold: !Ref AvailabilityWarnPercent
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: breaching  # Treat missing data as down
+
+  # CloudWatch Alarm: UI Availability FAIL (< 95%)
+  UiAvailabilityFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-UI-Availability-Fail'
+      AlarmDescription: 'CRITICAL: UI availability dropped below 95% - major outage'
+      MetricName: Availability
+      Namespace: THF/MotionScan
+      Statistic: Average
+      Period: 60  # 1 minute
+      EvaluationPeriods: 3  # 3 consecutive periods (3 minutes total)
+      Threshold: !Ref AvailabilityFailPercent
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: Component
+          Value: ui
+      AlarmActions:
+        - !Ref UiAlertsTopic
+      OKActions:
+        - !Ref UiAlertsTopic
+      TreatMissingData: breaching
+
+  # SNS Topic Policy
+  UiAlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref UiAlertsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - 'SNS:Publish'
+            Resource: !Ref UiAlertsTopic
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Outputs:
+  UiAlertsTopicArn:
+    Description: ARN of the UI alerts SNS topic
+    Value: !Ref UiAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-UiAlertsTopic'
+
+  UiRenderTimeWarnAlarmName:
+    Description: Name of the UI render time WARN alarm
+    Value: !Ref UiRenderTimeWarnAlarm
+
+  UiRenderTimeFailAlarmName:
+    Description: Name of the UI render time FAIL alarm
+    Value: !Ref UiRenderTimeFailAlarm
+
+  UiErrorRateWarnAlarmName:
+    Description: Name of the UI error rate WARN alarm
+    Value: !Ref UiErrorRateWarnAlarm
+
+  UiErrorRateFailAlarmName:
+    Description: Name of the UI error rate FAIL alarm
+    Value: !Ref UiErrorRateFailAlarm
+
+  UiAvailabilityWarnAlarmName:
+    Description: Name of the UI availability WARN alarm
+    Value: !Ref UiAvailabilityWarnAlarm
+
+  UiAvailabilityFailAlarmName:
+    Description: Name of the UI availability FAIL alarm
+    Value: !Ref UiAvailabilityFailAlarm

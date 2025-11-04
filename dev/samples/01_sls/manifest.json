@@ -1,0 +1,11 @@
+{
+  "seed": 42,
+  "dataset": "data.csv",
+  "notes": "Curated SLS reps for dry-run (max two per athlete).",
+  "test_code": "01",
+  "versions": {
+    "data_version": "1.0.0",
+    "rules_version": "1.0.0",
+    "schema_version": "1.0.0"
+  }
+}

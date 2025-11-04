@@ -1,0 +1,20 @@
+## ADR-026: Phase 5 Ops Guardrails（CloudWatch Dashboards / DLQ Runbook / Structured Logging）
+- 日付: 2025-11-07
+- 決定者: Human + Claude
+- 決定: CloudWatchダッシュボード・アラーム・SNS通知、DLQ再投入Runbook、構造化ログとカスタムメトリクスを統合し、Phase 5運用ガードレールをIaCとアプリケーションコードに実装
+- 理由:
+  - 失敗を早期検知して安全に収束: Lambda Errors / Duration、DynamoDB UserErrors、LandmarkDetectionFailures を5分単位で監視し `thf-alerts-<env>` に通知
+  - 可観測性の一元化: `MotionScan-Ops-<env>` ダッシュボードでシステムヘルス・KPI・解析ログを単一画面に集約
+  - 障害復旧の標準化: `scripts/redrive.py` + Runbook でバッチ制限・停止条件・メトリクス送信を自動化し、DLQ復旧オペレーションを定型化
+  - 監査性・トレーサビリティ向上: 構造化ログに必須メタデータ（timestamp/level/requestId/environment/testCode等）を含め、VideoAnalysisDurationやLandmarkDetectionRateなどのカスタムメトリクスを CloudWatch に記録
+- 影響:
+  - `template.yaml`: SNSトピック、ロググループ（INFO/WARN/ERROR/METRICS）、CloudWatchアラーム4種、`MotionScan-Ops-<env>`ダッシュボード、Retention・閾値・Email設定のパラメータ化を実装
+  - `src/handler.py` / `processing/worker.py`: StructuredLogger によるメトリクス発行と X-Ray サブセグメント（`video_processing`, `score_calculation`）追加、LandmarkDetectionRate / LandmarkDetectionFailures 等を計測
+  - `lambda/common/structured_logging.py`: ロギング・メトリクス共通モジュールを新設し、全Lambdaから利用
+  - `lambda/upload_url/handler.py`: 構造化ログと `PresignedUrlGenerationDuration` メトリクスを追加
+  - `scripts/redrive.py` / `docs/runbooks/dlq_redrive.md`: DLQ再投入スクリプトとRunbookを新規作成し、停止条件（5連続同一原因・UserErrorsスパイク・MaxBatch等）とメトリクス送信を自動化
+  - `requirements*.txt` / `Dockerfile`: `aws-xray-sdk` 追加、共通モジュールをLambdaイメージにバンドル
+- 課題とフォローアップ:
+  - [ ] Slack通報経路が整い次第、SNSトピックをChatOpsへ連携
+  - [ ] 疑似エラー/性能試験でダッシュボードの解像度を検証し、必要に応じてウィジェット・Insightsクエリを調整
+  - [ ] RedriveスクリプトをCI/CDやGitHub Actionsに組み込み、運用Runbookとのリンクを明確化
