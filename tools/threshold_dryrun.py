@@ -20,41 +20,54 @@ import numpy as np
 import pandas as pd
 
 
-def compute_label(value: float, bands: list[dict[str, Any]], direction: str = "lower_is_better") -> str:
+def compute_label(value: float, bands: list[dict[str, Any]], direction: str = "lower") -> str:
     """
     What: Compute classification label based on threshold bands
     Why: Unified label assignment logic for old/new thresholds
-    Design Decision: Direction-aware band evaluation (lower_is_better default)
+    Design Decision: Direction-aware band evaluation
 
-    CRITICAL: Bands must be ordered from best to worst
+    CRITICAL:
+    - direction="lower": Lower values are better (e.g., pelvis_drop_deg)
+    - direction="higher": Higher values are better (e.g., stability_score)
+    - Bands must be ordered from best to worst
 
     Args:
         value: Metric value to classify
         bands: List of band definitions [{"label": "OK", "max": 10.0}, ...]
-        direction: "lower_is_better" or "higher_is_better"
+        direction: "lower" or "higher"
 
     Returns:
         Label string ("OK", "WARN", "NG")
 
     Examples:
         >>> bands = [{"label": "OK", "max": 10.0}, {"label": "WARN", "max": 20.0}, {"label": "NG", "max": None}]
-        >>> compute_label(5.0, bands)
+        >>> compute_label(5.0, bands, direction="lower")
         'OK'
-        >>> compute_label(15.0, bands)
+        >>> compute_label(15.0, bands, direction="lower")
         'WARN'
-        >>> compute_label(25.0, bands)
+        >>> compute_label(25.0, bands, direction="lower")
         'NG'
     """
-    # For lower_is_better: (-inf, max] assigns labels in order
-    # For higher_is_better: reverse logic (future enhancement)
+    if direction not in ["lower", "higher"]:
+        raise ValueError(f"Invalid direction '{direction}'. Must be 'lower' or 'higher'.")
 
-    if direction != "lower_is_better":
-        raise NotImplementedError(f"Direction '{direction}' not yet implemented. Use 'lower_is_better'.")
+    if direction == "lower":
+        # Lower is better: (-inf, max] assigns labels in order
+        for band in bands:
+            max_val = band.get("max")
+            if max_val is None or value <= max_val:
+                return band["label"]
 
-    for band in bands:
-        max_val = band.get("max")
-        if max_val is None or value <= max_val:
-            return band["label"]
+    elif direction == "higher":
+        # Higher is better: [min, +inf) assigns labels in order
+        # Reinterpret "max" as "min" threshold for higher direction
+        for band in bands:
+            min_val = band.get("max")
+            if min_val is None:
+                # Last band (NG): any value below all thresholds
+                return band["label"]
+            if value >= min_val:
+                return band["label"]
 
     # Fallback to last band (should not reach here with proper band definition)
     return bands[-1]["label"]
@@ -106,6 +119,7 @@ def dry_run_threshold_change(
     samples_df: pd.DataFrame,
     seed: int = 42,
     sample_n: int = 20,
+    direction: str = "lower",
 ) -> dict[str, Any]:
     """
     What: Estimate impact of threshold change on sample classification
@@ -123,6 +137,7 @@ def dry_run_threshold_change(
         samples_df: Sample data with columns: sample_id, metric_value, old_label
         seed: Random seed for deterministic sampling
         sample_n: Number of samples to evaluate (max 20)
+        direction: Direction of evaluation ("lower" or "higher"). Defaults to "lower".
 
     Returns:
         Dict with keys:
@@ -151,7 +166,7 @@ def dry_run_threshold_change(
 
     # Vectorized label computation
     df["new_label"] = df["metric_value"].apply(
-        lambda v: compute_label(v, new_bands, direction="lower_is_better")
+        lambda v: compute_label(v, new_bands, direction=direction)
     )
 
     # Reclassification detection
@@ -204,6 +219,10 @@ def dry_run_threshold_change(
         "reclassified_rate": affected_count / n_sample if n_sample > 0 else 0.0,
         "n_sample": n_sample,
         "examples": examples,
+        # Direction transparency metrics
+        "direction": direction,
+        "direction_specified": True,  # Always True in current implementation (default exists)
+        "direction_source": "parameter",  # Source of direction value
     }
 
 
@@ -357,6 +376,7 @@ def run_batch_dryrun(
         value_column = config["value_column"]
         new_bands = config["new_bands"]
         old_bands = config["old_bands"]
+        direction = config.get("direction", "lower")  # Default to "lower" if not specified
 
         # Prepare samples for this metric
         metric_samples = samples_df[["sample_id", value_column]].copy()
@@ -364,7 +384,7 @@ def run_batch_dryrun(
 
         # Compute old labels
         metric_samples["old_label"] = metric_samples["metric_value"].apply(
-            lambda v: compute_label(v, old_bands, direction="lower_is_better")
+            lambda v: compute_label(v, old_bands, direction=direction)
         )
 
         # Run dry-run for this metric
@@ -374,6 +394,7 @@ def run_batch_dryrun(
             samples_df=metric_samples,
             seed=seed,
             sample_n=sample_n,
+            direction=direction,
         )
 
         # Append to summary
@@ -382,6 +403,7 @@ def run_batch_dryrun(
             "affected_count": result["affected_count"],
             "reclassified_rate": result["reclassified_rate"],
             "n_sample": result["n_sample"],
+            "direction": result["direction"],  # Add direction to summary
         })
 
         # Collect examples for later selection
@@ -442,10 +464,19 @@ def run_batch_dryrun(
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
 
+    # Compute direction summary
+    direction_counts = summary_df["direction"].value_counts().to_dict() if len(summary_df) > 0 else {}
+    direction_summary = {
+        "lower_count": direction_counts.get("lower", 0),
+        "higher_count": direction_counts.get("higher", 0),
+        "unspecified_count": 0,  # All have defaults in current implementation
+    }
+
     return {
         "summary_df": summary_df,
         "overall_reclassified_rate": float(overall_reclassified_rate),
         "top3_metrics": top3_metrics,
         "representative_examples": representative_examples[:3],  # Max 3
         "execution_time_ms": duration_ms,
+        "direction_summary": direction_summary,
     }

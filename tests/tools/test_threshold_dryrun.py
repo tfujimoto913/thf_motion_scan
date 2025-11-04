@@ -106,16 +106,58 @@ def test_compute_label_ng_range(sample_bands):
     assert compute_label(100.0, sample_bands) == "NG"
 
 
-def test_compute_label_direction_not_implemented():
+def test_compute_label_invalid_direction():
     """
-    What: Verify higher_is_better raises NotImplementedError
-    Why: Current scope limited to lower_is_better (SLS metrics)
+    What: Verify invalid direction raises ValueError
+    Why: Fail-fast for configuration errors
 
-    Design Decision: Explicit error for unsupported directions (fail-fast)
+    Design Decision: Only "lower" and "higher" are valid direction values
     """
     bands = [{"label": "OK", "max": 10.0}]
-    with pytest.raises(NotImplementedError, match="higher_is_better"):
-        compute_label(5.0, bands, direction="higher_is_better")
+    with pytest.raises(ValueError, match="Invalid direction"):
+        compute_label(5.0, bands, direction="invalid_direction")
+
+
+def test_compute_label_lower_direction():
+    """
+    What: Verify lower direction evaluates correctly (lower values are better)
+    Why: Core functionality for lower-is-better metrics (e.g., pelvis_drop_deg)
+
+    Design Decision: direction="lower" uses standard band logic (value <= max)
+    """
+    bands = [
+        {"label": "OK", "max": 10.0},
+        {"label": "WARN", "max": 20.0},
+        {"label": "NG", "max": None},
+    ]
+
+    # Lower values are better
+    assert compute_label(5.0, bands, direction="lower") == "OK"
+    assert compute_label(10.0, bands, direction="lower") == "OK"  # Boundary
+    assert compute_label(15.0, bands, direction="lower") == "WARN"
+    assert compute_label(20.0, bands, direction="lower") == "WARN"  # Boundary
+    assert compute_label(25.0, bands, direction="lower") == "NG"
+
+
+def test_compute_label_higher_direction():
+    """
+    What: Verify higher direction evaluates correctly (higher values are better)
+    Why: Core functionality for higher-is-better metrics (e.g., stability_score)
+
+    Design Decision: direction="higher" uses reverse band logic (value >= min)
+    """
+    bands = [
+        {"label": "OK", "max": 80},    # >= 80 is OK
+        {"label": "WARN", "max": 60},  # >= 60 is WARN
+        {"label": "NG", "max": None},  # < 60 is NG
+    ]
+
+    # Higher values are better
+    assert compute_label(85, bands, direction="higher") == "OK"
+    assert compute_label(80, bands, direction="higher") == "OK"  # Boundary
+    assert compute_label(70, bands, direction="higher") == "WARN"
+    assert compute_label(60, bands, direction="higher") == "WARN"  # Boundary
+    assert compute_label(50, bands, direction="higher") == "NG"
 
 
 # ============================================================================
@@ -1000,3 +1042,77 @@ def test_run_batch_dryrun_deterministic(multi_metric_samples):
     assert result1["overall_reclassified_rate"] == result2["overall_reclassified_rate"]
     assert result1["top3_metrics"] == result2["top3_metrics"]
     assert len(result1["representative_examples"]) == len(result2["representative_examples"])
+
+
+def test_batch_dryrun_mixed_directions(multi_metric_samples):
+    """
+    What: Verify batch dry-run with mixed directions (lower + higher)
+    Why: Real scenarios have both types of metrics
+    Design Decision: Each metric uses its own direction
+    """
+    metrics_config = {
+        "trunk_lean_lower": {
+            "new_bands": [{"label": "OK", "max": 12.0}, {"label": "WARN", "max": None}],
+            "old_bands": [{"label": "OK", "max": 10.0}, {"label": "WARN", "max": None}],
+            "value_column": "trunk_lean_deg",
+            "direction": "lower",  # Lower is better
+        },
+        "balance_higher": {
+            "new_bands": [{"label": "OK", "max": 70}, {"label": "WARN", "max": None}],
+            "old_bands": [{"label": "OK", "max": 75}, {"label": "WARN", "max": None}],
+            "value_column": "balance_score",
+            "direction": "higher",  # Higher is better
+        },
+    }
+
+    result = run_batch_dryrun(metrics_config, multi_metric_samples, seed=42)
+
+    # Should process both metrics
+    assert len(result["summary_df"]) == 2
+    assert set(result["summary_df"]["metric_id"]) == {"trunk_lean_lower", "balance_higher"}
+
+    # Verify directions are preserved
+    summary_df = result["summary_df"]
+    trunk_row = summary_df[summary_df["metric_id"] == "trunk_lean_lower"].iloc[0]
+    balance_row = summary_df[summary_df["metric_id"] == "balance_higher"].iloc[0]
+
+    assert trunk_row["direction"] == "lower"
+    assert balance_row["direction"] == "higher"
+
+
+def test_batch_dryrun_direction_summary(multi_metric_samples):
+    """
+    What: Verify direction_summary metrics are correctly computed
+    Why: Transparency - operators need to know direction distribution
+    Design Decision: Count metrics by direction type
+    """
+    metrics_config = {
+        "M1_lower": {
+            "new_bands": [{"label": "OK", "max": 12.0}, {"label": "WARN", "max": None}],
+            "old_bands": [{"label": "OK", "max": 10.0}, {"label": "WARN", "max": None}],
+            "value_column": "trunk_lean_deg",
+            "direction": "lower",
+        },
+        "M2_lower": {
+            "new_bands": [{"label": "OK", "max": 8.0}, {"label": "WARN", "max": None}],
+            "old_bands": [{"label": "OK", "max": 5.0}, {"label": "WARN", "max": None}],
+            "value_column": "knee_valgus_deg",
+            "direction": "lower",
+        },
+        "M3_higher": {
+            "new_bands": [{"label": "OK", "max": 70}, {"label": "WARN", "max": None}],
+            "old_bands": [{"label": "OK", "max": 75}, {"label": "WARN", "max": None}],
+            "value_column": "balance_score",
+            "direction": "higher",
+        },
+    }
+
+    result = run_batch_dryrun(metrics_config, multi_metric_samples, seed=42)
+
+    # Verify direction_summary
+    assert "direction_summary" in result
+    direction_summary = result["direction_summary"]
+
+    assert direction_summary["lower_count"] == 2
+    assert direction_summary["higher_count"] == 1
+    assert direction_summary["unspecified_count"] == 0
