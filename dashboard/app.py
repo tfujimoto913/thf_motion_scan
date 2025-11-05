@@ -51,6 +51,7 @@ from session_dao import group_tests_by_session, get_latest_sessions
 from session_pages import session_list_page, session_detail_page
 from pages.threshold_editor import render_threshold_editor_page
 from pages.billing_status_page import render_billing_status_page
+from pages.rep_list import render_rep_list_page
 
 
 # 種目別評価原則マッピング（各種目で評価される原則番号）
@@ -2214,7 +2215,7 @@ def main():
     st.sidebar.markdown("---")
 
     # デバッグモード時はデバッグページを追加
-    page_options = ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🗑️ 未完了セッション管理", "⚙️ Thresholds", "💳 Billing Status"]
+    page_options = ["📤 動画アップロード", "📊 セッション一覧（560点満点）", "📋 評価結果一覧（種目別）", "🎯 Rep一覧", "🗑️ 未完了セッション管理", "⚙️ Thresholds", "💳 Billing Status"]
     if st.session_state.get('debug_mode'):
         page_options.append("🔧 デバッグ情報")
 
@@ -2272,6 +2273,13 @@ def main():
             render_billing_status_page()
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ Billing Status処理時間: {stats.duration_ms:.0f} ms")
+
+    elif page == "🎯 Rep一覧":
+        with execution_timer("rep_list_page") as stats:
+            render_rep_list_page()
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ Rep一覧処理時間: {stats.duration_ms:.0f} ms")
+
     elif page == "🔧 デバッグ情報":
         with execution_timer("debug_info_page") as stats:
             debug_info_page(dynamodb, resources, demo_mode)
