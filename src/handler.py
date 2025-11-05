@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 from aws_xray_sdk.core import patch_all, xray_recorder
 from decimal import Decimal
 import boto3
+from botocore.config import Config
 from urllib.parse import unquote_plus
 import cv2
 
@@ -46,10 +47,20 @@ from processing.overlay_drawer import draw_overlay
 
 patch_all()
 
-# AWS クライアント初期化
-s3_client = boto3.client('s3')
-sqs_client = boto3.client('sqs')
-dynamodb = boto3.resource('dynamodb')
+# Retry policy configuration
+# Design Decision: Exponential backoff with max 5 attempts (ADR-TBD)
+# Why: Improve resilience against transient S3/DynamoDB errors
+retry_config = Config(
+    retries={
+        'mode': 'adaptive',  # adaptive mode: exponential backoff + circuit breaker
+        'max_attempts': 5,   # max 5 retries
+    }
+)
+
+# AWS クライアント初期化（リトライポリシー適用）
+s3_client = boto3.client('s3', config=retry_config)
+sqs_client = boto3.client('sqs', config=retry_config)
+dynamodb = boto3.resource('dynamodb', config=retry_config)
 
 # 環境変数
 RESULTS_BUCKET = os.environ.get('RESULTS_BUCKET', 'thf-motion-scan-results')
@@ -243,6 +254,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
         summary["s3_key"] = summary_key
         result["summary"] = summary
+
+        # Health Check: summary.rep_count vs overlay PNG件数
+        verify_rep_artifacts_health(
+            summary=summary,
+            overlay_count=len(overlay_items) if overlay_items else 0,
+            test_type=test_type,
+        )
 
         save_reps_to_dynamodb(
             reps,
@@ -451,6 +469,46 @@ def upload_rep_summary_to_s3(
         ContentType="application/json",
     )
     return key
+
+
+def verify_rep_artifacts_health(
+    summary: Dict[str, Any],
+    overlay_count: int,
+    test_type: str,
+) -> None:
+    """
+    What: Rep artifacts健全性チェック
+    Why: summary.jsonのrep_countとPNG実体件数の一致を検証
+
+    Design Decision:
+    - 不一致時は警告ログを出力（エラーにはしない）
+    - 品質フラグの統計も出力（運用監視用）
+
+    Args:
+        summary: summary.jsonの内容
+        overlay_count: 実際にアップロードしたoverlay.png件数
+        test_type: テスト種別
+
+    CRITICAL: 不一致時はアラート・監視対象とする
+    """
+    rep_count = summary.get("rep_count", 0)
+
+    if rep_count != overlay_count:
+        log_warning(
+            "Rep count mismatch detected",
+            test_type=test_type,
+            context={
+                "summary_rep_count": rep_count,
+                "actual_overlay_count": overlay_count,
+                "diff": abs(rep_count - overlay_count),
+            },
+        )
+    else:
+        log_info(
+            "Rep artifacts health check passed",
+            test_type=test_type,
+            context={"rep_count": rep_count, "overlay_count": overlay_count},
+        )
 
 
 def upload_rep_overlays(

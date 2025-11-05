@@ -176,6 +176,57 @@ def _compute_primary_score(
     return float(max(0.0, min(100.0, score)))
 
 
+def _compute_quality_flags(
+    start_idx: int,
+    end_idx: int,
+    min_angle: float,
+    raw_angles: np.ndarray,
+    smoothed_angles: np.ndarray,
+    down_threshold: float,
+    jitter_threshold: float = 5.0,
+) -> list[str]:
+    """
+    What: Rep品質フラグ検出
+    Why: 可動域不足・ノイズ・欠損を検出し、品質判定に利用
+
+    Design Decision:
+    - low_range: min_angle > down_threshold（可動域不足）
+    - jitter: 平均絶対誤差 > jitter_threshold（ノイズ）
+    - 戻り値はフラグ文字列のリスト
+
+    Args:
+        start_idx: Rep開始インデックス
+        end_idx: Rep終了インデックス
+        min_angle: Rep最小角度
+        raw_angles: 生の角度配列
+        smoothed_angles: 平滑化後の角度配列
+        down_threshold: 下限閾値（120度）
+        jitter_threshold: ジッター判定閾値（5度）
+
+    Returns:
+        フラグ文字列のリスト（例: ["low_range", "jitter"]）
+
+    CRITICAL: フラグは累積的（複数フラグが同時に立つ可能性あり）
+    """
+    flags = []
+
+    # low_range: 可動域不足（最小角度が閾値を超えている）
+    if min_angle > down_threshold:
+        flags.append("low_range")
+
+    # jitter: ノイズ（生角度と平滑化角度の差が大きい）
+    rep_slice = slice(start_idx, end_idx + 1)
+    raw_segment = raw_angles[rep_slice]
+    smooth_segment = smoothed_angles[rep_slice]
+
+    if len(raw_segment) > 0:
+        mae = float(np.mean(np.abs(raw_segment - smooth_segment)))
+        if mae > jitter_threshold:
+            flags.append("jitter")
+
+    return flags
+
+
 def detect_single_leg_squat_reps(
     landmark_frames: Sequence[Dict[str, Any]],
     *,
@@ -207,14 +258,24 @@ def detect_single_leg_squat_reps(
               "min_angle": float,
               "score_primary": float,
               "dominant_leg": str,
+              "flags": list[str],  # 品質フラグ（例: ["low_range", "jitter"]）
             },
             ...
-          ]
+          ],
+          "missing_landmark_rate": float  # 欠損フレーム率（0.0-1.0）
         }
     """
     samples = _extract_knee_angles(landmark_frames, min_visibility=min_visibility)
+
+    # missing_landmark検出（全体の欠損率）
+    total_frames = len(landmark_frames)
+    valid_samples = len(samples)
+    missing_landmark_rate = (
+        (total_frames - valid_samples) / total_frames if total_frames > 0 else 0.0
+    )
+
     if not samples:
-        return {"series": [], "reps": []}
+        return {"series": [], "reps": [], "missing_landmark_rate": missing_landmark_rate}
 
     raw_angles = np.array([sample.angle_deg for sample in samples], dtype=np.float64)
     smoothed_angles = _savgol_filter(raw_angles, window_size, poly_order)
@@ -259,6 +320,16 @@ def detect_single_leg_squat_reps(
                 rep_end = samples[idx].frame_index
                 apex_frame = samples[min_idx].frame_index
                 if rep_end - rep_start >= max(1, min_duration_frames - 1):
+                    # 品質フラグ計算
+                    quality_flags = _compute_quality_flags(
+                        start_idx,
+                        idx,
+                        float(min_angle),
+                        raw_angles,
+                        smoothed_angles,
+                        down_threshold,
+                    )
+
                     reps.append(
                         {
                             "rep_index": len(reps),
@@ -275,6 +346,7 @@ def detect_single_leg_squat_reps(
                                 float(min_angle), down_threshold, up_threshold
                             ),
                             "dominant_leg": samples[min_idx].leg,
+                            "flags": quality_flags,
                         }
                     )
                 state = "idle"
@@ -282,7 +354,11 @@ def detect_single_leg_squat_reps(
                 min_idx = None
                 min_angle = None
 
-    return {"series": series, "reps": reps}
+    return {
+        "series": series,
+        "reps": reps,
+        "missing_landmark_rate": missing_landmark_rate,
+    }
 
 
 __all__ = ["detect_single_leg_squat_reps"]
