@@ -54,6 +54,10 @@ This runbook covers:
 - [ ] JSON schema validation passed (`sam validate`)
 - [ ] Unit tests passed (`pytest tests/`)
 - [ ] Changelog updated in `docs/adr/`
+- [ ] **SNS delivery verified** (see `docs/runbooks/sns_delivery_test.md`)
+  - [ ] All 3 test types confirmed (simple, warn, fail)
+  - [ ] Contract-compliant payloads received (v1.0.0)
+  - [ ] Message attributes verified (Environment, Severity, Source)
 
 ### Operational Governance Checklist
 - [ ] Release team roles assigned (see Release Team Assignment above)
@@ -194,23 +198,74 @@ Expected: **No alarms in ALARM state**
 
 #### 4.4 SNS Notifications
 
-Monitor your email for SNS notifications from `thf-alerts-dev`.
+**What to Expect**: Contract-compliant JSON notifications (v1.0.0)
 
-**If you receive any of these notifications, proceed to Step 5 (Rollback Decision).**
+Monitor your email/endpoint for SNS notifications from `thf-alerts-dev`:
+
+**WARN Alert (15-minute debounce)**:
+- Subject: `[WARN] <MetricName> Alert - dev`
+- Payload:
+  ```json
+  {
+    "env": "dev",
+    "overall": "WARN",
+    "source": "metrics_monitor",
+    "reason": "BCR has been in WARN state for 15 consecutive minutes (current: 0.48)",
+    "url": "<Dashboard URL>",
+    "severity": "WARN",
+    "metadata": {
+      "metric_name": "BCR",
+      "current_value": 0.48,
+      "warn_count": 15,
+      "fail_count": 0
+    }
+  }
+  ```
+- **Action**: Investigate degradation, prepare rollback plan
+
+**FAIL Alert (5-minute debounce)**:
+- Subject: `[FAIL] <MetricName> Alert - dev`
+- Payload: Same structure with `"overall": "FAIL"`, `"severity": "CRITICAL"`
+- **Action**: **IMMEDIATE ROLLBACK REQUIRED** (proceed to Step 6)
+
+**Recovery Alert**:
+- Subject: `[OK] <MetricName> Alert - dev`
+- Payload: Same structure with `"overall": "OK"`, `"severity": "INFO"`
+- **Action**: Degradation resolved, continue monitoring
+
+**If you receive WARN or FAIL notifications, proceed to Step 5 (Rollback Decision).**
+
+**Troubleshooting**: If notifications not received, check:
+- SNS subscription status: `aws sns list-subscriptions --query 'Subscriptions[?contains(TopicArn, \`thf-alerts-dev\`)]'`
+- CloudWatch Logs: `aws logs tail /aws/lambda/MetricsMonitorFunction-dev --since 30m --filter-pattern "metrics_monitor_notification"`
+- SNS delivery failures: See `docs/runbooks/sns_delivery_test.md`
 
 ---
 
 ### Step 5: Rollback Decision Criteria
 
-**WARN State (15 consecutive minutes)**:
-- Action: Investigate degradation root cause
-- Criteria: BCR < 0.5, Kappa < 0.3, or Override > 30%
-- Decision: Can continue monitoring, but prepare rollback
+**Rollback if any of the following occur:**
 
-**FAIL State (5 consecutive minutes)**:
-- Action: **IMMEDIATE ROLLBACK REQUIRED**
-- Criteria: BCR < 0.3, Kappa < 0.2, or Override > 50%
-- Decision: Unacceptable quality degradation
+1. **WARN State (15 consecutive minutes)**:
+   - Action: Investigate degradation root cause
+   - Criteria: BCR < 0.5, Kappa < 0.3, or Override > 30%
+   - Decision: Can continue monitoring, but prepare rollback plan
+
+2. **FAIL State (5 consecutive minutes)**:
+   - Action: **IMMEDIATE ROLLBACK REQUIRED**
+   - Criteria: BCR < 0.3, Kappa < 0.2, or Override > 50%
+   - Decision: Unacceptable quality degradation
+
+3. **WARN alert persists > 30 minutes**:
+   - Action: **ROLLBACK RECOMMENDED**
+   - Criteria: WARN state continues despite investigation
+   - Decision: Prolonged degradation indicates systemic issue
+
+4. **SNS notification delivery fails**:
+   - Action: **ROLLBACK AND FIX NOTIFICATION SYSTEM**
+   - Criteria: `NumberOfNotificationsFailed` > 0 (check CloudWatch metric)
+   - Decision: Cannot rely on alerting system for production
+   - Verification: See `docs/runbooks/sns_delivery_test.md`
 
 ---
 
@@ -324,11 +379,17 @@ Wait 15 minutes and confirm metrics return to OK state.
 
 **Monitoring Schedule**:
 
-| Time Window | Check Interval | Metrics to Monitor | Action If Degradation |
-|-------------|----------------|--------------------|-----------------------|
-| Hour 0-1 | Every 5 minutes | BCR, Kappa, Override | Immediate rollback (Step 6) |
-| Hour 1-6 | Every 30 minutes | BCR, Kappa, Override, Error Rate | Investigate + prepare rollback |
-| Hour 6-24 | Every 2 hours | BCR, Kappa, Override, P95 Duration | Schedule rollback if persistent |
+| Time Window | Check Interval | Metrics to Monitor | SNS Notifications | Action If Degradation |
+|-------------|----------------|--------------------|--------------------|------------------------|
+| Hour 0-1 | Every 5 minutes | BCR, Kappa, Override | WARN/FAIL alerts | Immediate rollback (Step 6) |
+| Hour 1-6 | Every 30 minutes | BCR, Kappa, Override, Error Rate | WARN alerts monitored | Investigate + prepare rollback |
+| Hour 6-24 | Every 2 hours | BCR, Kappa, Override, P95 Duration | Monitor for patterns | Schedule rollback if persistent |
+
+**SNS Notification Strategy**:
+- **Hour 0-1**: Any WARN/FAIL alert → immediate response (Monitoring Lead notified)
+- **Hour 1-6**: WARN alerts → investigate within 30 minutes
+- **Hour 6-24**: Pattern detection (e.g., multiple WARN alerts in 2-hour window) → escalate
+- **Recovery alerts**: Monitor for metric stability after resolution
 
 **Hourly Monitoring Script**:
 
@@ -368,6 +429,7 @@ done
 - No WARN/FAIL alarms triggered
 - BCR > 0.5, Kappa > 0.3, Override < 30%
 - No user-reported issues
+- **SNS notification system operational**: `NumberOfNotificationsFailed = 0` (verify with CloudWatch metric)
 - Lambda error rate < 1%
 - P95 duration within baseline ±20%
 

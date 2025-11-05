@@ -101,6 +101,10 @@ Parameters:
     Type: Number
     Description: Five-minute total Lambda invocation threshold for FAIL alarm.
     Default: 5000
+  DashboardURL:
+    Type: String
+    Description: Dashboard URL for SNS notification deeplink (threshold editor, monitoring page).
+    Default: 'https://console.aws.amazon.com/cloudwatch/'
   AutoSuspendRequestThreshold:
     Type: Number
     Description: Two-hour aggregated request count threshold that triggers auto-suspend.
@@ -2047,6 +2051,7 @@ Resources:
           SNS_TOPIC_ARN: !Ref AlertsTopic
           ENVIRONMENT: !Ref Environment
           RULES_VERSION: v2.1
+          DASHBOARD_URL: !Ref DashboardURL
       Events:
         MetricsMonitorSchedule:
           Type: Schedule
