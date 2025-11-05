@@ -164,3 +164,66 @@ contract:
     - "env is one of: dev, stg, prod"
     - "overall is one of: OK, WARN, FAIL"
     - "SNS message attributes include Environment, Severity, Source"
+
+  future_enhancements:
+    - name: "Filter Policies"
+      description: "Team-specific subscription filtering based on SNS message attributes"
+      use_cases:
+        - "Suppress WARN alerts during off-hours (22:00-08:00 JST)"
+        - "Route billing alerts to FinOps team only"
+        - "Send FAIL/CRITICAL alerts to on-call rotation"
+      implementation:
+        - "Use SNS FilterPolicy with Severity attribute (WARN, FAIL, CRITICAL)"
+        - "Combine Environment + Source attributes for fine-grained routing"
+      example_filter_policy:
+        severity:
+          - "FAIL"
+          - "CRITICAL"
+        environment:
+          - "prod"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-subscription-filter-policies.html"
+
+    - name: "Dead-Letter Queue"
+      description: "Capture undelivered messages for investigation and retry"
+      use_cases:
+        - "Detect email delivery failures (invalid addresses, quota exceeded)"
+        - "Audit notification delivery SLA (target: 99.9%)"
+        - "Manual retry for critical alerts that failed delivery"
+      implementation:
+        - "Create SQS queue: thf-alerts-dlq-<env>"
+        - "Configure SNS subscription redrive policy (maxReceiveCount: 3)"
+        - "CloudWatch Alarm on DLQ depth > 0"
+        - "Lambda for automatic retry or PagerDuty escalation"
+      metrics:
+        - "AWS/SNS: NumberOfNotificationsFailed"
+        - "AWS/SQS: ApproximateNumberOfMessagesVisible (DLQ)"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html"
+
+    - name: "Mobile Push Notifications"
+      description: "Critical alerts (FAIL/CRITICAL only) to mobile devices"
+      use_cases:
+        - "Billing FAIL alert requires immediate action"
+        - "Production system FAIL requires on-call response"
+        - "Bypass email delays for time-sensitive incidents"
+      implementation:
+        - "SNS Platform Application (iOS/Android)"
+        - "Filter Policy: severity=[FAIL, CRITICAL] + env=prod"
+        - "Subscribe on-call device tokens to thf-alerts-prod"
+      cost_estimate: "$0.50 per 1M notifications (SNS Mobile Push pricing)"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html"
+
+    - name: "Batched Notifications"
+      description: "Aggregate multiple alerts into single digest (reduce alert fatigue)"
+      use_cases:
+        - "Send summary every 5 minutes instead of per-event"
+        - "Combine multiple WARN alerts (BCR + Kappa) into single email"
+        - "Daily digest of INFO-level events"
+      implementation:
+        - "SNS → SQS → Lambda aggregator (5-minute EventBridge trigger)"
+        - "Lambda reads SQS batch, groups by severity/source, sends digest"
+        - "Preserve individual alerts for FAIL/CRITICAL (no batching)"
+      tradeoffs:
+        - "Pro: Reduced email volume, better UX for non-critical alerts"
+        - "Con: 5-minute delay for batched WARN alerts"
+        - "Decision: Only batch WARN/INFO, never FAIL/CRITICAL"
+      reference: "Pattern similar to CloudWatch Logs Insights scheduled queries"
