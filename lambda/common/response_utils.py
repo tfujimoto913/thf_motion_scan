@@ -6,9 +6,11 @@ Created: 2025-10-27 by Claude Code
 Decision Log: ADR-018
 
 CRITICAL: CORS対応とエラーハンドリングの一元管理
+SECURITY REQUIREMENT: 本番環境ではALLOWED_ORIGINS環境変数でオリジン制限必須
 """
 
 import json
+import os
 from decimal import Decimal
 from typing import Dict, Any, Optional
 
@@ -28,17 +30,38 @@ class DecimalEncoder(json.JSONEncoder):
         return super(DecimalEncoder, self).default(obj)
 
 
-def cors_headers() -> Dict[str, str]:
+def cors_headers(request_origin: Optional[str] = None) -> Dict[str, str]:
     """
-    What: CORS対応のHTTPヘッダーを生成
-    Why: Wixフロントエンドからのクロスオリジンリクエストを許可
-    Design Decision: 本番環境ではAccess-Control-Allow-Originを制限（ADR-018）
+    What: CORS対応のHTTPヘッダーを生成（環境別オリジン制限）
+    Why: Wixフロントエンドからのクロスオリジンリクエストを許可しつつ、本番環境ではセキュリティを確保
+    Design Decision: ALLOWED_ORIGINS環境変数でホワイトリスト管理（ADR-018, Phase 5）
 
-    CRITICAL: 本番環境では特定オリジンのみ許可すること
+    Args:
+        request_origin: リクエストのOriginヘッダー値（API Gatewayから渡される）
+
+    CRITICAL: 本番環境ではALLOWED_ORIGINS環境変数で特定オリジンのみ許可
+    SECURITY REQUIREMENT: dev以外では'*'禁止、ホワイトリスト方式採用
     """
+    environment = os.environ.get('ENVIRONMENT', 'dev')
+    allowed_origins_str = os.environ.get('ALLOWED_ORIGINS', '*')
+
+    # カンマ区切りでパース（前後の空白を除去）
+    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',')]
+
+    # dev環境では'*'を許可（開発効率優先）
+    if environment == 'dev' and '*' in allowed_origins:
+        allowed_origin = '*'
+    else:
+        # stg/prod環境: リクエストOriginがホワイトリストにあるか検証
+        if request_origin and request_origin in allowed_origins:
+            allowed_origin = request_origin
+        else:
+            # マッチしない場合は最初のホワイトリストオリジンを返す（デフォルト）
+            allowed_origin = allowed_origins[0] if allowed_origins else '*'
+
     return {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',  # TODO: 本番環境では特定オリジンに制限
+        'Access-Control-Allow-Origin': allowed_origin,
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
         'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
     }
@@ -47,7 +70,8 @@ def cors_headers() -> Dict[str, str]:
 def success_response(
     data: Any,
     status_code: int = 200,
-    message: Optional[str] = None
+    message: Optional[str] = None,
+    request_origin: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     What: 成功レスポンスを生成
@@ -58,6 +82,7 @@ def success_response(
         data: レスポンスデータ
         status_code: HTTPステータスコード（デフォルト: 200）
         message: オプションのメッセージ
+        request_origin: リクエストのOriginヘッダー値（CORS制御用）
 
     Returns:
         API Gateway統合レスポンス形式の辞書
@@ -74,7 +99,7 @@ def success_response(
 
     return {
         'statusCode': status_code,
-        'headers': cors_headers(),
+        'headers': cors_headers(request_origin=request_origin),
         'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
     }
 
@@ -83,7 +108,8 @@ def error_response(
     error_message: str,
     status_code: int = 400,
     error_code: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
+    request_origin: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     What: エラーレスポンスを生成
@@ -95,6 +121,7 @@ def error_response(
         status_code: HTTPステータスコード（デフォルト: 400）
         error_code: エラーコード（例: VALIDATION_ERROR, AUTH_FAILED）
         details: 追加のエラー詳細
+        request_origin: リクエストのOriginヘッダー値（CORS制御用）
 
     Returns:
         API Gateway統合レスポンス形式の辞書
@@ -114,6 +141,6 @@ def error_response(
 
     return {
         'statusCode': status_code,
-        'headers': cors_headers(),
+        'headers': cors_headers(request_origin=request_origin),
         'body': json.dumps(body, ensure_ascii=False, cls=DecimalEncoder)
     }

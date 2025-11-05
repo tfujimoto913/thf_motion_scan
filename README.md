@@ -1105,6 +1105,114 @@ sam logs -n ProcessingFunction --start-time '10 minutes ago' --end-time 'now'
 
 ---
 
+## 🔧 環境変数リファレンス
+
+THF Motion Scanで使用する環境変数の完全なリストです。
+
+### 必須環境変数（Lambda関数）
+
+| 変数名 | 説明 | 例 | 設定箇所 |
+|--------|------|-----|----------|
+| `ENVIRONMENT` | 環境名（dev/stg/prod） | `dev` | template.yaml Parameters |
+| `RESULTS_BUCKET` | 処理結果保存先S3バケット | `thf-motion-scan-results` | template.yaml Resources |
+| `TABLE_NAME` | DynamoDBテーブル名 | `motion-scan-results` | template.yaml Resources |
+| `QUEUE_URL` | SQSキューURL（イベント駆動処理用） | `https://sqs.ap-northeast-1.amazonaws.com/...` | template.yaml Resources |
+
+### JWT認証（どちらか必須）
+
+| 変数名 | 説明 | 例 | 環境 |
+|--------|------|-----|------|
+| `JWT_SECRET_KEY` | JWT署名キー（直接指定） | `your-secret-key-min-32chars` | ローカル/dev |
+| `JWT_SECRET_NAME` | AWS Secrets Manager名 | `thf/jwt-secret` | stg/prod |
+
+**CRITICAL**: 本番環境では `JWT_SECRET_NAME` + Secrets Manager使用必須
+
+### CORS設定（セキュリティ）
+
+| 変数名 | 説明 | 例 | 環境 |
+|--------|------|-----|------|
+| `ALLOWED_ORIGINS` | CORS許可オリジン（カンマ区切り） | `https://thf.wixsite.com,https://thf-prod.com` | 全環境 |
+
+**環境別推奨値**:
+- **dev**: `*` （開発効率優先）
+- **stg**: `https://thf-staging.wixsite.com`
+- **prod**: `https://thf.wixsite.com,https://thf-prod.com` （ホワイトリスト厳守）
+
+### ログ設定
+
+| 変数名 | 説明 | デフォルト | 環境 |
+|--------|------|-----------|------|
+| `LOG_LEVEL` | ログレベル（DEBUG/INFO/WARN/ERROR） | `INFO` | 全環境 |
+| `LOG_GROUP_INFO` | 情報ログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/info` | template.yaml |
+| `LOG_GROUP_WARN` | 警告ログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/warn` | template.yaml |
+| `LOG_GROUP_ERROR` | エラーログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/error` | template.yaml |
+| `LOG_GROUP_METRICS` | メトリクスログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/metrics` | template.yaml |
+
+### AWS設定
+
+| 変数名 | 説明 | 例 | 設定方法 |
+|--------|------|-----|----------|
+| `AWS_REGION` | AWSリージョン | `ap-northeast-1` | Lambda実行環境で自動設定 |
+| `AWS_ACCOUNT_ID` | AWSアカウントID | `123456789012` | IAM Role経由で自動取得 |
+
+### オプション
+
+| 変数名 | 説明 | デフォルト | 用途 |
+|--------|------|-----------|------|
+| `VIDEOS_BUCKET` | 動画アップロード先S3バケット | `thf-motion-scan-videos` | Upload URL生成 |
+| `METRICS_NAMESPACE` | CloudWatch Metricsネームスペース | `THF/MotionScan` | カスタムメトリクス |
+| `STAGE` | （非推奨、ENVIRONMENTを優先） | `dev` | 後方互換性 |
+
+### ローカル開発環境
+
+ローカルでの開発・テスト時は `.env` ファイルで設定：
+
+```bash
+# .env.example （本番値は含めない）
+ENVIRONMENT=dev
+RESULTS_BUCKET=test-results-bucket
+TABLE_NAME=test-table
+JWT_SECRET_KEY=local-test-secret-key-minimum-32-characters
+ALLOWED_ORIGINS=*
+LOG_LEVEL=DEBUG
+```
+
+**SECURITY**: `.env` ファイルは `.gitignore` に追加し、リポジトリにコミット禁止
+
+### デプロイ時の設定方法
+
+**SAM Deploy（初回）**:
+```bash
+sam deploy --guided \
+  --parameter-overrides \
+    Environment=prod \
+    AllowedOrigins="https://thf.wixsite.com,https://thf-prod.com"
+```
+
+**CloudFormation更新**:
+```bash
+aws cloudformation update-stack \
+  --stack-name thf-motion-scan \
+  --parameters \
+    ParameterKey=AllowedOrigins,ParameterValue="https://thf.wixsite.com"
+```
+
+### トラブルシューティング
+
+#### JWT_SECRET_KEY未設定エラー
+```
+ValueError: JWT authentication requires either JWT_SECRET_KEY (local) or JWT_SECRET_NAME (production)
+```
+→ ローカル環境では `JWT_SECRET_KEY` を設定、本番環境では Secrets Manager を設定
+
+#### CORS エラー（本番環境）
+```
+Access to fetch at '...' from origin 'https://...' has been blocked by CORS policy
+```
+→ `ALLOWED_ORIGINS` 環境変数にリクエスト元オリジンを追加
+
+---
+
 ## ✅ thresholds.json バリデーション
 
 最新のしきい値ファイルは JSON Schema で検証できます。開発時は以下のワークフローを守ってください。

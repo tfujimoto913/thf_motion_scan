@@ -53,6 +53,10 @@ Parameters:
     Type: String
     Description: DynamoDB table name for motion scan results.
     Default: motion-scan-results
+  RepsTableName:
+    Type: String
+    Description: DynamoDB table name for rep-level artifacts.
+    Default: motion-scan-reps
   RescoreDefaultThresholdVersion:
     Type: String
     Description: Default threshold version used for bulk rescore launcher.
@@ -138,6 +142,10 @@ Parameters:
     Type: Number
     Description: Retention period in days for structured billing monitor logs.
     Default: 90
+  AllowedOrigins:
+    Type: String
+    Description: Comma-separated list of allowed CORS origins (use '*' for dev, specific domains for stg/prod).
+    Default: '*'
 
 Conditions:
   HasAlertsEmail: !Not [!Equals [!Ref AlertsEmail, '']]
@@ -159,7 +167,9 @@ Globals:
       Variables:
         RESULTS_BUCKET: !Ref ResultsBucket
         TABLE_NAME: !Ref ResultsTable
+        REPS_TABLE_NAME: !Ref RepsTable
         ENVIRONMENT: !Ref Environment
+        ALLOWED_ORIGINS: !Ref AllowedOrigins
         LOG_GROUP_INFO: !Ref ApplicationInfoLogGroup
         LOG_GROUP_WARN: !Ref ApplicationWarnLogGroup
         LOG_GROUP_ERROR: !Ref ApplicationErrorLogGroup
@@ -168,9 +178,11 @@ Globals:
     Tracing: Active
 
   # API Gateway設定（Week 1 Lambda用）
+  # NOTE: CORS詳細制御はLambda関数のレスポンスヘッダーで実施（response_utils.py）
+  # SECURITY: AllowedOrigins パラメータで環境別に制限（dev: '*', stg/prod: ホワイトリスト）
   Api:
     Cors:
-      AllowOrigin: "'*'"
+      AllowOrigin: "'*'"  # プリフライトOPTIONSリクエスト用（実際の制御はLambda側）
       AllowHeaders: "'Content-Type,Authorization'"
       AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
 
@@ -610,6 +622,8 @@ Resources:
             BucketName: !Sub 'thf-motion-scan-results-${AWS::AccountId}'
         - DynamoDBCrudPolicy:
             TableName: !Ref ResultsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RepsTable
         - Statement:
             - Effect: Allow
               Action:
@@ -909,6 +923,25 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  RepsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref RepsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -2114,6 +2147,12 @@ Outputs:
     Value: !Ref ResultsTable
     Export:
       Name: !Sub '${AWS::StackName}-TableName'
+
+  RepsTableNameOutput:
+    Description: "DynamoDBテーブル名（repレベル）"
+    Value: !Ref RepsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-RepsTableName'
 
   # Week 1リソース
   QRCodeBucketName:

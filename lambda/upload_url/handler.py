@@ -126,6 +126,9 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     try:
         headers = event.get('headers', {}) or {}
+        # CORS制御用にOriginヘッダーを取得
+        request_origin = headers.get('Origin') or headers.get('origin')
+
         auth_header = headers.get('Authorization') or headers.get('authorization')
         logger.info(
             "Upload URL request received",
@@ -135,12 +138,12 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         is_valid, token, error_msg = extract_bearer_token(auth_header)
         if not is_valid:
             logger.warning("Authorization token missing or invalid", payload={"reason": error_msg})
-            return error_response(error_msg, 401, 'AUTH_REQUIRED')
+            return error_response(error_msg, 401, 'AUTH_REQUIRED', request_origin=request_origin)
 
         is_valid, payload, error_msg = verify_jwt(token)
         if not is_valid:
             logger.warning("JWT verification failed", payload={"reason": error_msg})
-            return error_response(error_msg, 401, 'AUTH_FAILED')
+            return error_response(error_msg, 401, 'AUTH_FAILED', request_origin=request_origin)
 
         player_id = payload['playerId']
         team_id = payload['teamId']
@@ -149,7 +152,7 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         is_valid, error_msg = validate_required_fields(body, ['testType'])
         if not is_valid:
             logger.warning("Request validation error", payload={"reason": error_msg})
-            return error_response(error_msg, 400, 'VALIDATION_ERROR')
+            return error_response(error_msg, 400, 'VALIDATION_ERROR', request_origin=request_origin)
 
         test_type = body['testType']
         logger.set_context(test_code=test_type)
@@ -173,7 +176,8 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 f"Invalid test type: {test_type}",
                 400,
                 'VALIDATION_ERROR',
-                details={'validTestTypes': valid_test_types}
+                details={'validTestTypes': valid_test_types},
+                request_origin=request_origin
             )
 
         timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S')
@@ -213,12 +217,15 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'testType': test_type,
                 'expiresIn': 900
             },
-            message='Upload URL generated successfully'
+            message='Upload URL generated successfully',
+            request_origin=request_origin
         )
 
     except ValueError as e:
         logger.warning("Configuration error in upload URL handler", payload={"error": str(e)})
-        return error_response(str(e), 400, 'VALIDATION_ERROR')
+        # ValueError時はrequest_originが取得できている可能性があるため、tryスコープから参照
+        origin = locals().get('request_origin')
+        return error_response(str(e), 400, 'VALIDATION_ERROR', request_origin=origin)
 
     except Exception as e:
         logger.error(
@@ -226,10 +233,12 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             payload={"testType": locals().get('test_type')},
             exc_info=e,
         )
+        origin = locals().get('request_origin')
         return error_response(
             'Internal server error',
             500,
-            'INTERNAL_ERROR'
+            'INTERNAL_ERROR',
+            request_origin=origin
         )
     finally:
         logger.clear_context()
