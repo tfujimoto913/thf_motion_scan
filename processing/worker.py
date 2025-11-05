@@ -47,6 +47,7 @@ from .health_check import HealthChecker, apply_random_seed
 from .quality_monitor import QualityMonitor
 from .qc_gate import QCGate
 from .exporters import CSVExporter, PNGPlotter, PDFReporter
+from .rep_detection import detect_single_leg_squat_reps
 
 
 class VideoProcessingWorker:
@@ -110,6 +111,7 @@ class VideoProcessingWorker:
         self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
         self.qc_gate = QCGate(Path("config") / "qc_gate.json")
         self.config_path = config_path
+        self._last_context: Dict[str, Any] = {}
 
     def process_video(self,
                       video_path: str,
@@ -180,6 +182,10 @@ class VideoProcessingWorker:
         log_processing_start(str(video_path), test_type)
 
         extraction_result = self.pose_extractor.extract_landmarks(video_path)
+        self._last_context = {
+            "landmarks_sequence": extraction_result["landmarks"],
+            "fps": extraction_result["fps"],
+        }
 
         log_info(
             "Landmark extraction completed",
@@ -273,6 +279,17 @@ class VideoProcessingWorker:
             max_score=max_score
         )
 
+        rep_detection = None
+        if test_type == "single_leg_squat":
+            rep_detection = detect_single_leg_squat_reps(
+                extraction_result["landmarks"],
+                fps=extraction_result["fps"],
+            )
+            if rep_detection and rep_detection.get("reps"):
+                for rep in rep_detection["reps"]:
+                    rep_index = int(rep.get("rep_index", len(rep_detection["reps"])))
+                    rep["rep_id"] = f"{session_id}-{rep_index:03d}"
+
         # 5. 結果をまとめる
         qc_gate_result = None
         if self.qc_gate:
@@ -300,6 +317,7 @@ class VideoProcessingWorker:
             },
             'health_check': quality_result,
             'quality_metrics': quality_metrics,  # Phase 1: 品質メトリクス追加
+            'rep_detection': rep_detection or {"series": [], "reps": []},
             'processed_at': datetime.now().isoformat()
         }
 
@@ -359,6 +377,14 @@ class VideoProcessingWorker:
                 result['exported_files'] = exported_files
 
         return result
+
+    def get_last_context(self) -> Dict[str, Any]:
+        """
+        What: Return artifacts from the most recent process_video execution.
+        Why: Downstream handlers (Lambda/CLI) use landmarks for overlay generation.
+        Design Decision: Lightweight accessor instead of mutating result payloads.
+        """
+        return getattr(self, "_last_context", {})
 
     def _export_formats(self, result: Dict, output_dir: str, formats: list) -> Dict[str, str]:
         """

@@ -17,15 +17,18 @@ CRITICAL:
 """
 import json
 import os
+import re
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 from aws_xray_sdk.core import patch_all, xray_recorder
 from decimal import Decimal
 import boto3
 from urllib.parse import unquote_plus
+import cv2
 
 # processingモジュールをインポート
 sys.path.append('/var/task')
@@ -39,6 +42,7 @@ from processing.logger import (
     clear_context,
     emit_metric,
 )
+from processing.overlay_drawer import draw_overlay
 
 patch_all()
 
@@ -51,6 +55,10 @@ dynamodb = boto3.resource('dynamodb')
 RESULTS_BUCKET = os.environ.get('RESULTS_BUCKET', 'thf-motion-scan-results')
 QUEUE_URL = os.environ.get('QUEUE_URL', '')
 TABLE_NAME = os.environ.get('TABLE_NAME', 'thf-motion-scan-results')
+REPS_TABLE_NAME = os.environ.get('REPS_TABLE_NAME')
+RULES_VERSION = os.environ.get('RULES_VERSION', 'unknown')
+THRESHOLDS_VERSION = os.environ.get('THRESHOLDS_VERSION', 'unknown')
+ARTIFACT_SHA = os.environ.get('ARTIFACT_SHA', 'local-dev')
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -103,12 +111,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # テストタイプをキーから抽出（例: videos/single_leg_squat/xxx.mp4）
         test_type = extract_test_type(key)
 
+        team_id = None
         # S3オブジェクトのメタデータからathlete_id, session_idを取得
         try:
             obj_metadata = s3_client.head_object(Bucket=bucket, Key=key)
             metadata = obj_metadata.get('Metadata', {})
             athlete_id = metadata.get('athlete-id', None)
             session_id = metadata.get('session-id', None)
+            team_id = metadata.get('team-id', None)
         except Exception as e:
             log_warning(
                 "Failed to retrieve S3 object metadata",
@@ -117,6 +127,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
             athlete_id = None
             session_id = None
+            team_id = None
 
         set_processing_context(test_code=test_type, athlete_id=athlete_id, session_id=session_id)
 
@@ -172,6 +183,76 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
         emit_metric("AnalysesCompleted", 1)
 
+        processing_context = worker.get_last_context()
+        result_session_id = result.get("session_id") or session_id or datetime.utcnow().strftime('%Y%m%d-%H%M-X')
+        overlay_items = upload_rep_overlays(
+            video_path=video_path,
+            result=result,
+            landmark_frames=processing_context.get("landmarks_sequence"),
+            bucket=RESULTS_BUCKET,
+            player_id=athlete_id,
+            team_id=team_id,
+            test_type=test_type,
+            session_id=result_session_id,
+        )
+
+        if overlay_items:
+            overlay_map = {entry["rep_id"]: entry["overlay_key"] for entry in overlay_items}
+            for rep in result.get("rep_detection", {}).get("reps", []):
+                rep_id = rep.get("rep_id")
+                if rep_id and rep_id in overlay_map:
+                    rep["overlay_key"] = overlay_map[rep_id]
+            result.setdefault("rep_detection", {})["overlays"] = overlay_items
+            log_info(
+                "Rep overlays uploaded",
+                test_type=test_type,
+                context={"count": len(overlay_items)},
+            )
+
+        derived_team_id = team_id or _derive_team_id(athlete_id)
+        if derived_team_id:
+            result["team_id"] = derived_team_id
+
+        player_id = result.get("athlete_id") or athlete_id or "unknown-player"
+
+        reps = result.get("rep_detection", {}).get("reps", [])
+        rep_scores = [float(rep.get("score_primary") or 0.0) for rep in reps]
+        best_score = max(rep_scores) if rep_scores else 0.0
+        best_score = round(best_score, 1)
+        best_rep_id = None
+        if reps and rep_scores:
+            best_rep = max(reps, key=lambda r: float(r.get("score_primary") or 0.0))
+            best_rep_id = best_rep.get("rep_id")
+
+        summary = {
+            "player_id": player_id,
+            "team_id": derived_team_id,
+            "session_id": result_session_id,
+            "test_type": test_type,
+            "rep_count": len(reps),
+            "score_primary": best_score,
+            "best_rep_id": best_rep_id,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+        summary_key = upload_rep_summary_to_s3(
+            summary,
+            team_id=derived_team_id,
+            player_id=player_id,
+            test_type=test_type,
+            session_id=result_session_id,
+        )
+        summary["s3_key"] = summary_key
+        result["summary"] = summary
+
+        save_reps_to_dynamodb(
+            reps,
+            player_id=player_id,
+            team_id=derived_team_id,
+            session_id=result_session_id,
+            test_type=test_type,
+            processed_at=result.get("processed_at"),
+        )
+
         # 一時ファイル削除
         os.unlink(video_path)
 
@@ -184,7 +265,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
         # DynamoDBに記録
-        save_to_dynamodb(result, bucket, key, result_key, athlete_id, session_id)
+        save_to_dynamodb(result, bucket, key, result_key, player_id, result_session_id)
         log_info(
             "Results saved to DynamoDB",
             test_type=test_type,
@@ -270,6 +351,258 @@ def save_results_to_s3(result: Dict, original_key: str) -> str:
     return result_key
 
 
+def _sanitize_s3_component(value: Optional[str]) -> str:
+    if not value:
+        return "unknown"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    safe = safe.strip("-")
+    return safe or "unknown"
+
+
+def _derive_team_id(player_id: Optional[str]) -> Optional[str]:
+    if not player_id:
+        return None
+    parts = player_id.split("_")
+    if len(parts) < 3 or parts[0] != "plr":
+        return None
+    return f"tm_{parts[1]}"
+
+
+def _resize_with_max_edge(image, max_edge: int = 512):
+    height, width = image.shape[:2]
+    long_edge = max(height, width)
+    if long_edge <= max_edge:
+        return image
+    scale = max_edge / long_edge
+    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+
+def _build_overlay_annotation(result: Dict[str, Any], rep: Dict[str, Any]) -> Dict[str, Any]:
+    rules_version = os.environ.get("RULES_VERSION") or result.get("rules_version") or "unknown"
+    thresholds_version = (
+        os.environ.get("THRESHOLDS_VERSION")
+        or result.get("thresholds_version")
+        or "unknown"
+    )
+    normalization_version = os.environ.get("NORMALIZATION_VERSION") or "none"
+
+    return {
+        "kpi_values": {},
+        "kpi_classes": {},
+        "kpi_p_values": {},
+        "versions": {
+            "rules_version": rules_version,
+            "thresholds_version": thresholds_version,
+            "normalization_version": normalization_version,
+        },
+        "metadata": {
+            "selection_reason": "apex",
+            "valid_kpi_count": 0,
+            "total_kpi_count": 0,
+            "na_rate": 0.0,
+            "rep_id": rep.get("rep_id", "-"),
+            "score_primary": rep.get("score_primary", 0.0),
+            "dominant_leg": rep.get("dominant_leg", "-"),
+        },
+    }
+
+
+def _build_session_prefix(
+    team_id: Optional[str],
+    player_id: Optional[str],
+    test_type: str,
+    session_id: str,
+) -> str:
+    components = [
+        _sanitize_s3_component(team_id or "unknown-team"),
+        _sanitize_s3_component(player_id or "unknown-player"),
+        _sanitize_s3_component(test_type),
+        _sanitize_s3_component(session_id),
+    ]
+    return "/".join(components)
+
+
+def _build_overlay_key(
+    team_id: Optional[str],
+    player_id: Optional[str],
+    test_type: str,
+    session_id: str,
+    rep_id: str,
+) -> str:
+    session_prefix = _build_session_prefix(team_id, player_id, test_type, session_id)
+    return "/".join([session_prefix, "reps", _sanitize_s3_component(rep_id), "overlay.png"])
+
+
+def upload_rep_summary_to_s3(
+    summary: Dict[str, Any],
+    *,
+    team_id: Optional[str],
+    player_id: Optional[str],
+    test_type: str,
+    session_id: str,
+) -> str:
+    session_prefix = _build_session_prefix(team_id, player_id, test_type, session_id)
+    key = "/".join([session_prefix, "summary.json"])
+    s3_client.put_object(
+        Bucket=RESULTS_BUCKET,
+        Key=key,
+        Body=json.dumps(summary, ensure_ascii=False, indent=2),
+        ContentType="application/json",
+    )
+    return key
+
+
+def upload_rep_overlays(
+    video_path: str,
+    result: Dict[str, Any],
+    landmark_frames: Optional[List[Dict[str, Any]]],
+    *,
+    bucket: str,
+    player_id: Optional[str],
+    team_id: Optional[str],
+    test_type: str,
+    session_id: str,
+) -> List[Dict[str, str]]:
+    reps = (result.get("rep_detection") or {}).get("reps") or []
+    if not reps or not landmark_frames:
+        return []
+
+    frame_map = {
+        int(frame.get("frame", idx)): frame for idx, frame in enumerate(landmark_frames)
+    }
+
+    derived_team = team_id or _derive_team_id(player_id)
+    overlays: List[Dict[str, str]] = []
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        log_warning(
+            "Failed to open video for overlay generation",
+            test_type=test_type,
+            context={"video_path": video_path},
+        )
+        return overlays
+
+    try:
+        for rep in reps:
+            rep_id = rep.get("rep_id")
+            apex_frame = rep.get("apex_frame")
+            if rep_id is None or apex_frame is None:
+                continue
+
+            frame_data = frame_map.get(int(apex_frame))
+            if not frame_data:
+                continue
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(apex_frame))
+            success, frame = cap.read()
+            if not success or frame is None:
+                continue
+
+            landmarks = frame_data.get("landmarks")
+            if not landmarks:
+                continue
+
+            annotation = _build_overlay_annotation(result, rep)
+            try:
+                overlay = draw_overlay(frame, landmarks, annotation)
+            except Exception as exc:  # pragma: no cover - defensive
+                log_warning(
+                    "Overlay drawing failed",
+                    test_type=test_type,
+                    context={"rep_id": rep_id, "error": str(exc)},
+                )
+                continue
+
+            overlay = _resize_with_max_edge(overlay, 512)
+            success, encoded = cv2.imencode(".png", overlay)
+            if not success:
+                continue
+
+            key = _build_overlay_key(
+                derived_team,
+                player_id,
+                test_type,
+                session_id,
+                rep_id,
+            )
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=encoded.tobytes(),
+                ContentType="image/png",
+            )
+            overlays.append({"rep_id": rep_id, "overlay_key": key})
+    finally:
+        cap.release()
+
+    return overlays
+
+
+def save_reps_to_dynamodb(
+    reps: List[Dict[str, Any]],
+    *,
+    player_id: str,
+    team_id: Optional[str],
+    session_id: str,
+    test_type: str,
+    processed_at: Optional[str],
+):
+    if not REPS_TABLE_NAME:
+        log_warning(
+            "REPS_TABLE_NAME not configured; skipping rep persistence",
+            test_type=test_type,
+        )
+        return
+
+    table = dynamodb.Table(REPS_TABLE_NAME)
+    ttl_seconds = int(time.time()) + (90 * 24 * 60 * 60)
+
+    default_team = team_id or _derive_team_id(player_id) or "unknown-team"
+
+    with table.batch_writer() as batch:
+        for rep in reps:
+            rep_id = rep.get("rep_id")
+            if not rep_id:
+                continue
+
+            score_primary = float(rep.get("score_primary") or 0.0)
+            overlay_key = rep.get("overlay_key")
+            dominant_leg = rep.get("dominant_leg")
+            min_angle = rep.get("min_angle")
+            item = {
+                "PK": f"PLAYER#{player_id}",
+                "SK": f"{session_id}#{test_type}#{rep_id}",
+                "rep_id": rep_id,
+                "rep_index": int(rep.get("rep_index", 0)),
+                "player_id": player_id,
+                "team_id": default_team,
+                "session_id": session_id,
+                "test_type": test_type,
+                "score_primary": score_primary,
+                "start_frame": int(rep.get("start_frame", 0)),
+                "end_frame": int(rep.get("end_frame", 0)),
+                "apex_frame": int(rep.get("apex_frame", 0)),
+                "rules_version": RULES_VERSION,
+                "thresholds_version": THRESHOLDS_VERSION,
+                "artifact_sha": ARTIFACT_SHA,
+                "processed_at": processed_at,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "ttl": ttl_seconds,
+            }
+
+            if overlay_key:
+                item["overlay_key"] = overlay_key
+            if dominant_leg:
+                item["dominant_leg"] = dominant_leg
+            if min_angle is not None:
+                item["min_angle"] = float(min_angle)
+
+            item = convert_float_to_decimal(item)
+            batch.put_item(Item=item)
+
+
 def convert_float_to_decimal(obj):
     """
     DynamoDB用にfloatをDecimalに変換
@@ -337,6 +670,9 @@ def save_to_dynamodb(
         item['athlete_id'] = athlete_id
     if session_id:
         item['session_id'] = session_id
+    team_id = result.get('team_id')
+    if team_id:
+        item['team_id'] = team_id
 
     # DynamoDB用にfloatをDecimalに変換
     item = convert_float_to_decimal(item)
