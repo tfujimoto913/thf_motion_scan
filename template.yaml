@@ -236,6 +236,12 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-UploadUrl'
       RetentionInDays: !Ref InfoRetentionInDays
 
+  RepsQueryFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepsQuery'
+      RetentionInDays: !Ref InfoRetentionInDays
+
   AdminEditFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -823,6 +829,53 @@ Resources:
             TableName: !Ref ResultsTable
         - S3CrudPolicy:
             BucketName: !Ref VideosBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref JWTSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
+
+  RepsQueryFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepsQueryFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepsQuery'
+      Runtime: python3.11
+      Handler: reps_query/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          JWT_SECRET_NAME: thf-jwt-secret
+      Events:
+        ListReps:
+          Type: Api
+          Properties:
+            Path: /reps
+            Method: GET
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref RepsTable
         - Statement:
             - Effect: Allow
               Action:
@@ -2190,6 +2243,12 @@ Outputs:
     Value: !GetAtt UploadUrlFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-UploadUrlArn'
+
+  RepsQueryFunctionArn:
+    Description: "Rep一覧取得Lambda関数ARN"
+    Value: !GetAtt RepsQueryFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RepsQueryArn'
 
   AdminEditFunctionArn:
     Description: "管理者用編集Lambda関数ARN（Phase 2.5 - Stage 1）"

@@ -17,5 +17,6 @@ import pytest
 os.environ['TABLE_NAME'] = 'test-table'
 os.environ['QRCODE_BUCKET'] = 'test-qrcode-bucket'
 os.environ['VIDEOS_BUCKET'] = 'test-videos-bucket'
+os.environ['REPS_TABLE_NAME'] = 'test-reps-table'
 os.environ['JWT_SECRET_KEY'] = 'test-secret-key'
 os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
