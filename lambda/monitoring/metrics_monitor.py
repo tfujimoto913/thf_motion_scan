@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -35,12 +36,30 @@ from typing import Any, Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
+# Add src/ to path for sns_notifier import
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+
+try:
+    from monitoring.sns_notifier import (
+        build_message_payload,
+        send_notification as sns_send_notification,
+        MessageValidationError,
+        SNSNotificationError,
+    )
+except ImportError as e:
+    print(f"Warning: Could not import sns_notifier: {e}")
+    # Fallback to legacy notification (for backward compatibility)
+    sns_send_notification = None
+
 # --- Configuration ---
 METRICS_NAMESPACE = os.getenv("METRICS_NAMESPACE", "THF/MotionScan")
 STATE_TABLE_NAME = os.getenv("STATE_TABLE_NAME")
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 RULES_VERSION = os.getenv("RULES_VERSION", "v2.1")
+DASHBOARD_URL = os.getenv(
+    "DASHBOARD_URL", "https://console.aws.amazon.com/cloudwatch/"
+)  # TODO: Replace with Streamlit threshold_editor URL
 
 # Thresholds (WARN: 15 consecutive minutes, FAIL: 5 consecutive minutes)
 WARN_DEBOUNCE_MINUTES = 15
@@ -336,11 +355,104 @@ def update_state_with_debounce(
 def send_notification(
     metric_name: str, state: MonitoringState, value: Optional[float]
 ) -> None:
-    """Send SNS notification for state transition."""
+    """
+    Send SNS notification for state transition (contract-compliant).
+
+    Contract: contracts/sns_notification.yaml (v1.0.0)
+    """
     if not SNS_TOPIC_ARN:
         print("SNS_TOPIC_ARN not configured, skipping notification")
         return
 
+    # Fallback to legacy notification if sns_notifier not available
+    if sns_send_notification is None:
+        _send_legacy_notification(metric_name, state, value)
+        return
+
+    # Build human-readable reason
+    value_str = f"{value:.3f}" if value is not None else "N/A"
+
+    if state.current_state == "OK":
+        reason = f"{metric_name} recovered to normal (current: {value_str})"
+    elif state.current_state == "WARN":
+        reason = (
+            f"{metric_name} has been in WARN state for {state.warn_count} "
+            f"consecutive minutes (current: {value_str})"
+        )
+    elif state.current_state == "FAIL":
+        reason = (
+            f"{metric_name} in FAIL state for {state.fail_count} consecutive minutes "
+            f"(current: {value_str}) - immediate action required"
+        )
+    else:
+        reason = f"{metric_name} state changed to {state.current_state}"
+
+    # Map state to severity
+    severity_map = {"OK": "INFO", "WARN": "WARN", "FAIL": "CRITICAL"}
+    severity = severity_map.get(state.current_state, "INFO")
+
+    # Build metadata
+    metadata = {
+        "metric_name": metric_name,
+        "current_value": value,
+        "warn_count": state.warn_count,
+        "fail_count": state.fail_count,
+        "warn_debounce_threshold": WARN_DEBOUNCE_MINUTES,
+        "fail_debounce_threshold": FAIL_DEBOUNCE_MINUTES,
+        "state_entered_ts": state.state_entered_ts,
+        "rules_version": RULES_VERSION,
+    }
+
+    # Build contract-compliant payload
+    try:
+        payload = build_message_payload(
+            env=ENVIRONMENT,
+            overall=state.current_state,
+            source="metrics_monitor",
+            reason=reason,
+            url=DASHBOARD_URL,
+            severity=severity,
+            metadata=metadata,
+        )
+
+        # Send notification
+        subject = f"[{state.current_state}] {metric_name} Alert - {ENVIRONMENT}"
+        response = sns_send_notification(
+            topic_arn=SNS_TOPIC_ARN,
+            payload=payload,
+            subject=subject,
+        )
+
+        print(
+            f"✅ SNS notification sent: {metric_name} → {state.current_state} "
+            f"(MessageId: {response.get('MessageId', 'N/A')})"
+        )
+
+        # Log notification event (for CloudWatch Logs)
+        notification_event = {
+            "event": "metrics_monitor_notification",
+            "metric_name": metric_name,
+            "state": state.current_state,
+            "severity": severity,
+            "message_id": response.get("MessageId"),
+            "timestamp": _iso_timestamp(),
+        }
+        print(json.dumps(notification_event))
+
+    except (MessageValidationError, SNSNotificationError) as exc:
+        print(f"❌ Failed to send SNS notification: {exc}")
+    except Exception as exc:
+        print(f"❌ Unexpected error sending notification: {exc}")
+
+
+def _send_legacy_notification(
+    metric_name: str, state: MonitoringState, value: Optional[float]
+) -> None:
+    """
+    Legacy notification fallback (for backward compatibility).
+
+    DEPRECATED: Use contract-compliant send_notification() instead.
+    """
     subject = f"[{ENVIRONMENT}] Metrics Alert: {metric_name} → {state.current_state}"
     message = f"""
 Metrics Monitoring Alert
@@ -360,7 +472,7 @@ Action Required:
 {"- Investigate BCR/Kappa/Override degradation" if state.current_state != "OK" else "- Condition resolved"}
 {"- Consider rollback if FAIL persists" if state.current_state == "FAIL" else ""}
 
-Dashboard: https://console.aws.amazon.com/cloudwatch/
+Dashboard: {DASHBOARD_URL}
 """.strip()
 
     try:
@@ -369,7 +481,7 @@ Dashboard: https://console.aws.amazon.com/cloudwatch/
             Subject=subject[:100],  # SNS subject max 100 chars
             Message=message,
         )
-        print(f"SNS notification sent for {metric_name} → {state.current_state}")
+        print(f"SNS notification sent (legacy) for {metric_name} → {state.current_state}")
     except ClientError as exc:
         print(f"Failed to send SNS notification: {exc}")
 
