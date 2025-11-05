@@ -190,7 +190,10 @@ def generate_dev_token(player_id: str, team_id: str = "tm_dev") -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def render_rep_list_page() -> None:
+def render_rep_list_page(
+    resources: Optional[Dict[str, Any]] = None,
+    demo_mode: bool = False,
+) -> None:
     """
     What: Rep一覧ページのレンダリング
     Why: ユーザーがRep一覧を閲覧・詳細確認
@@ -205,7 +208,7 @@ def render_rep_list_page() -> None:
     st.title("🎯 Rep一覧")
 
     # リソース名取得
-    resources = get_resource_names()
+    resources = resources or get_resource_names()
     if not resources:
         st.error("❌ AWS リソースの取得に失敗しました。認証情報を確認してください。")
         return
@@ -215,9 +218,13 @@ def render_rep_list_page() -> None:
     # 開発モード警告
     dev_mode = st.sidebar.checkbox(
         "🔧 開発モード",
-        value=True,
+        value=demo_mode,
         help="開発モード: JWT自動生成（本番環境では使用禁止）"
     )
+
+    if demo_mode and not dev_mode:
+        st.info("🎭 デモモード: Rep APIは無効です。サンプルデータは未設定です。")
+        return
 
     if dev_mode:
         st.warning("⚠️ 開発モード: JWT自動生成中（本番環境では認証レイヤーを実装してください）")

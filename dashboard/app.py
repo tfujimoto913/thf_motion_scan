@@ -2258,6 +2258,11 @@ def main():
             results_list_page(dynamodb, resources, demo_mode, coach_mode)
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ 評価結果一覧処理時間: {stats.duration_ms:.0f} ms")
+    elif page == "🎯 Rep一覧":
+        with execution_timer("rep_list_page") as stats:
+            render_rep_list_page(resources, demo_mode)
+        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
+            st.caption(f"⏱ Rep一覧処理時間: {stats.duration_ms:.0f} ms")
     elif page == "🗑️ 未完了セッション管理":
         with execution_timer("incomplete_sessions_management") as stats:
             incomplete_sessions_management_page(s3_client, dynamodb, resources, demo_mode)
@@ -2273,13 +2278,6 @@ def main():
             render_billing_status_page()
         if st.session_state.get('debug_mode') and stats.duration_ms is not None:
             st.caption(f"⏱ Billing Status処理時間: {stats.duration_ms:.0f} ms")
-
-    elif page == "🎯 Rep一覧":
-        with execution_timer("rep_list_page") as stats:
-            render_rep_list_page()
-        if st.session_state.get('debug_mode') and stats.duration_ms is not None:
-            st.caption(f"⏱ Rep一覧処理時間: {stats.duration_ms:.0f} ms")
-
     elif page == "🔧 デバッグ情報":
         with execution_timer("debug_info_page") as stats:
             debug_info_page(dynamodb, resources, demo_mode)
