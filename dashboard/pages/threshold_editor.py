@@ -364,6 +364,49 @@ def render_threshold_editor_page() -> None:
         st.info("No recent changes recorded.")
 
 
+def create_direction_badge_with_tooltip(direction: str, reclassified_rate: float) -> str:
+    """
+    What: Create HTML badge with tooltip for direction display (PR#6)
+    Why: Improve transparency by showing direction context on hover
+    Design Decision: Browser-native tooltip (title attribute) + XSS protection
+
+    Args:
+        direction: "lower" or "higher"
+        reclassified_rate: Reclassification rate (0.0-1.0)
+
+    Returns:
+        HTML string with badge and tooltip
+
+    CRITICAL:
+    - XSS protection: html.escape all inputs
+    - Tooltip shows: direction meaning + impact level
+    - Color-coded badge: lower=blue, higher=green
+
+    Examples:
+        >>> create_direction_badge_with_tooltip("lower", 0.25)
+        '<span title="...">lower</span>'
+    """
+    import html
+
+    # Escape inputs
+    direction_safe = html.escape(str(direction))
+    rate_display = f"{reclassified_rate:.1%}"
+
+    # Tooltip content
+    direction_meaning = "Lower values are better" if direction == "lower" else "Higher values are better"
+    impact_level = "High impact" if reclassified_rate > 0.2 else "Medium impact" if reclassified_rate > 0.1 else "Low impact"
+
+    tooltip = f"Direction: {direction_safe} | Meaning: {direction_meaning} | Impact: {impact_level} ({rate_display})"
+
+    # Badge styling
+    color_map = {"lower": "#cfe2ff", "higher": "#d1e7dd"}
+    color = color_map.get(direction, "#e9ecef")
+
+    badge_html = f"""<span title="{html.escape(tooltip)}" style="background-color: {color}; padding: 2px 8px; border-radius: 3px; cursor: help; display: inline-block;">{direction_safe}</span>"""
+
+    return badge_html
+
+
 def render_batch_dryrun_panel():
     """
     What: Batch dry-run UI panel for multiple metrics
@@ -374,6 +417,7 @@ def render_batch_dryrun_panel():
     - Performance display: execution time and overall reclassified rate
     - Top3 metrics highlighted
     - Representative examples (max 3)
+    - PR#6: Direction badges with hover tooltips
     """
     import sys
     from pathlib import Path
@@ -439,6 +483,106 @@ def render_batch_dryrun_panel():
             samples_df = None
             st.warning("No sample data. Upload CSV or generate demo data via: `python tools/generate_multi_metric_samples.py --output sample_dataset/multi_metric_samples.csv`")
 
+    # P90/P75 Auto-calculate (PR#5)
+    st.markdown("### Step 2a: P90/P75 Auto-calculate (Optional)")
+
+    with st.expander("📊 Auto-calculate thresholds from sample distribution"):
+        if samples_df is not None and not samples_df.empty:
+            # Import P90/P75 functions
+            from threshold_dryrun import calculate_percentile_thresholds, generate_bands_from_percentiles  # type: ignore[import]
+
+            # Get available numeric columns (exclude sample_id)
+            numeric_cols = [col for col in samples_df.columns if col != "sample_id" and samples_df[col].dtype in ["float64", "int64"]]
+
+            if numeric_cols:
+                # Metric selection
+                st.markdown("**Select metrics to auto-calculate:**")
+                selected_metrics = st.multiselect(
+                    "Metrics",
+                    options=numeric_cols,
+                    help="Select one or more metrics to calculate P90/P75 thresholds"
+                )
+
+                if selected_metrics:
+                    # Direction configuration
+                    st.markdown("**Configure direction for each metric:**")
+                    metric_directions = {}
+                    for metric in selected_metrics:
+                        direction = st.selectbox(
+                            f"{metric} direction",
+                            options=["lower", "higher"],
+                            help=f"lower: lower values are better | higher: higher values are better",
+                            key=f"direction_{metric}"
+                        )
+                        metric_directions[metric] = direction
+
+                    # Calculate button
+                    if st.button("📊 Calculate P90/P75", key="calc_p90_p75"):
+                        st.session_state["p90_p75_results"] = {}
+
+                        for metric, direction in metric_directions.items():
+                            try:
+                                percentiles = calculate_percentile_thresholds(
+                                    df=samples_df,
+                                    metric_column=metric,
+                                    direction=direction,
+                                )
+                                bands = generate_bands_from_percentiles(percentiles)
+
+                                st.session_state["p90_p75_results"][metric] = {
+                                    "percentiles": percentiles,
+                                    "bands": bands,
+                                    "direction": direction,
+                                }
+                            except Exception as e:
+                                st.error(f"❌ Failed to calculate {metric}: {e}")
+
+                    # Display results
+                    if "p90_p75_results" in st.session_state and st.session_state["p90_p75_results"]:
+                        st.markdown("#### 📋 Calculated Thresholds (Preview)")
+
+                        for metric, result in st.session_state["p90_p75_results"].items():
+                            with st.container():
+                                st.markdown(f"**{metric}** (direction={result['direction']})")
+
+                                percentiles = result["percentiles"]
+                                bands = result["bands"]
+
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Fail Threshold (P90/P10)", f"{percentiles['fail_threshold']:.2f}")
+                                with col2:
+                                    st.metric("Warn Threshold (P75/P25)", f"{percentiles['warn_threshold']:.2f}")
+
+                                st.json({
+                                    "new_bands": bands,
+                                    "value_column": metric,
+                                    "direction": result["direction"],
+                                })
+                                st.markdown("---")
+
+                        # Apply button
+                        if st.button("✅ Apply to Metrics Config", key="apply_p90_p75", type="primary"):
+                            # Generate metrics config from P90/P75 results
+                            auto_config = {}
+                            for metric, result in st.session_state["p90_p75_results"].items():
+                                metric_id = f"AUTO:{metric}"
+                                auto_config[metric_id] = {
+                                    "new_bands": result["bands"],
+                                    "old_bands": result["bands"],  # Same as new for initial setup
+                                    "value_column": metric,
+                                    "direction": result["direction"],
+                                }
+
+                            # Update session state with auto config
+                            st.session_state["auto_metrics_config"] = json.dumps(auto_config, indent=2)
+                            st.success("✅ Auto-calculated thresholds applied! Scroll down to Step 2 to review.")
+
+            else:
+                st.warning("⚠️ No numeric columns found in sample data")
+        else:
+            st.info("ℹ️ Upload sample data in Step 1 to use auto-calculation")
+
     # Input: Metrics config
     st.markdown("### Step 2: Metrics Configuration")
 
@@ -472,11 +616,14 @@ def render_batch_dryrun_panel():
     }
 
     import json
+    # Use auto-generated config if available, otherwise use default
+    initial_value = st.session_state.get("auto_metrics_config", json.dumps(default_config, indent=2))
+
     metrics_config_json = st.text_area(
         "Metrics Config (JSON)",
-        value=json.dumps(default_config, indent=2),
+        value=initial_value,
         height=300,
-        help="Define threshold bands for each metric"
+        help="Define threshold bands for each metric. Auto-calculated values will appear here after applying P90/P75 results."
     )
 
     seed = st.number_input("Random Seed", value=42, min_value=1, help="Fixed seed for reproducibility")
@@ -543,11 +690,25 @@ def render_batch_dryrun_panel():
                 help="Total processing time"
             )
 
-        # Summary table
+        # Summary table (PR#6: with direction badge tooltips)
         st.markdown("#### Summary by Metric")
         summary_df = batch_result["summary_df"].copy()
+
+        # Replace direction column with badge + tooltip (before converting reclassified_rate to string)
+        # CRITICAL: Must call before reclassified_rate string conversion (tooltip needs float)
+        summary_df["direction"] = summary_df.apply(
+            lambda row: create_direction_badge_with_tooltip(
+                direction=row["direction"],
+                reclassified_rate=row["reclassified_rate"]
+            ),
+            axis=1
+        )
+
+        # Format reclassified_rate for display
         summary_df["reclassified_rate"] = summary_df["reclassified_rate"].apply(lambda x: f"{x:.1%}")
-        st.dataframe(summary_df, use_container_width=True)
+
+        # Render as HTML to enable tooltips (unsafe_allow_html required for badge HTML)
+        st.markdown(summary_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
         # Top3 metrics
         st.markdown("#### 🔝 Top 3 Metrics (by impact)")
@@ -571,6 +732,40 @@ def render_batch_dryrun_panel():
                 })
         else:
             st.info("No examples available")
+
+    # Footer (PR#5)
+    st.markdown("---")
+    st.markdown("### 📌 Threshold Configuration Status")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**Version**")
+        # Read version from config if available
+        thresholds_config_path = ROOT / "config" / "thresholds_v2.json"
+        if thresholds_config_path.exists():
+            try:
+                import json
+                config_data = json.loads(thresholds_config_path.read_text(encoding="utf-8"))
+                thresholds_version = config_data.get("versions", {}).get("thresholds_version", "N/A")
+                st.info(f"Thresholds: {thresholds_version}")
+            except Exception:
+                st.info("Thresholds: N/A")
+        else:
+            st.info("Thresholds: N/A")
+
+    with col2:
+        st.markdown("**Status**")
+        st.success("✅ Production")
+
+    with col3:
+        st.markdown("**Resources**")
+        st.markdown(
+            """
+            - [🔗 Runbook](https://github.com/your-org/repo/blob/main/docs/runbooks/threshold_update.md)
+            - [📋 Changelog](../config/thresholds/changelog.jsonl)
+            """
+        )
 
 
 def main() -> None:
