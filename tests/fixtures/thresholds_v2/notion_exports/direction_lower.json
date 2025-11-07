@@ -1,0 +1,24 @@
+{
+  "templates": [
+    {
+      "test_code": "T01_B1_pelvis_drop",
+      "metric": "pelvis_drop_deg",
+      "unit": "deg",
+      "direction": "lower",
+      "thresholds": {
+        "pass": {
+          "op": "lt",
+          "value": 5.0
+        },
+        "border": {
+          "op": "range_inc",
+          "value": [5.0, 10.0]
+        },
+        "fail": {
+          "op": "gte",
+          "value": 10.0
+        }
+      }
+    }
+  ]
+}

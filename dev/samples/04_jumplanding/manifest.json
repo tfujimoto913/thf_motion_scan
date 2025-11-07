@@ -1,0 +1,11 @@
+{
+  "seed": 101,
+  "dataset": "data.csv",
+  "notes": "Jump Landing leading indicator sample reps",
+  "test_code": "04",
+  "versions": {
+    "data_version": "1.0.0",
+    "rules_version": "1.0.0",
+    "schema_version": "1.0.0"
+  }
+}

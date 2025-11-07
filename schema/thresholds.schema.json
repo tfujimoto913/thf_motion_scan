@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://thf-motion-scan.com/schema/thresholds.schema.json",
+  "title": "THF Motion Scan Thresholds Configuration",
+  "description": "Threshold definitions for motion scan evaluation with versioning support",
+  "type": "object",
+  "required": ["versions", "metadata", "tests"],
+  "additionalProperties": false,
+  "properties": {
+    "versions": {
+      "description": "Version information for tracking rule changes and compatibility",
+      "type": "object",
+      "required": ["rules_version", "normalization_version", "artifact_sha"],
+      "additionalProperties": false,
+      "properties": {
+        "rules_version": {
+          "description": "SemVer of evaluation rules (MAJOR=breaking, MINOR=compatible, PATCH=fix)",
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "normalization_version": {
+          "description": "Version of normalization algorithm (e.g., v1.0.0 or 'none')",
+          "type": "string"
+        },
+        "artifact_sha": {
+          "description": "Git commit SHA or build hash for traceability",
+          "type": "string",
+          "pattern": "^[a-f0-9]{7,40}$|^local-dev$"
+        }
+      }
+    },
+    "metadata": {
+      "description": "Metadata about this threshold configuration file",
+      "type": "object",
+      "required": ["schema_version", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "description": "Version of this JSON schema structure",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "updated_at": {
+          "description": "Last update timestamp in ISO8601 format",
+          "type": "string",
+          "format": "date-time"
+        },
+        "notes": {
+          "description": "Optional notes about this version",
+          "type": "string"
+        }
+      }
+    },
+    "tests": {
+      "description": "Threshold definitions for each test type",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "single_leg_squat": { "$ref": "#/definitions/TestThreshold" },
+        "skater_lunge": { "$ref": "#/definitions/TestThreshold" },
+        "stride_mimic": { "$ref": "#/definitions/TestThreshold" },
+        "jump_landing": { "$ref": "#/definitions/TestThreshold" },
+        "upper_body_swing": { "$ref": "#/definitions/TestThreshold" },
+        "push_pull": { "$ref": "#/definitions/TestThreshold" },
+        "cross_step": { "$ref": "#/definitions/TestThreshold" }
+      }
+    }
+  },
+  "definitions": {
+    "TestThreshold": {
+      "description": "Threshold configuration for a single test type",
+      "type": "object",
+      "required": ["code", "thresholds"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Test code identifier (snake_case)",
+          "type": "string",
+          "pattern": "^[a-z_]+$"
+        },
+        "thresholds": {
+          "description": "Threshold bands and optional hysteresis",
+          "type": "object",
+          "required": ["primary"],
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "description": "Primary threshold bands (non-overlapping, continuous coverage recommended)",
+              "type": "object",
+              "required": ["bands"],
+              "additionalProperties": false,
+              "properties": {
+                "bands": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "$ref": "#/definitions/Band" }
+                }
+              }
+            },
+            "hysteresis": {
+              "description": "State transition width for stability (optional)",
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "features": {
+          "description": "Optional feature flags (e.g., ['dual_phase', 'left_right'])",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "refs": {
+          "description": "Optional references (e.g., ['ADR-023', 'Validation-v2.1'])",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": {
+          "description": "Optional notes about this test threshold",
+          "type": "string"
+        }
+      }
+    },
+    "Band": {
+      "description": "Single threshold band with operator and value",
+      "type": "object",
+      "required": ["name", "op", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Band classification name",
+          "type": "string",
+          "enum": ["pass", "border", "fail"]
+        },
+        "op": {
+          "description": "Comparison operator",
+          "type": "string",
+          "enum": ["gte", "gt", "lte", "lt", "eq", "range_inc"]
+        },
+        "value": {
+          "description": "Threshold value (number for single comparison, array for range_inc)",
+          "oneOf": [
+            { "type": "number" },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "number" }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "op": { "const": "range_inc" } }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": { "type": "number" }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "op": { "enum": ["gte", "gt", "lte", "lt", "eq"] } }
+          },
+          "then": {
+            "properties": {
+              "value": { "type": "number" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

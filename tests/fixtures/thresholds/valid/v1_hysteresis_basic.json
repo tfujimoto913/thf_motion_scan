@@ -1,0 +1,65 @@
+{
+  "versions": {
+    "rules_version": "v2.0.0",
+    "normalization_version": "v1.0.0",
+    "artifact_sha": "local-dev"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-04-10T08:00:00Z",
+    "notes": "Demonstrates hysteresis usage."
+  },
+  "tests": {
+    "push_pull": {
+      "code": "push_pull",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 0.85
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.6, 0.84]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.6
+            }
+          ]
+        },
+        "hysteresis": 0.05
+      },
+      "features": ["bilateral", "anterior_posterior"],
+      "refs": ["Validation-2025-Q2"]
+    },
+    "cross_step": {
+      "code": "cross_step",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 1.25
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.9, 1.24]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.9
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,267 @@
+{
+  "verification_date": "2025-11-06",
+  "environment": "dev",
+  "aws_account": "417081976353",
+  "aws_region": "ap-northeast-1",
+  "cloudwatch_logs": {
+    "verified": true,
+    "log_groups": [
+      {
+        "name": "/thf/motion-scan/dev/logs/info",
+        "purpose": "情報ログ",
+        "format": "構造化JSON",
+        "status": "存在（現時点では空）"
+      },
+      {
+        "name": "/thf/motion-scan/dev/logs/warn",
+        "purpose": "警告ログ",
+        "format": "構造化JSON",
+        "status": "存在（現時点では空）"
+      },
+      {
+        "name": "/thf/motion-scan/dev/logs/error",
+        "purpose": "エラーログ",
+        "format": "構造化JSON",
+        "status": "存在（現時点では空）"
+      },
+      {
+        "name": "/thf/motion-scan/dev/logs/metrics",
+        "purpose": "メトリクスログ",
+        "format": "構造化JSON",
+        "status": "存在（現時点では空）"
+      },
+      {
+        "name": "/aws/lambda/thf-motion-scan-ProcessingFunction",
+        "purpose": "Lambda標準ログ",
+        "format": "非構造化",
+        "status": "存在（データあり）"
+      }
+    ],
+    "log_schema": {
+      "timestamp": "ISO8601 UTC",
+      "level": "INFO|WARNING|ERROR",
+      "message": "string",
+      "requestId": "string|null",
+      "environment": "dev|stg|prod",
+      "testCode": "string|null",
+      "athleteId": "string|null",
+      "sessionId": "string|null",
+      "functionName": "string",
+      "rulesVersion": "string|null",
+      "artifactSha": "string|null",
+      "payload": "object|null",
+      "error": {
+        "type": "string",
+        "message": "string"
+      }
+    },
+    "implementation_files": [
+      "lambda/common/structured_logging.py",
+      "processing/logger.py"
+    ]
+  },
+  "dynamodb": {
+    "verified": true,
+    "tables": [
+      {
+        "name": "motion-scan-results",
+        "item_count": 0,
+        "status": "存在（未使用）",
+        "primary_key": {
+          "HASH": {
+            "name": "video_id",
+            "type": "String",
+            "format": "{bucket}/{video_key}"
+          },
+          "RANGE": {
+            "name": "processed_at",
+            "type": "String",
+            "format": "ISO8601"
+          }
+        },
+        "gsi": [
+          {
+            "name": "GSI2",
+            "pk": "GSI2PK",
+            "sk": "GSI2SK"
+          }
+        ],
+        "columns": {
+          "basic": [
+            "video_id",
+            "processed_at",
+            "test_type",
+            "score",
+            "max_score",
+            "scoring_version",
+            "result_s3_key",
+            "ttl"
+          ],
+          "optional": [
+            "athlete_id",
+            "session_id",
+            "team_id"
+          ],
+          "nested": {
+            "video_info": "動画メタデータ",
+            "health_check": {
+              "detection_rate": "Number",
+              "frame_count": "Number"
+            },
+            "evaluation": {
+              "version": "String",
+              "total_score": "Number",
+              "section_a": "Map",
+              "section_b": "Map"
+            },
+            "quality_metrics": {
+              "landmark_visibility_avg": "Number (0-1)",
+              "frame_completeness": "Number (0-1)",
+              "quality_score": "Number (0-100)",
+              "warnings": "List",
+              "recommend_retake": "Boolean"
+            }
+          }
+        }
+      },
+      {
+        "name": "motion-scan-reps",
+        "status": "未作成",
+        "note": "コードには実装されているが未デプロイ"
+      }
+    ],
+    "implementation_files": [
+      "src/handler.py"
+    ]
+  },
+  "thresholds": {
+    "verified": true,
+    "files": [
+      {
+        "path": "config/thresholds_v2.json",
+        "purpose": "評価閾値（テストスコア）",
+        "version": "1.0.0",
+        "rules_version": "2.1.0",
+        "thresholds": {
+          "overall_score": {
+            "pass": ">=60",
+            "border": "40-60",
+            "fail": "<40"
+          }
+        }
+      },
+      {
+        "path": "config/monitoring/base.yaml",
+        "purpose": "監視閾値（UI/Billing）",
+        "version": "1.0.0",
+        "thresholds": {
+          "billing": {
+            "cost_warn": 4.0,
+            "cost_fail": 5.0,
+            "unit": "USD"
+          },
+          "ui": {
+            "render_time_warn_p75": 800,
+            "render_time_fail_p90": 1200,
+            "error_rate_warn_p75": null,
+            "error_rate_fail_p90": null,
+            "availability_warn": 99.0,
+            "availability_fail": 95.0
+          }
+        }
+      },
+      {
+        "path": "config/monitoring/dev.yaml",
+        "purpose": "dev環境用オーバーライド",
+        "thresholds": {
+          "billing": {
+            "cost_warn": 4.0,
+            "cost_fail": 5.0
+          },
+          "ui": {
+            "render_time_warn_p75": 1000,
+            "render_time_fail_p90": 1500,
+            "error_rate_warn_p75": 0.10,
+            "error_rate_fail_p90": 0.20,
+            "availability_warn": 95.0,
+            "availability_fail": 90.0
+          }
+        }
+      }
+    ]
+  },
+  "sns": {
+    "verified": true,
+    "topics": [
+      {
+        "arn": "arn:aws:sns:ap-northeast-1:417081976353:thf-alerts-dev",
+        "environment": "dev",
+        "subscriptions": [
+          {
+            "protocol": "email",
+            "endpoint": "tfujimoto913@gmail.com",
+            "status": "PendingConfirmation",
+            "filter_policy": null
+          },
+          {
+            "protocol": "lambda",
+            "endpoint": "arn:aws:lambda:ap-northeast-1:417081976353:function:thf-motion-scan-BillingGuard",
+            "status": "Active",
+            "filter_policy": null
+          }
+        ]
+      }
+    ],
+    "expected_notification_types": [
+      "billing_warn",
+      "billing_fail",
+      "ui_performance_warn"
+    ]
+  },
+  "next_steps": {
+    "confirmed_parameters": {
+      "log_groups": {
+        "warn": "/thf/motion-scan/dev/logs/warn",
+        "error": "/thf/motion-scan/dev/logs/error",
+        "metrics": "/thf/motion-scan/dev/logs/metrics"
+      },
+      "dynamodb": {
+        "table_name": "motion-scan-results",
+        "primary_key": {
+          "hash": "video_id",
+          "range": "processed_at"
+        }
+      },
+      "thresholds": {
+        "evaluation": "config/thresholds_v2.json",
+        "monitoring_base": "config/monitoring/base.yaml",
+        "monitoring_dev": "config/monitoring/dev.yaml"
+      },
+      "sns": {
+        "topic_arn": "arn:aws:sns:ap-northeast-1:417081976353:thf-alerts-dev"
+      }
+    },
+    "unresolved_issues": [
+      {
+        "issue": "BCR/κ/override_rate メトリクスの所在不明",
+        "details": "これらのメトリクスがquality_metricsやhealth_checkに含まれていない",
+        "recommendation": "metrics_monitor.pyやdashboard関連コードを調査"
+      },
+      {
+        "issue": "構造化ログの実データ不足",
+        "details": "dev環境のログが現時点で空",
+        "recommendation": "テスト動画を1本処理して実データを確認"
+      },
+      {
+        "issue": "Repsテーブル未作成",
+        "details": "Rep単位の詳細データを保存するテーブルが未デプロイ",
+        "recommendation": "今後のデプロイで作成予定"
+      }
+    ],
+    "recommended_actions": [
+      "BCR/κ/override_rate の所在確認",
+      "実データでの検証（テスト動画処理）",
+      "誤検知パターン分析の設計"
+    ]
+  }
+}

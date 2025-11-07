@@ -1,0 +1,16 @@
+# Streamlit Configuration
+# Purpose: ダッシュボードの動作設定
+# Created: 2025-11-01
+# Decision Log: 動画アップロードリミット変更（200MB → 500MB）
+
+[server]
+# 動画アップロードの最大サイズ（単位: MB）
+# Why: 高解像度動画、長時間動画に対応するため（340MB実例あり）
+maxUploadSize = 500
+
+[theme]
+# ダッシュボードのテーマ設定（将来の拡張用）
+# primaryColor = "#FF4B4B"
+# backgroundColor = "#FFFFFF"
+# secondaryBackgroundColor = "#F0F2F6"
+# textColor = "#262730"

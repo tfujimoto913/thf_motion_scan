@@ -1,0 +1,16 @@
+{
+  "Parameters": {
+    "Environment": "dev",
+    "AlertsEmail": "tfujimoto913@gmail.com",
+    "EstimatedChargesWarnUsd": "4",
+    "EstimatedChargesFailUsd": "5",
+    "UnattachedEbsWarnCount": "1",
+    "UnattachedEbsFailCount": "2",
+    "LambdaInvocationsWarn5Min": "3000",
+    "LambdaInvocationsFail5Min": "5000",
+    "AutoSuspendRequestThreshold": "1",
+    "AutoSuspendLookbackHours": "2",
+    "AutoCleanupDryRun": "true",
+    "AutoCleanupUnattachedTtlHours": "48"
+  }
+}

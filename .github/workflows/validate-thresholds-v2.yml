@@ -1,0 +1,264 @@
+name: Validate Thresholds v2
+
+on:
+  pull_request:
+    paths:
+      - "schema/thresholds_v2.schema.json"
+      - "tools/build_thresholds.py"
+      - "tools/validate_direction_consistency.py"
+      - "tests/fixtures/thresholds_v2/**"
+      - "config/thresholds_v2.json"
+      - ".github/workflows/validate-thresholds-v2.yml"
+  push:
+    branches:
+      - main
+      - "feature/**"
+    paths:
+      - "schema/thresholds_v2.schema.json"
+      - "tools/build_thresholds.py"
+      - "tools/validate_direction_consistency.py"
+      - "tests/fixtures/thresholds_v2/**"
+      - "config/thresholds_v2.json"
+      - ".github/workflows/validate-thresholds-v2.yml"
+
+jobs:
+  schema-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('schema/thresholds_v2.schema.json', 'tools/build_thresholds.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-
+            ${{ runner.os }}-pip-
+
+      - name: Install jsonschema
+        run: python -m pip install --upgrade pip && pip install jsonschema
+
+      - name: Validate valid fixtures
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import validate
+
+          schema_path = Path("schema/thresholds_v2.schema.json")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+          for fixture in sorted(Path("tests/fixtures/thresholds_v2/valid").glob("*.json")):
+              data = json.loads(fixture.read_text(encoding="utf-8"))
+              validate(instance=data, schema=schema)
+              print(f"✔ valid fixture passed: {fixture}")
+          PY
+
+      - name: Ensure invalid fixtures fail
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import ValidationError, validate
+
+          schema_path = Path("schema/thresholds_v2.schema.json")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+          failures = []
+          for fixture in sorted(Path("tests/fixtures/thresholds_v2/invalid").glob("*.json")):
+              data = json.loads(fixture.read_text(encoding="utf-8"))
+              try:
+                  validate(instance=data, schema=schema)
+              except ValidationError:
+                  print(f"✔ invalid fixture rejected: {fixture}")
+              else:
+                  failures.append(str(fixture))
+
+          if failures:
+              raise SystemExit(f"Unexpected schema pass for: {failures}")
+          PY
+
+      - name: Validate rep/session/threshold schemas
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          def load_schema(path: Path) -> Draft202012Validator:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              return Draft202012Validator(payload)
+
+          def validate_files(validator: Draft202012Validator, fixtures):
+              for fixture in fixtures:
+                  document = json.loads(fixture.read_text(encoding="utf-8"))
+                  errors = list(validator.iter_errors(document))
+                  if errors:
+                      raise SystemExit(f"{fixture}: {errors[0].message}")
+
+          schemas = {
+              "rep_result": load_schema(Path("schema/rep_result.schema.json")),
+              "session_result": load_schema(Path("schema/session_result.schema.json")),
+              "thresholds_v2": load_schema(Path("schema/thresholds_v2.schema.json")),
+          }
+
+          base = Path("tests/fixtures")
+
+          validate_files(schemas["rep_result"], sorted((base / "rep_result" / "valid").glob("*.json")))
+          validate_files(schemas["rep_result"], sorted((base / "rep_result" / "warn").glob("*.json")))
+          for invalid in sorted((base / "rep_result" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["rep_result"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          validate_files(schemas["session_result"], sorted((base / "session_result" / "valid").glob("*.json")))
+          validate_files(schemas["session_result"], sorted((base / "session_result" / "warn").glob("*.json")))
+          for invalid in sorted((base / "session_result" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["session_result"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          validate_files(schemas["thresholds_v2"], sorted((base / "thresholds_v2" / "valid").glob("*.json")))
+          validate_files(schemas["thresholds_v2"], sorted((base / "thresholds_v2" / "warn").glob("*.json")))
+          for invalid in sorted((base / "thresholds_v2" / "invalid").glob("*.json")):
+              document = json.loads(invalid.read_text(encoding="utf-8"))
+              if not list(schemas["thresholds_v2"].iter_errors(document)):
+                  raise SystemExit(f"{invalid} unexpectedly passed schema validation")
+
+          PY
+
+          # Validate published examples as smoke test
+          examples = {
+              "rep_result": Path("examples/rep_result.sample.jsonl"),
+              "session_result": Path("examples/session_result.sample.json"),
+          }
+          for name, path in examples.items():
+              validator = schemas[name]
+              for line_no, document in iter_docs(path):
+                  errors = list(validator.iter_errors(document))
+                  if errors:
+                      raise SystemExit(f"{path}:{line_no} {errors[0].message}")
+          PY
+
+  build-example:
+    runs-on: ubuntu-latest
+    needs: schema-fixtures
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-build-${{ hashFiles('tools/build_thresholds.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-build-
+            ${{ runner.os }}-pip-
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip && pip install jsonschema
+
+      - name: Dry-run thresholds build
+        run: |
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/templates_minimal.json \
+            --out config/thresholds_v2.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD) \
+            --dry-run
+
+      - name: Build direction fixtures (lower/higher)
+        run: |
+          # Test direction="lower" builds correctly
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_lower.json \
+            --out /tmp/thresholds_direction_lower.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          # Test direction="higher" builds correctly
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_higher.json \
+            --out /tmp/thresholds_direction_higher.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          # Test backward compatibility (no direction field)
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_none_backward_compat.json \
+            --out /tmp/thresholds_direction_none.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD)
+
+          echo "✔ All direction fixtures built successfully"
+
+      - name: Verify direction field in output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          # Verify direction="lower" is preserved
+          lower = json.loads(Path("/tmp/thresholds_direction_lower.json").read_text())
+          assert lower["tests"][0]["direction"] == "lower", "direction=lower not preserved"
+          assert lower["tests"][0]["code"] == "T01_B1_pelvis_drop", "wrong test code"
+          print("✔ direction=lower preserved correctly")
+
+          # Verify direction="higher" is preserved
+          higher = json.loads(Path("/tmp/thresholds_direction_higher.json").read_text())
+          assert higher["tests"][0]["direction"] == "higher", "direction=higher not preserved"
+          assert higher["tests"][0]["code"] == "T02_B2_stability_score", "wrong test code"
+          print("✔ direction=higher preserved correctly")
+
+          # Verify backward compatibility (no direction field)
+          none = json.loads(Path("/tmp/thresholds_direction_none.json").read_text())
+          assert "direction" not in none["tests"][0], "direction field should not exist"
+          assert none["tests"][0]["code"] == "T03_legacy", "wrong test code"
+          print("✔ backward compatibility confirmed (no direction field)")
+          PY
+
+      - name: Ensure invalid direction fails
+        run: |
+          set +e
+          python tools/build_thresholds.py \
+            --src tests/fixtures/thresholds_v2/notion_exports/direction_invalid_value.json \
+            --out /tmp/thresholds_direction_invalid.json \
+            --rules-version 0.2.0 \
+            --thresholds-version 2.0.0 \
+            --artifact-sha $(git rev-parse --short HEAD) 2>&1 | tee /tmp/build_error.log
+          status=$?
+          set -e
+
+          if [ $status -eq 0 ]; then
+            echo "::error ::Expected invalid direction to fail build, but it succeeded."
+            exit 1
+          fi
+
+          if ! grep -q "Invalid direction value" /tmp/build_error.log; then
+            echo "::error ::Expected 'Invalid direction value' error message"
+            cat /tmp/build_error.log
+            exit 1
+          fi
+
+          echo "✔ Invalid direction correctly rejected"
+
+      - name: Validate direction-op consistency
+        run: |
+          python tools/validate_direction_consistency.py config/thresholds_v2.json

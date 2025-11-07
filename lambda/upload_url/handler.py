@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import boto3
+import time
 from datetime import datetime
 from typing import Dict, Any
 
@@ -21,6 +22,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from common.response_utils import success_response, error_response
 from common.validators import validate_required_fields
 from common.jwt_utils import verify_jwt, extract_bearer_token
+from common.structured_logging import get_logger
+
+
+logger = get_logger()
 
 
 def generate_s3_key(
@@ -108,37 +113,50 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     CRITICAL: JWT認証必須（選手本人のみアップロード可能）
     PHASE CORE LOGIC: Pre-signed URL生成の核心ロジック
     """
+    start_time = time.perf_counter()
+    request_id = getattr(context, 'aws_request_id', None) if context else None
+    function_name = getattr(context, 'function_name', os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+    environment = os.environ.get('ENVIRONMENT', os.environ.get('STAGE', 'dev'))
+
+    logger.set_context(
+        request_id=request_id,
+        environment=environment,
+        function_name=function_name,
+    )
+
     try:
-        # Authorization ヘッダーからJWT抽出
-        headers = event.get('headers', {})
+        headers = event.get('headers', {}) or {}
+        # CORS制御用にOriginヘッダーを取得
+        request_origin = headers.get('Origin') or headers.get('origin')
+
         auth_header = headers.get('Authorization') or headers.get('authorization')
+        logger.info(
+            "Upload URL request received",
+            payload={"hasAuthorization": auth_header is not None},
+        )
 
         is_valid, token, error_msg = extract_bearer_token(auth_header)
         if not is_valid:
-            return error_response(error_msg, 401, 'AUTH_REQUIRED')
+            logger.warning("Authorization token missing or invalid", payload={"reason": error_msg})
+            return error_response(error_msg, 401, 'AUTH_REQUIRED', request_origin=request_origin)
 
-        # JWT検証
         is_valid, payload, error_msg = verify_jwt(token)
         if not is_valid:
-            return error_response(error_msg, 401, 'AUTH_FAILED')
+            logger.warning("JWT verification failed", payload={"reason": error_msg})
+            return error_response(error_msg, 401, 'AUTH_FAILED', request_origin=request_origin)
 
         player_id = payload['playerId']
         team_id = payload['teamId']
 
-        # リクエストボディ解析
         body = json.loads(event.get('body', '{}'))
-
-        # 必須フィールド検証
-        is_valid, error_msg = validate_required_fields(
-            body,
-            ['testType']
-        )
+        is_valid, error_msg = validate_required_fields(body, ['testType'])
         if not is_valid:
-            return error_response(error_msg, 400, 'VALIDATION_ERROR')
+            logger.warning("Request validation error", payload={"reason": error_msg})
+            return error_response(error_msg, 400, 'VALIDATION_ERROR', request_origin=request_origin)
 
         test_type = body['testType']
+        logger.set_context(test_code=test_type)
 
-        # テスト種別検証（7種目のみ許可）
         valid_test_types = [
             'single_leg_squat',
             'upper_body_swing',
@@ -150,32 +168,46 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         ]
 
         if test_type not in valid_test_types:
+            logger.warning(
+                "Disallowed test type requested",
+                payload={"testType": test_type},
+            )
             return error_response(
                 f"Invalid test type: {test_type}",
                 400,
                 'VALIDATION_ERROR',
-                details={'validTestTypes': valid_test_types}
+                details={'validTestTypes': valid_test_types},
+                request_origin=request_origin
             )
 
-        # タイムスタンプ生成
         timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S')
-
-        # S3キー生成
         s3_key = generate_s3_key(player_id, test_type, timestamp)
 
-        # バケット名取得
         bucket_name = os.environ.get('VIDEOS_BUCKET')
         if not bucket_name:
             raise ValueError("VIDEOS_BUCKET environment variable is not set")
 
-        # Pre-signed URL生成（15分有効）
         upload_url = generate_presigned_upload_url(
             bucket_name,
             s3_key,
             expiration=900
         )
 
-        # レスポンス
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        logger.metric(
+            "PresignedUrlGenerationDuration",
+            duration_ms,
+            unit="Milliseconds",
+        )
+        logger.info(
+            "Upload URL generated",
+            payload={
+                "s3Key": s3_key,
+                "teamId": team_id,
+                "expiresIn": 900,
+            },
+        )
+
         return success_response(
             data={
                 'uploadUrl': upload_url,
@@ -185,20 +217,31 @@ def get_upload_url(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'testType': test_type,
                 'expiresIn': 900
             },
-            message='Upload URL generated successfully'
+            message='Upload URL generated successfully',
+            request_origin=request_origin
         )
 
     except ValueError as e:
-        return error_response(str(e), 400, 'VALIDATION_ERROR')
+        logger.warning("Configuration error in upload URL handler", payload={"error": str(e)})
+        # ValueError時はrequest_originが取得できている可能性があるため、tryスコープから参照
+        origin = locals().get('request_origin')
+        return error_response(str(e), 400, 'VALIDATION_ERROR', request_origin=origin)
 
     except Exception as e:
-        # CRITICAL: エラーログに個人情報を含めない（ADR-013）
-        print(f"Error generating upload URL: {str(e)}")
+        logger.error(
+            "Error generating upload URL",
+            payload={"testType": locals().get('test_type')},
+            exc_info=e,
+        )
+        origin = locals().get('request_origin')
         return error_response(
             'Internal server error',
             500,
-            'INTERNAL_ERROR'
+            'INTERNAL_ERROR',
+            request_origin=origin
         )
+    finally:
+        logger.clear_context()
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

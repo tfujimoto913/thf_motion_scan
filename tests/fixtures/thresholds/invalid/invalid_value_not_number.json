@@ -1,0 +1,37 @@
+{
+  "versions": {
+    "rules_version": "v1.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "abcdef8"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-01-01T00:00:00Z"
+  },
+  "tests": {
+    "single_leg_squat": {
+      "code": "single_leg_squat",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": "eighty"
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [60, 79]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 60
+            }
+          ]
+        }
+      }
+    }
+  }
+}

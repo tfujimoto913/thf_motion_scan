@@ -96,6 +96,36 @@
 
 ---
 
+## トークン効率化ルール
+
+**プロジェクト制約**: `dashboard/app.py` (2,200行超), `processing/worker.py` (1,000行超) 等の大規模ファイルあり
+
+### 大きなファイル編集時（1,000行超）
+- ❌ 探索的な `Read` を繰り返さない
+- ✅ `Grep(files_with_matches)` → ピンポイントで `Read`（1回のみ）
+- ✅ 大きな機能追加（100行超）は `Task` tool で別プロセス化を検討
+
+### Grep 効率的使用順序
+1. `Grep(output_mode="files_with_matches")` - 対象ファイル特定（約100トークン）
+2. `Grep(output_mode="content", -n=True)` - 行番号取得（約500トークン）
+3. `Read(offset=X, limit=Y)` - 必要箇所のみ読込（約500トークン）
+
+### 悪い例
+```python
+Read(app.py, offset=100) → Edit
+Read(app.py, offset=500) → Edit  # 累積で大量トークン消費
+Read(app.py, offset=900) → Edit
+```
+
+### 良い例
+```python
+Grep(pattern="def target_func", files_with_matches)  # 場所特定
+Read(app.py, offset=500, limit=20)  # 1回のみ
+Edit(app.py)  # まとめて編集
+```
+
+---
+
 # 4つの絶対原則
 1. **コメント駆動開発**: コード生成前に意図を明記
 2. **曖昧語禁止**: "自然"・"スムーズ"・"直感的"等を使わない

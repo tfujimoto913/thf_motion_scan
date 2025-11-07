@@ -1,0 +1,21 @@
+{
+  "session_id": "sess-invalid",
+  "athlete_id": "ath-bad-001",
+  "test_code": "T01_single_leg_squat",
+  "qc_pass_count": -1,
+  "total_reps": 3,
+  "aggregates": {
+    "best_score": 40.0,
+    "average_score": 45.0
+  },
+  "validation": {
+    "state": "ERROR",
+    "violations": [
+      {
+        "severity": "ERROR",
+        "category": "qc",
+        "message": "Negative rep count"
+      }
+    ]
+  }
+}

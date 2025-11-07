@@ -1,0 +1,11 @@
+{
+  "seed": 7,
+  "dataset": "data.csv",
+  "notes": "Cross Step skate width ratio sample reps",
+  "test_code": "07",
+  "versions": {
+    "data_version": "1.0.0",
+    "rules_version": "1.0.0",
+    "schema_version": "1.0.0"
+  }
+}

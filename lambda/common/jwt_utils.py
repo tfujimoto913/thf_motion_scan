@@ -36,7 +36,11 @@ def get_jwt_secret() -> str:
     # 本番環境: Secrets Managerから取得
     secret_name = os.environ.get('JWT_SECRET_NAME')
     if not secret_name:
-        raise ValueError("JWT_SECRET_NAME environment variable is not set")
+        raise ValueError(
+            "JWT authentication requires either JWT_SECRET_KEY (local/dev) or "
+            "JWT_SECRET_NAME (stg/prod). Neither is set. "
+            "See README.md 'Environment Variables Reference' for setup instructions."
+        )
 
     try:
         session = boto3.session.Session()

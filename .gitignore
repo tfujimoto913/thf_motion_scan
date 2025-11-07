@@ -13,6 +13,9 @@ env/
 # OS / Editor
 .DS_Store
 .vscode/
+.cursor/
+.codex/
+.cursorignore
 
 # Large artifacts
 *.onnx
@@ -40,6 +43,8 @@ warnings.json
 .coverage
 htmlcov/
 .pytest_cache/
+test_b1_*.py
+test_b1_*.json
 
 # AWS SAM
 .aws-sam/
@@ -49,6 +54,7 @@ packaged.yaml
 
 # Docker
 .docker/
+*.patch
 
 # Temporary files
 *.tmp
@@ -62,3 +68,19 @@ packaged.yaml
 *.pfx
 credentials.json
 secrets.yaml
+# Threshold editor snapshots & datasets
+config/thresholds/thresholds-*.json
+config/thresholds/changelog.jsonl
+sample_dataset/**/manifest.json
+sample_dataset/**/data.csv
+
+# Change logs (新ログシステム)
+logs/change_log/
+
+legacy/
+archive/
+docs/adr-drafts/
+**/rep_ids*.json
+**/*.tmp
+**/*.bak
+**/.DS_Store

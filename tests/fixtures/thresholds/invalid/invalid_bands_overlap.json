@@ -1,0 +1,42 @@
+{
+  "versions": {
+    "rules_version": "v1.0.0",
+    "normalization_version": "none",
+    "artifact_sha": "abcdef3"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-01-01T00:00:00Z"
+  },
+  "tests": {
+    "skater_lunge": {
+      "code": "skater_lunge",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gt",
+              "value": 1.5
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [1.0, 1.4]
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.8, 0.99]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.8
+            }
+          ]
+        }
+      }
+    }
+  }
+}

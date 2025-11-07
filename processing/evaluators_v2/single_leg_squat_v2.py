@@ -183,8 +183,12 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
         con_data = [landmarks_data[i] for i in con_frames if i < len(landmarks_data)]
         con_scores = self._evaluate_principles(con_data, 'concentric', base_width)
 
-        # 合計スコア
-        total = sum(ecc_scores.values()) + sum(con_scores.values())
+        # 合計スコア（Phase 2.5a: detailsを除外してスコアのみ合算）
+        def sum_scores_only(scores_dict):
+            """detailsキーを除外してスコアのみ合算"""
+            return sum(v for k, v in scores_dict.items() if not k.endswith('_details') and isinstance(v, (int, float)))
+
+        total = sum_scores_only(ecc_scores) + sum_scores_only(con_scores)
 
         return {
             'principles': {
@@ -196,40 +200,45 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
     def _evaluate_principles(self, landmarks_data: List[Dict], phase: str, base_width: float) -> Dict:
         """
-        What: 8原則評価（B1-B4）
-        Why: 各原則ごとのスコア計算
+        What: 8原則評価（B1-B4）- Phase 2.5a対応
+        Why: 各原則ごとのスコア計算 + 減点理由記録
         Design Decision: single_leg_squatでは4原則のみ適用
 
         Args:
             phase: 'eccentric' or 'concentric'
 
         Returns:
-            Dict: {'B1_core_stability': float, 'B2_support_foundation': float, ...}
+            Dict: {
+                'B1_core_stability': float,
+                'B1_details': dict,  # Phase 2.5a: 減点理由
+                'B2_support_foundation': float,
+                ...
+            }
 
         CRITICAL: v2.1 - Eccentric/Concentric各30点（主評価10点×2 + 副評価5点×2）
+        CRITICAL: Phase 2.5a - B1のみdetails返却（暫定実装）
         """
         if not landmarks_data:
             return {
                 'B1_core_stability': 0.0,
+                'B1_details': None,
                 'B2_support_foundation': 0.0,
                 'B3_3joint_coordination': 0.0,
                 'B4_pelvis_horizontal': 0.0
             }
 
-        # B1: 体幹安定性（副評価: 5.0点）
-        b1_score = self._evaluate_b1_core_stability(landmarks_data, max_score=5.0)
+        # B1: 体幹安定性（副評価: 5.0点）- Phase 2.5a: tuple返却
+        b1_score, b1_details = self._evaluate_b1_core_stability(landmarks_data, max_score=5.0)
 
-        # B2: 支持基盤（主評価: 10.0点）
+        # B2-B4: 暫定実装（float返却のまま）
+        # TODO: Phase 2.5a完了後、B2-B4もtuple返却に修正
         b2_score = self._evaluate_b2_support_foundation(landmarks_data, max_score=10.0)
-
-        # B3: 3関節連動性（副評価: 5.0点）
         b3_score = self._evaluate_b3_3joint_coordination(landmarks_data, max_score=5.0)
-
-        # B4: 骨盤水平維持（主評価: 10.0点）
         b4_score = self._evaluate_b4_pelvis_horizontal(landmarks_data, max_score=10.0)
 
         return {
             'B1_core_stability': round(b1_score, 1),
+            'B1_details': b1_details,  # Phase 2.5a: 減点理由
             'B2_support_foundation': round(b2_score, 1),
             'B3_3joint_coordination': round(b3_score, 1),
             'B4_pelvis_horizontal': round(b4_score, 1)
@@ -289,13 +298,25 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
 
     # ==================== B評価ヘルパーメソッド ====================
 
-    def _evaluate_b1_core_stability(self, landmarks_data: List[Dict], max_score: float) -> float:
+    def _evaluate_b1_core_stability(self, landmarks_data: List[Dict], max_score: float) -> tuple:
         """
-        What: B1評価（体幹安定性）
-        Why: 体幹の揺れ・回旋を評価
+        What: B1評価（体幹安定性）- Phase 2.5a対応
+        Why: 体幹の揺れ・回旋を評価し、減点理由を記録
         Design Decision: 体幹回旋角度と肩の高低差
 
-        CRITICAL: v2.1 - max_score点満点（副評価: 5.0点）
+        Returns:
+            tuple: (score: float, details: dict)
+                details = {
+                    'reason': str,  # 選手向け説明
+                    'coach_details': {  # コーチ向け詳細
+                        'trunk_rotation': float,
+                        'shoulder_diff': float,
+                        'deductions': list
+                    },
+                    'severity': str  # 'low', 'medium', 'high'
+                }
+
+        CRITICAL: v2.1 - max_score点満点（副評価: 5.0点）+ Phase 2.5a減点理由追加
         """
         trunk_rotations = []
         shoulder_diffs = []
@@ -310,27 +331,70 @@ class SingleLegSquatEvaluatorV2(BaseEvaluatorV2):
                 shoulder_diffs.append(shoulder_diff)
 
         if not trunk_rotations or not shoulder_diffs:
-            return 0.0
+            return (0.0, {
+                'reason': 'ランドマーク検出不足',
+                'coach_details': {'trunk_rotation': None, 'shoulder_diff': None, 'deductions': []},
+                'severity': 'high'
+            })
 
         avg_rotation = np.mean(trunk_rotations)
         avg_shoulder_diff = np.mean(shoulder_diffs)
 
-        # スコアリング
+        # スコアリング + 減点理由記録
         score = max_score
+        deductions = []
+        severity = 'low'
+        reasons = []
 
         # 体幹回旋ペナルティ
         if avg_rotation > 20:
-            score -= max_score * 0.5
+            deduction = max_score * 0.5
+            score -= deduction
+            deductions.append(f'体幹回旋が大きい（{avg_rotation:.1f}度 > 20度閾値）: -{deduction:.1f}点')
+            reasons.append(f'体幹が左右に回旋しています（{avg_rotation:.1f}度）')
+            severity = 'high'
         elif avg_rotation > 10:
-            score -= max_score * 0.25
+            deduction = max_score * 0.25
+            score -= deduction
+            deductions.append(f'体幹回旋あり（{avg_rotation:.1f}度 > 10度閾値）: -{deduction:.1f}点')
+            reasons.append(f'体幹の回旋を抑えましょう（{avg_rotation:.1f}度）')
+            severity = 'medium'
 
         # 肩の高低差ペナルティ
         if avg_shoulder_diff > 0.1:
-            score -= max_score * 0.3
+            deduction = max_score * 0.3
+            score -= deduction
+            deductions.append(f'肩の高低差が大きい（{avg_shoulder_diff:.3f} > 0.1閾値）: -{deduction:.1f}点')
+            reasons.append(f'肩の高さを揃えましょう（左右差{avg_shoulder_diff*100:.1f}%）')
+            if severity != 'high':
+                severity = 'medium'
         elif avg_shoulder_diff > 0.05:
-            score -= max_score * 0.15
+            deduction = max_score * 0.15
+            score -= deduction
+            deductions.append(f'肩の高低差あり（{avg_shoulder_diff:.3f} > 0.05閾値）: -{deduction:.1f}点')
+            reasons.append(f'肩の高さにわずかな左右差があります')
 
-        return max(0.0, score)
+        final_score = max(0.0, score)
+
+        # 選手向けメッセージ生成
+        if not reasons:
+            reason_text = '✅ 体幹が安定しています'
+        else:
+            reason_text = ' / '.join(reasons)
+
+        details = {
+            'reason': reason_text,
+            'coach_details': {
+                'trunk_rotation': round(avg_rotation, 1),
+                'shoulder_diff': round(avg_shoulder_diff, 3),
+                'deductions': deductions,
+                'threshold_rotation': 10.0,
+                'threshold_shoulder': 0.05
+            },
+            'severity': severity
+        }
+
+        return (final_score, details)
 
     def _evaluate_b2_support_foundation(self, landmarks_data: List[Dict], max_score: float) -> float:
         """

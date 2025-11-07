@@ -100,6 +100,8 @@ source .venv/bin/activate
 ```bash
 pip install --upgrade pip
 pip install opencv-python mediapipe numpy pytest pytest-cov
+# Validator / pre-commit tooling
+pip install -r requirements-dev.txt
 ```
 
 **主要パッケージ**:
@@ -273,6 +275,48 @@ pytest tests/ --cov=processing --cov-report=html
 # ブラウザで確認
 open htmlcov/index.html  # macOS
 ```
+
+### Streamlit Dashboard
+
+#### 起動方法
+
+```bash
+# 仮想環境有効化
+source .venv/bin/activate
+
+# Streamlitアプリ起動
+streamlit run dashboard/app.py
+```
+
+**アクセス**: ブラウザで http://localhost:8501 を開く
+
+#### 利用可能なページ
+
+| ページ名 | 機能 | 説明 |
+|:---------|:-----|:-----|
+| 📤 動画アップロード | セッション作成 | 7種目の動画をアップロードして評価セッションを作成 |
+| 📊 セッション一覧（560点満点） | セッション管理 | 完了したセッション一覧を表示（560点満点スコア） |
+| 📋 評価結果一覧（種目別） | 結果閲覧 | 種目別の詳細評価結果を表示 |
+| 🗑️ 未完了セッション管理 | データ削除 | 途中で中断したセッションを削除または再開 |
+| ⚙️ Thresholds | 境界値編集 | 評価境界値の編集・変更履歴管理・再分類分析 |
+| 🔧 デバッグ情報 | デバッグ | システム情報・バージョン確認（デバッグモード時のみ） |
+
+#### ⚙️ Thresholds（境界値編集）
+
+**目的**: コーチが各テスト種目のKPI境界値を視覚的に編集できる完全な管理UI
+
+**主要機能**:
+- **テスト・メトリクス選択**: SLS、JUMP_LANDING、CROSSOVER等の全テスト対応
+- **境界値編集**: OK/ATTENTION/NG の3段階バンド編集
+  - 半開区間 `[lower, upper)` 形式
+  - リアルタイムバリデーション
+- **サンプルデータ分析**: 変更前後の再分類プレビュー
+- **変更履歴管理**: changelog.jsonl への自動記録
+- **スナップショット**: 変更前の状態を自動保存
+- **Undo機能**: 直前の変更をロールバック
+- **環境保護**: dev環境以外での変更を防止
+
+**実装**: `dashboard/pages/threshold_editor.py` (315行)
 
 ---
 
@@ -574,12 +618,342 @@ GitHub UIでPull Request作成時、以下を含めてください：
 - **Decision Log（ADR-001〜005）**: [docs/adr/decision_log.md](docs/adr/decision_log.md)
 - **Phase 1完了レポート**: [docs/phase1_completion_report.md](docs/phase1_completion_report.md)
 - **設計概要**: [docs/design/overview.md](docs/design/overview.md)
+- **Phase0-4適用ルール運用**: [docs/phase0-4_deployment_rules.md](docs/phase0-4_deployment_rules.md)
+- **撮影ガイド v2**: [docs/filming_guide_v2.md](docs/filming_guide_v2.md)
+- **Canary監視/ロールバック手順**: [docs/canary_monitoring.md](docs/canary_monitoring.md)
+- **Rep Rescore Runbook**: [docs/rep_rescore_runbook.md](docs/rep_rescore_runbook.md)
 
 ### 外部ドキュメント
 
 - **MediaPipe Pose**: https://google.github.io/mediapipe/solutions/pose.html
 - **OpenCV**: https://docs.opencv.org/4.x/
 - **pytest**: https://docs.pytest.org/
+
+---
+
+![CI](https://github.com/tfujimoto913/thf_motion_scan/actions/workflows/validate.yml/badge.svg)
+
+## 📋 Logging Standards
+
+### 概要
+
+THF Motion Scanでは、CLI（rep-cli）とサーバ側（Lambda等）で共通の構造化ログキー標準を採用し、観測性とトレーサビリティを向上させます。
+
+**目的**:
+- バージョン追跡（rules_version, normalization_version）
+- エラー原因特定（error_code, error_message）
+- パフォーマンス分析（duration_ms）
+- 統一フォーマットによる自動化（CloudWatch/OpenTelemetry互換）
+
+### 必須フィールド（9項目）
+
+すべてのログエントリに含める必要があるフィールド：
+
+| キー | 型 | 説明 | 例 |
+|------|-----|------|-----|
+| `timestamp` | string (ISO8601) | イベント発生時刻（UTC、アプリ生成） | `2025-11-03T12:34:56.789Z` |
+| `level` | string (enum) | ログレベル (`DEBUG`, `INFO`, `WARN`, `ERROR`) | `INFO` |
+| `message` | string | 人間可読メッセージ | `Evaluation completed successfully` |
+| `request_id` | string (UUID v4) | リクエスト単位のユニークID | `550e8400-e29b-41d4-a716-446655440000` |
+| `session_id` | string (UUID v4) | セッション単位のID | `7c9e6679-7425-40de-944b-e07fc1f90ae7` |
+| `test_code` | string | 評価対象テストコード | `push_pull` |
+| `rules_version` | string (semver) | thresholds.json のバージョン | `1.0.0` |
+| `normalization_version` | string (semver) | 正規化ロジックバージョン | `1.2.1` |
+| `artifact_sha` | string (SHA256, 先頭8文字) | 処理対象ファイルのハッシュ | `a3f5c8d1` |
+
+### 任意フィールド（8項目）
+
+特定のコンテキストで追加するフィールド：
+
+| キー | 型 | 説明 | 例 |
+|------|-----|------|-----|
+| `component` | string | 実行元コンポーネント（パイプラインステップ名も可） | `cli`, `lambda`, `lambda:classify` |
+| `duration_ms` | number | 処理時間（ミリ秒） | `1234` |
+| `receive_ts` | string (ISO8601) | 受信時刻（CloudWatchなど、アプリ時刻とズレがある場合） | `2025-11-03T12:34:57.012Z` |
+| `error_code` | string | エラー分類コード（ERROR時推奨） | `VALIDATION_FAILED` |
+| `error_message` | string | エラー詳細（ERROR時推奨） | `Invalid JSON structure` |
+| `trace_id` | string | OpenTelemetry互換トレースID | `0af7651916cd43dd8448eb211c80319c` |
+| `span_id` | string | OpenTelemetry互換スパンID | `b7ad6b7169203331` |
+| `metadata` | object | 追加メタデータ（自由形式） | `{"height_cm": 175}` |
+
+### ポリシー
+
+**セキュリティ**:
+- ✅ PII（個人情報）を含めない
+- ✅ 動画ファイル名はハッシュ化（artifact_sha使用）
+- ✅ ユーザーIDは含めない（session_idで代替）
+
+**品質**:
+- ✅ 必須キー欠落時は出力前にエラー（開発時検知）
+- ✅ CloudWatch/OpenTelemetry互換性を考慮
+- ✅ JSON 1行出力（stdout/ファイル）
+
+### ログサンプル
+
+#### 成功時（INFO）
+
+```json
+{
+  "timestamp": "2025-11-03T12:34:56.789Z",
+  "level": "INFO",
+  "message": "Evaluation completed successfully",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "cli",
+  "duration_ms": 1234
+}
+```
+
+#### エラー時（ERROR）
+
+```json
+{
+  "timestamp": "2025-11-03T12:35:00.123Z",
+  "level": "ERROR",
+  "message": "Pose extraction failed",
+  "request_id": "550e8400-e29b-41d4-a716-446655440001",
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+  "test_code": "push_pull",
+  "rules_version": "1.0.0",
+  "normalization_version": "1.2.1",
+  "artifact_sha": "a3f5c8d1",
+  "component": "lambda:pose_extraction",
+  "error_code": "MEDIAPIPE_FAILED",
+  "error_message": "Low visibility: confidence < 0.5"
+}
+```
+
+### 使用方法
+
+#### CLI（rep-cli）
+
+```bash
+# ログレベル指定
+rep-cli --video test.mp4 --log-level DEBUG
+
+# ログファイル出力
+rep-cli --video test.mp4 --log-file output/log.jsonl
+```
+
+#### Lambda
+
+```python
+# 環境変数で制御
+LOG_LEVEL=INFO  # DEBUG, INFO, WARN, ERROR
+```
+
+詳細は `utils/logger.py` および `docs/thresholds-README.md` を参照してください。
+
+---
+
+## 🎯 Validation System（Task A〜D統合）
+
+### 概要
+Notion Templates → thresholds_v2.json → ValidationEngine → Dashboard の一貫したvalidation state管理を実現。CLI/Lambda/DashboardでOK/WARN/ERRORの同一語彙を使用し、Phase 2.5→5横断で整合性を担保。
+
+### 主要コンポーネント
+- **Task A**: `tools/build_thresholds.py` でthresholds_v2.json自動生成（SemVer管理）
+- **Task B**: `src/config/compat.py` でSemVer互換性判定（MAJOR差=ERROR, MINOR差=WARN, PATCH差=OK）
+- **Task C**: `dashboard/version_display.py` で全体バージョン互換性チェック（サイドバー表示、force_override対応）
+- **Task D**: `dashboard/validation_badge.py` でセッション単位のValidation State表示（✅ OK/⚠️ WARN/❌ ERROR色分けバッジ）
+
+### 実装ファイル
+- `config/thresholds_v2.json`: 唯一の真実源
+- `cli/rep_cli.py`: rep/sessionにvalidation.state付与
+- `processing/frame_selector.py`: 静止画best/worst/repr選定・S3命名規約
+- `tests/fixtures/session_result/`: セッション集計フィクスチャ（`valid/`4件・`warn/`1件・`invalid/`6件）
+- **`src/validation_engine/validator_rep.py`**: Rep-level検証（必須キー、型、バージョン互換性）
+- **`src/validation_engine/validator_session.py`**: Session-level集約（過半数判定、統計算出）
+
+### Validator使用例
+
+**Rep-level検証**:
+```python
+import json
+from pathlib import Path
+from src.validation_engine import apply_rep
+
+thresholds = json.loads(Path("config/thresholds_v2.json").read_text(encoding="utf-8"))
+
+# MediaPipe evaluatorが計算した指標（thresholdsのcodeに対応）
+rep_metrics = {
+    "T02_B2": 0.12,
+    "T02_B4": 0.09
+}
+
+rep_metadata = {
+    "rules_version": "0.2.0",
+    "thresholds_version": "v2.1",
+    "normalization_version": "none",
+}
+
+result = apply_rep(rep_metrics, rep_metadata, thresholds)
+# result["validation"]["state"] -> "OK" | "WARN" | "ERROR"
+# CLI層では STATE_MAP を用いて VALID/WARN/INVALID に正規化して書き出す
+```
+
+**Session-level集約**:
+```python
+from src.validation_engine import apply_session
+from cli.rep_cli import build_session_result_record
+
+session_metrics = {
+    "overall_score": 78.4
+}
+session_metadata = {
+    "rules_version": "0.2.0",
+    "thresholds_version": "v2.1",
+    "normalization_version": "none",
+}
+
+session_validation = apply_session(session_metrics, session_metadata, thresholds)
+# session_validation["validation"]["state"] -> "OK" | "WARN" | "ERROR"
+
+# Export時は rep_cli のビルダで schema に準拠した JSON を生成
+rep_records = [
+    {
+        "rep_id": "rep-0001",
+        "session_id": "sess-1234",
+        "test_name": "single_leg_squat",
+        "threshold_version": "v2.1",
+        "scores": {"angle_score": 80.1, "stability_score": 79.3, "composite_score": 79.7},
+        "validation": {"state": "VALID", "messages": []}
+    }
+]
+
+record = build_session_result_record(
+    result={
+        "session_id": "sess-1234",
+        "athlete_id": "ath-5678",
+        "test_type": "single_leg_squat",
+        "versions": session_metadata,
+        "metadata": {"processed_at": "2025-11-04T12:00:00Z"},
+        "scores": {"overall": 78.4, "A_execution": 79.1, "B_total": 77.8},
+        "validation": session_validation["validation"]
+    },
+    rep_records=rep_records
+)
+# record["validation"]["state"] -> "VALID" | "WARN" | "INVALID"
+# record["aggregated_scores"] には mean/std/rep count が格納される
+```
+
+**過半数ルール**:
+- 5 reps中3以上がOK/WARN → session有効
+- 3未満 → `state="INSUFFICIENT"`（再撮影必要）
+- 統計対象: WARN含む・ERROR除外
+
+**テストフィクスチャ**:
+- `tests/validation_engine/fixtures/all_ok.jsonl` - 全5本OK
+- `tests/validation_engine/fixtures/error_mixed.jsonl` - 2 OK, 1 WARN, 2 ERROR
+- `tests/validation_engine/fixtures/warn_mixed.jsonl` - 3 OK, 2 WARN
+- `tests/validation_engine/fixtures/insufficient.jsonl` - 2 OK, 3 ERROR（過半数未達）
+
+詳細は ADR-034〜037 および各実装ファイルのコメントを参照してください。
+
+---
+
+## 🎬 Rep-level Selection (Phase 2 Overlay)
+
+### 概要
+複数reps（例：10本）から代表3本（best/worst/repr）を客観的基準で選定し、Overlay注記とともに表示。N/A処理・正規化スコア・タイブレーク規則により公平な比較を実現。
+
+### 選定アルゴリズム
+
+**前処理**:
+1. 各repのN/A率と有効KPI数を計算
+2. 有効KPI数 < 全KPI数 * 0.5（50%）のrepを除外
+3. 正規化スコア計算: `normalized_score = sum(有効KPI) / count(有効KPI)`
+
+**選定ルール**:
+- **Best**: normalized_score最大、同点時はN/A率最小、それでも同点なら早いrep_number
+- **Worst**: normalized_score最小、同点時はN/A率最小、それでも同点なら早いrep_number
+- **Representative**: normalized_scoreの中央値に最も近い、同点時はN/A率最小、それでも同点なら早いrep_number
+
+### N/A処理方針
+
+**正規化**:
+- N/A項目を除外して有効項目のみでスコア計算
+- N/Aの定義: `None`, `NaN`, 欠損キー
+
+**有効項目閾値**:
+- 全KPI数の50%未満のrepは候補から除外
+- 例: Hip Hinge Test（12 KPI）なら6項目以上必要
+
+**タイブレーク規則**:
+1. N/A率が低い方を優先
+2. それでも同点なら rep_number（撮影順）が若い方
+
+### 使用例
+
+```python
+from processing.frame_selector import select_representative_reps, build_rep_annotation
+
+# Rep data (from DynamoDB or local processing)
+reps = [
+    {
+        "rep_number": 0,
+        "kpi_scores": {"hip_angle": 87.3, "knee_angle": None, "torso_angle": 45.2, ...},
+        "kpi_classes": {"hip_angle": "B", "torso_angle": "A", ...},
+        "kpi_p_values": {"hip_angle": 0.92, "torso_angle": 0.88, ...},
+        "versions": {
+            "rules_version": "v2.1",
+            "thresholds_version": "v2.0",
+            "normalization_version": "v1.0"
+        }
+    },
+    # ... more reps
+]
+
+# Select representative reps
+selections = select_representative_reps(reps, min_valid_kpi_ratio=0.5)
+# → {"best": {...}, "worst": {...}, "repr": {...}}
+
+# Build annotation for overlay display
+if selections["best"]:
+    annotation = build_rep_annotation(selections["best"], selection_reason="best")
+    # → {
+    #     "kpi_values": {...},
+    #     "kpi_classes": {...},
+    #     "kpi_p_values": {...},
+    #     "versions": {...},
+    #     "metadata": {
+    #         "na_rate": 0.15,
+    #         "valid_kpi_count": 10,
+    #         "total_kpi_count": 12,
+    #         "selection_reason": "best",
+    #         "rep_number": 0
+    #     }
+    # }
+```
+
+### Overlay注記要素
+
+選定されたrepのannotationには以下が含まれます：
+- **kpi_values**: 各KPIの実測値
+- **kpi_classes**: 各KPIのクラス（A/B/C）
+- **kpi_p_values**: 各KPIのp値（信頼度）
+- **versions**: トレーサビリティ用バージョン情報
+- **metadata**: N/A率、有効KPI数、選定理由、rep番号
+
+### テストカバレッジ
+
+**受入条件（8ケース、100%パス）**:
+- ✅ ケースA: 正常系（10 reps、N/A率10%）
+- ✅ ケースB: N/A多数（4 reps除外）
+- ✅ ケースC: 同点（タイブレーク）
+- ✅ ケースD: 空データ
+- ✅ ケースE: versions不一致
+- ✅ ケースF: 注記要素
+- ✅ Edge case: 全rep除外
+- ✅ Edge case: タイブレーク詳細
+
+**テストファイル**: `tests/processing/test_frame_selector_reps.py`
+
+詳細は `processing/frame_selector.py` のコメントを参照してください。
 
 ---
 
@@ -731,6 +1105,209 @@ sam logs -n ProcessingFunction --start-time '10 minutes ago' --end-time 'now'
 
 ---
 
+## 🔧 環境変数リファレンス
+
+THF Motion Scanで使用する環境変数の完全なリストです。
+
+### 必須環境変数（Lambda関数）
+
+| 変数名 | 説明 | 例 | 設定箇所 |
+|--------|------|-----|----------|
+| `ENVIRONMENT` | 環境名（dev/stg/prod） | `dev` | template.yaml Parameters |
+| `RESULTS_BUCKET` | 処理結果保存先S3バケット | `thf-motion-scan-results` | template.yaml Resources |
+| `TABLE_NAME` | DynamoDBテーブル名 | `motion-scan-results` | template.yaml Resources |
+| `QUEUE_URL` | SQSキューURL（イベント駆動処理用） | `https://sqs.ap-northeast-1.amazonaws.com/...` | template.yaml Resources |
+
+### JWT認証（どちらか必須）
+
+| 変数名 | 説明 | 例 | 環境 |
+|--------|------|-----|------|
+| `JWT_SECRET_KEY` | JWT署名キー（直接指定） | `your-secret-key-min-32chars` | ローカル/dev |
+| `JWT_SECRET_NAME` | AWS Secrets Manager名 | `thf/jwt-secret` | stg/prod |
+
+**CRITICAL**: 本番環境では `JWT_SECRET_NAME` + Secrets Manager使用必須
+
+### CORS設定（セキュリティ）
+
+| 変数名 | 説明 | 例 | 環境 |
+|--------|------|-----|------|
+| `ALLOWED_ORIGINS` | CORS許可オリジン（カンマ区切り） | `https://thf.wixsite.com,https://thf-prod.com` | 全環境 |
+
+**環境別推奨値**:
+- **dev**: `*` （開発効率優先）
+- **stg**: `https://thf-staging.wixsite.com`
+- **prod**: `https://thf.wixsite.com,https://thf-prod.com` （ホワイトリスト厳守）
+
+### ログ設定
+
+| 変数名 | 説明 | デフォルト | 環境 |
+|--------|------|-----------|------|
+| `LOG_LEVEL` | ログレベル（DEBUG/INFO/WARN/ERROR） | `INFO` | 全環境 |
+| `LOG_GROUP_INFO` | 情報ログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/info` | template.yaml |
+| `LOG_GROUP_WARN` | 警告ログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/warn` | template.yaml |
+| `LOG_GROUP_ERROR` | エラーログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/error` | template.yaml |
+| `LOG_GROUP_METRICS` | メトリクスログのCloudWatch Log Group | `/thf/motion-scan/{env}/logs/metrics` | template.yaml |
+
+### AWS設定
+
+| 変数名 | 説明 | 例 | 設定方法 |
+|--------|------|-----|----------|
+| `AWS_REGION` | AWSリージョン | `ap-northeast-1` | Lambda実行環境で自動設定 |
+| `AWS_ACCOUNT_ID` | AWSアカウントID | `123456789012` | IAM Role経由で自動取得 |
+
+### オプション
+
+| 変数名 | 説明 | デフォルト | 用途 |
+|--------|------|-----------|------|
+| `VIDEOS_BUCKET` | 動画アップロード先S3バケット | `thf-motion-scan-videos` | Upload URL生成 |
+| `METRICS_NAMESPACE` | CloudWatch Metricsネームスペース | `THF/MotionScan` | カスタムメトリクス |
+| `STAGE` | （非推奨、ENVIRONMENTを優先） | `dev` | 後方互換性 |
+
+### ローカル開発環境
+
+ローカルでの開発・テスト時は `.env` ファイルで設定：
+
+```bash
+# .env.example （本番値は含めない）
+ENVIRONMENT=dev
+RESULTS_BUCKET=test-results-bucket
+TABLE_NAME=test-table
+JWT_SECRET_KEY=local-test-secret-key-minimum-32-characters
+ALLOWED_ORIGINS=*
+LOG_LEVEL=DEBUG
+```
+
+**SECURITY**: `.env` ファイルは `.gitignore` に追加し、リポジトリにコミット禁止
+
+### デプロイ時の設定方法
+
+**SAM Deploy（初回）**:
+```bash
+sam deploy --guided \
+  --parameter-overrides \
+    Environment=prod \
+    AllowedOrigins="https://thf.wixsite.com,https://thf-prod.com"
+```
+
+**CloudFormation更新**:
+```bash
+aws cloudformation update-stack \
+  --stack-name thf-motion-scan \
+  --parameters \
+    ParameterKey=AllowedOrigins,ParameterValue="https://thf.wixsite.com"
+```
+
+### トラブルシューティング
+
+#### JWT_SECRET_KEY未設定エラー
+```
+ValueError: JWT authentication requires either JWT_SECRET_KEY (local) or JWT_SECRET_NAME (production)
+```
+→ ローカル環境では `JWT_SECRET_KEY` を設定、本番環境では Secrets Manager を設定
+
+#### CORS エラー（本番環境）
+```
+Access to fetch at '...' from origin 'https://...' has been blocked by CORS policy
+```
+→ `ALLOWED_ORIGINS` 環境変数にリクエスト元オリジンを追加
+
+---
+
+## ✅ thresholds.json バリデーション
+
+最新のしきい値ファイルは JSON Schema で検証できます。開発時は以下のワークフローを守ってください。
+
+### 手動検証
+
+```bash
+# 事前に開発用依存をインストール
+pip install -r requirements-dev.txt
+
+# メイン設定ファイルを検証
+python3 scripts/validate.py
+
+# 複数ファイル／ディレクトリをまとめて検証する場合
+python3 scripts/validate.py config/thresholds.json tests/fixtures/thresholds/valid
+```
+
+### フィクスチャでの挙動チェック
+
+```bash
+# 正常ケース（3件）は成功する
+python3 scripts/validate.py tests/fixtures/thresholds/valid
+
+# 異常ケース（10件）は失敗することを確認
+python3 scripts/validate.py --quiet tests/fixtures/thresholds/invalid || echo "expected failure"
+```
+
+### pre-commit フック
+
+`.pre-commit-config.yaml` により `config/thresholds.json` へのコミット前検証が有効化できます。
+
+```bash
+pre-commit install
+# 以後、thresholds.json を変更してコミットすると自動検証が走ります
+```
+
+フックを一時的に無効化したい場合は `SKIP=validate-thresholds git commit ...` を使用してください（緊急時のみ）。
+
+### 失敗時の対処
+
+1. バリデータ出力の `$.tests.xxx...` で報告されたキーを特定  
+2. 該当バンドやメタデータを修正  
+3. `python3 scripts/validate.py` を再実行して通ることを確認  
+4. コミット → CI（Validate Thresholds workflow）の完了を確認
+
+---
+
+## ✅ thresholds_v2 自動生成と検証フロー
+
+Phase 5 では Notion Templates を唯一の真実源とし、`thresholds_v2.json` を自動生成するパイプラインを導入しました。出力は ValidationEngine から `validation_state` を算出するための中間データです。
+
+### ビルド手順
+
+```bash
+python tools/build_thresholds.py \
+  --src tests/fixtures/thresholds_v2/notion_exports/templates_minimal.json \
+  --out config/thresholds_v2.json \
+  --rules-version 0.2.0 \
+  --thresholds-version 2.0.0 \
+  --artifact-sha $(git rev-parse --short HEAD)
+```
+
+- `--dry-run` を付与するとファイル生成せず標準出力に結果を表示  
+- `--normalization-version`（既定値: `none`）で正規化ロジックのバージョンを明示  
+- 標準ログは構造化 JSON（utils.logger）で記録されます
+
+### フィクスチャ検証
+
+| ディレクトリ | 役割 | 内容 |
+|--------------|------|------|
+| `tests/fixtures/thresholds_v2/valid/` | スキーマ準拠サンプル | v2.1固定、基準となる閾値セット |
+| `tests/fixtures/thresholds_v2/warn/` | ガード調整サンプル | warn/invalid境界を微調整した例 |
+| `tests/fixtures/thresholds_v2/invalid/` | 失敗期待 | rules欠落など構造不備 |
+
+CIでは `.github/workflows/validate-thresholds-v2.yml` がこれらのフィクスチャを検証し、`tools/build_thresholds.py --dry-run` を実行してビルドが成功することを保証します。
+
+### トラブルシューティング
+
+1. Notion Export の `templates` 構造を確認（必須キー: `test_code`, `metric`, `unit`, `thresholds`）  
+2. 変換した `config/thresholds_v2.json` を JSON Schema (`schema/thresholds_v2.schema.json`) で再検証  
+3. invalid フィクスチャと同等の違反を起こしていないか比較  
+4. `tools/build_thresholds.py --dry-run --log-level DEBUG` で変換ログを確認
+
+---
+
+## 📦 Result Schema Contracts
+
+- **互換ポリシー**: `schema/rep_result.schema.json` / `schema/session_result.schema.json` / `schema/thresholds_v2.schema.json` は Draft 2020-12 準拠。後方互換を維持したい場合は「任意フィールドの追加」のみに留め、既存キーの型変更・必須化は禁止。破壊的変更を行う場合は `metadata.versions.schema` を MAJOR 更新し、ValidationEngine・Dashboard・CLI を同一リリースウィンドウで展開する。
+- **Non-breaking 例**: `validation.violations[*].hint` のようなオプションフィールド追加、`aggregates.extra_metrics` の追加は OK。**Breaking 例**: `validation.state` 語彙の変更、`versions.artifact_sha` の削除、`rep_index` の型変更など。
+- **マイグレーション注意点**: 既存データで `threshold_version` が欠落している場合は `build_thresholds.py` 出力のメタデータを反映し、ValidationEngine が `validation.state` を再計算できるようにする。CI の schema 検証ジョブ（`tests/fixtures/rep_result/**`, `tests/fixtures/session_result/**`, `tests/fixtures/thresholds_v2/**`）と `tests/test_result_schemas.py` を通過させること。
+- **運用チェックリスト**: 変更前後で `examples/rep_result.sample.json` / `examples/session_result.sample.json` / `tests/fixtures/thresholds_v2/valid/v2_1.json` を `jsonschema --instance` で検証し、`aggregated_scores.valid_rep_count <= total_rep_count` を必須確認。
+- **関連仕様**: Validation Ops Hub「出力ルール＆処方マップ」、Streamlit Dashboard 統合仕様 v2.1、Rep CLI MVP。
+
+---
+
 ## 📜 ライセンス
 
 MIT License（予定）
@@ -748,3 +1325,11 @@ MIT License（予定）
 **Last Updated**: 2025-10-21
 **Version**: Phase 2完了版
 **Protocol**: CLAUDE.md v1.0
+
+
+## 🧭 運用ガードレール (Phase 5)
+
+- CloudWatchダッシュボード: `MotionScan-Ops-<env>` でリクエスト・エラー率・リトライ成功率・DLQ状況を一元監視
+- SNSアラート: `thf-alerts-<env>`（メール、将来Slack連携予定）に 4 種類のアラームを集約
+- Runbook: [docs/runbooks/dlq_redrive.md](docs/runbooks/dlq_redrive.md) にDLQ復旧手順と観測ポイントを記録
+- ツール: `scripts/redrive.py` でガードレールに沿った再投入（メトリクス/停止条件を自動実行）

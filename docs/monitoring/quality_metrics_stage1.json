@@ -1,0 +1,36 @@
+{
+  "generated_at": "2025-11-05T17:44:55.669994+00:00",
+  "data_range": {
+    "cutoff_date": "2025-11-05T00:00:00",
+    "total_records": 1
+  },
+  "detection_rate": {
+    "count": 1,
+    "mean": 1.0,
+    "min": 1.0,
+    "max": 1.0,
+    "p50": 1.0,
+    "p95": 1.0
+  },
+  "quality_score": {
+    "statistics": {
+      "count": 0,
+      "mean": null,
+      "min": null,
+      "max": null,
+      "p50": null,
+      "p95": null
+    },
+    "distribution": {
+      "histogram": {},
+      "percentiles": {}
+    }
+  },
+  "quality_patterns": {
+    "total_count": 1,
+    "is_quality_ok_false_count": 1,
+    "is_quality_ok_false_ratio": 1.0,
+    "recommend_retake_true_count": 0,
+    "recommend_retake_true_ratio": 0.0
+  }
+}

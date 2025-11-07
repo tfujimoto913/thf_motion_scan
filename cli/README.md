@@ -3,6 +3,101 @@
 ## 概要
 
 ローカル環境で動画評価を行うコマンドラインツールです。
+
+**2つのCLIツール:**
+1. **`evaluate.py`**: 既存CLI（AWS Lambda互換、worker.py使用）
+2. **`rep_cli.py`**: Rep CLI MVP（単一動画→rep単位計測・判定、新規実装）
+
+---
+
+# Rep CLI MVP (`rep_cli.py`)
+
+**目的**: 単一動画から rep 単位で「計測→可視化→判定」のエンドツーエンドを最短経路で成立
+
+## 使用例
+
+```bash
+# 基本実行（デフォルト：JSON+CSV出力）
+python cli/rep_cli.py --video test.mp4
+
+# 出力先を指定
+python cli/rep_cli.py --video test.mp4 --out-dir ./output
+
+# CSV出力をOFF
+python cli/rep_cli.py --video test.mp4 --dump-trace false
+```
+
+## フラグ一覧
+
+| フラグ | 説明 | デフォルト | 必須 |
+|--------|------|------------|------|
+| `--video PATH` | 入力動画ファイルパス | - | ✅ |
+| `--out-dir PATH` | 出力ディレクトリ | 入力動画と同階層 | - |
+| `--dump-trace {true,false}` | CSV出力ON/OFF | `true` | - |
+| `--overlay {true,false}` | 画像出力ON/OFF | `true` | - |
+| `--help` | ヘルプ表示 | - | - |
+
+## 出力ファイル
+
+- **`result.json`**: scores, class, versions, static_frames含む
+- **`trace.csv`**: 時系列データ（time, angle_x/y/z, events, class_trace）
+- **`{session_id}_{rep_id}_{type}.jpg` ×3**: 代表フレーム（type: best / worst / repr、--overlay true時）
+- **S3アップロード (任意)**: `THF_FRAME_BUCKET` を設定すると `s3://<bucket>/<session>/<rep>/<type>.jpg` に保存
+
+### result.json 例
+```json
+{
+  "session_id": "uuid",
+  "scores": {"overall": 75.0},
+  "class": "pass",
+  "versions": {
+    "rules_version": "0.1.0",
+    "normalization_version": "none",
+    "artifact_sha": "local-dev"
+  }
+}
+```
+
+## ACチェック
+
+```bash
+# 正常系
+python cli/rep_cli.py --video test_videos/squat/sample.mp4
+# 期待: result.json + trace.csv 生成、エラーなし
+
+# 異常系
+python cli/rep_cli.py --video non_existent.mp4
+# 期待: "動画ファイルが見つかりません" エラー + 次アクション提示
+```
+
+## オーバーレイ仕様
+
+代表フレーム3枚（best/worst/repr）に以下を描画：
+- **肩線**：両肩ランドマークを結ぶ直線（緑）
+- **骨盤線**：左右hip ランドマークを結ぶ直線（青）
+- **体幹軸**：首〜骨盤中心のベクトル（黄）
+- **Class注記**：class（p付き）、例："pass (p=0.92)"
+- **スコア注記**：overall score、例："Score: 75.0"
+
+可視性不足時は描画スキップ＋ flags=["low_visibility"] 付与
+
+### 環境変数
+
+| 変数 | 説明 |
+|------|------|
+| `THF_FRAME_BUCKET` | 静止画をアップロードするS3バケット（未設定時はローカル保存のみ） |
+| `THF_FRAME_PREFIX` | S3キーのプレフィックス（例: `dev/frames`） |
+
+## 制約・今後の改善
+
+- MVP段階：`single_leg_squat` のみ対応
+- トレースデータ：evaluator が frame_data 提供時のみ出力
+- オーバーレイ：回旋矢印未実装（将来対応）
+
+---
+
+# Evaluate CLI (`evaluate.py`)
+
 AWS Lambda環境と同じ評価エンジン（processing/worker.py）を使用し、完全に同じ出力形式で結果を生成します。
 
 ## 特徴

@@ -1,0 +1,229 @@
+# Contract: SNS Notification Message
+# Purpose: Standardized notification payload for WARN/FAIL alerts
+# Version: 1.0.0
+# Last Updated: 2025-11-04
+# Decision Log: ADR-040 (UI Monitoring 2-Tier Alert System)
+
+contract:
+  name: sns_notification
+  version: "1.0.0"
+  content_type: "application/json"
+
+  message_structure:
+    required_keys:
+      - env
+      - overall
+      - source
+      - reason
+      - url
+
+    optional_keys:
+      - timestamp
+      - metadata
+      - severity
+
+  schema:
+    env:
+      type: string
+      description: "Environment identifier"
+      allowed_values: ["dev", "stg", "prod"]
+      example: "prod"
+
+    overall:
+      type: string
+      description: "Overall system state"
+      allowed_values: ["OK", "WARN", "FAIL"]
+      example: "WARN"
+
+    source:
+      type: string
+      description: "Monitoring source that triggered the alert"
+      allowed_values:
+        - "metrics_monitor"     # BCR/kappa/override monitoring
+        - "billing_monitor"     # Cost threshold alerts
+        - "ui_monitor"          # Dashboard performance alerts
+        - "lambda_errors"       # Lambda execution errors
+      example: "metrics_monitor"
+
+    reason:
+      type: string
+      description: "Human-readable reason for the alert"
+      max_length: 500
+      example: "BCR has been in WARN state for 15 consecutive minutes (current: 0.48)"
+
+    url:
+      type: string
+      description: "Deep link to dashboard, runbook, or CloudWatch"
+      format: uri
+      examples:
+        - "https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=MotionScan-Ops-prod"
+        - "https://notion.so/runbooks/rollback-procedure"
+        - "https://streamlit.app/dashboard/monitoring"
+
+    timestamp:
+      type: string
+      format: iso8601
+      description: "Alert generation timestamp (ISO 8601)"
+      example: "2025-11-04T12:34:56.789Z"
+
+    metadata:
+      type: object
+      description: "Additional context (metric values, threshold details, etc.)"
+      example:
+        metric_name: "BCR"
+        current_value: 0.48
+        warn_threshold: 0.5
+        fail_threshold: 0.3
+        duration_minutes: 15
+
+    severity:
+      type: string
+      description: "Alert severity level"
+      allowed_values: ["INFO", "WARN", "FAIL", "CRITICAL"]
+      example: "WARN"
+
+  examples:
+    - name: "BCR WARN Alert"
+      payload:
+        env: "prod"
+        overall: "WARN"
+        source: "metrics_monitor"
+        reason: "BCR has been in WARN state for 15 consecutive minutes (current: 0.48)"
+        url: "https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=MotionScan-Ops-prod"
+        timestamp: "2025-11-04T12:34:56.789Z"
+        severity: "WARN"
+        metadata:
+          metric_name: "BCR"
+          current_value: 0.48
+          warn_threshold: 0.5
+          duration_minutes: 15
+
+    - name: "Billing FAIL Alert"
+      payload:
+        env: "dev"
+        overall: "FAIL"
+        source: "billing_monitor"
+        reason: "Estimated charges exceeded $5 USD (current: $5.23)"
+        url: "https://notion.so/runbooks/billing-emergency-stop"
+        timestamp: "2025-11-04T13:00:00.000Z"
+        severity: "CRITICAL"
+        metadata:
+          current_cost_usd: 5.23
+          fail_threshold_usd: 5.0
+          budget_exceeded_percent: 104.6
+
+    - name: "Recovery to OK"
+      payload:
+        env: "prod"
+        overall: "OK"
+        source: "metrics_monitor"
+        reason: "BCR recovered to normal (current: 0.55)"
+        url: "https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=MotionScan-Ops-prod"
+        timestamp: "2025-11-04T13:15:00.000Z"
+        severity: "INFO"
+        metadata:
+          metric_name: "BCR"
+          current_value: 0.55
+          previous_state: "WARN"
+
+  sns_attributes:
+    - name: "Environment"
+      description: "SNS message attribute for filtering"
+      type: "String"
+      value: "${env}"
+
+    - name: "Severity"
+      description: "SNS message attribute for filtering"
+      type: "String"
+      value: "${severity}"
+
+    - name: "Source"
+      description: "SNS message attribute for filtering"
+      type: "String"
+      value: "${source}"
+
+  handover:
+    topic_management:
+      owner: "DevOps Team"
+      topic_naming: "thf-alerts-<env>"
+      subscription_types:
+        - email
+        - chatops  # Slack/Teams (optional)
+        - mobile   # Future: mobile push notifications
+
+    message_contract:
+      content_type: "application/json"
+      version: 1
+      required_keys: ["env", "overall", "source", "reason", "url"]
+      backward_compatibility: "Version must be incremented for breaking changes"
+
+  acceptance_criteria:
+    - "Message payload contains all required keys"
+    - "JSON is valid and parseable"
+    - "URL is a valid URI"
+    - "env is one of: dev, stg, prod"
+    - "overall is one of: OK, WARN, FAIL"
+    - "SNS message attributes include Environment, Severity, Source"
+
+  future_enhancements:
+    - name: "Filter Policies"
+      description: "Team-specific subscription filtering based on SNS message attributes"
+      use_cases:
+        - "Suppress WARN alerts during off-hours (22:00-08:00 JST)"
+        - "Route billing alerts to FinOps team only"
+        - "Send FAIL/CRITICAL alerts to on-call rotation"
+      implementation:
+        - "Use SNS FilterPolicy with Severity attribute (WARN, FAIL, CRITICAL)"
+        - "Combine Environment + Source attributes for fine-grained routing"
+      example_filter_policy:
+        severity:
+          - "FAIL"
+          - "CRITICAL"
+        environment:
+          - "prod"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-subscription-filter-policies.html"
+
+    - name: "Dead-Letter Queue"
+      description: "Capture undelivered messages for investigation and retry"
+      use_cases:
+        - "Detect email delivery failures (invalid addresses, quota exceeded)"
+        - "Audit notification delivery SLA (target: 99.9%)"
+        - "Manual retry for critical alerts that failed delivery"
+      implementation:
+        - "Create SQS queue: thf-alerts-dlq-<env>"
+        - "Configure SNS subscription redrive policy (maxReceiveCount: 3)"
+        - "CloudWatch Alarm on DLQ depth > 0"
+        - "Lambda for automatic retry or PagerDuty escalation"
+      metrics:
+        - "AWS/SNS: NumberOfNotificationsFailed"
+        - "AWS/SQS: ApproximateNumberOfMessagesVisible (DLQ)"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html"
+
+    - name: "Mobile Push Notifications"
+      description: "Critical alerts (FAIL/CRITICAL only) to mobile devices"
+      use_cases:
+        - "Billing FAIL alert requires immediate action"
+        - "Production system FAIL requires on-call response"
+        - "Bypass email delays for time-sensitive incidents"
+      implementation:
+        - "SNS Platform Application (iOS/Android)"
+        - "Filter Policy: severity=[FAIL, CRITICAL] + env=prod"
+        - "Subscribe on-call device tokens to thf-alerts-prod"
+      cost_estimate: "$0.50 per 1M notifications (SNS Mobile Push pricing)"
+      reference: "https://docs.aws.amazon.com/sns/latest/dg/sns-mobile-application-as-subscriber.html"
+
+    - name: "Batched Notifications"
+      description: "Aggregate multiple alerts into single digest (reduce alert fatigue)"
+      use_cases:
+        - "Send summary every 5 minutes instead of per-event"
+        - "Combine multiple WARN alerts (BCR + Kappa) into single email"
+        - "Daily digest of INFO-level events"
+      implementation:
+        - "SNS → SQS → Lambda aggregator (5-minute EventBridge trigger)"
+        - "Lambda reads SQS batch, groups by severity/source, sends digest"
+        - "Preserve individual alerts for FAIL/CRITICAL (no batching)"
+      tradeoffs:
+        - "Pro: Reduced email volume, better UX for non-critical alerts"
+        - "Con: 5-minute delay for batched WARN alerts"
+        - "Decision: Only batch WARN/INFO, never FAIL/CRITICAL"
+      reference: "Pattern similar to CloudWatch Logs Insights scheduled queries"

@@ -1,0 +1,14 @@
+{
+  "single_leg_squat": {
+    "rules": [
+      {
+        "id": "B4_SIGMA_MIN",
+        "path": "B_principles.eccentric.B4_pelvis_horizontal",
+        "operator": "gte",
+        "value": 3.0,
+        "severity": "WARN",
+        "message": "B4 pelvis horizontal score below Phase0-4 QC gate (>= 3.0)"
+      }
+    ]
+  }
+}

@@ -10,7 +10,21 @@ CRITICAL: Health Check必須実行、warnings.json出力必須
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+from aws_xray_sdk.core import xray_recorder
+
+# PHASE 5: 構造化ロギング（JSON形式）
+from .logger import (
+    log_info,
+    log_warning,
+    log_error,
+    log_processing_start,
+    log_processing_complete,
+    log_quality_check,
+    log_qc_gate,
+    emit_metric,
+    set_processing_context,
+)
 
 from .pose_extractor import PoseExtractor
 from .normalizer import BodyNormalizer
@@ -31,7 +45,9 @@ from .evaluators_v2.push_pull_v2 import PushPullEvaluatorV2
 from .evaluators_v2.jump_landing_v2 import JumpLandingEvaluatorV2
 from .health_check import HealthChecker, apply_random_seed
 from .quality_monitor import QualityMonitor
+from .qc_gate import QCGate
 from .exporters import CSVExporter, PNGPlotter, PDFReporter
+from .rep_detection import detect_single_leg_squat_reps
 
 
 class VideoProcessingWorker:
@@ -93,7 +109,9 @@ class VideoProcessingWorker:
 
         self.health_checker = HealthChecker(config_path)
         self.quality_monitor = QualityMonitor(config_path)  # Phase 1: 品質モニタリング追加
+        self.qc_gate = QCGate(Path("config") / "qc_gate.json")
         self.config_path = config_path
+        self._last_context: Dict[str, Any] = {}
 
     def process_video(self,
                       video_path: str,
@@ -153,80 +171,149 @@ class VideoProcessingWorker:
         if session_id is None:
             session_id = datetime.now().strftime('%Y%m%d-%H%M-X')
 
+        set_processing_context(
+            test_code=test_type,
+            athlete_id=athlete_id,
+            session_id=session_id,
+        )
+
         # PHASE CORE LOGIC: ワークフロー実行
         # 1. ランドマーク抽出
-        print(f"🎥 動画を解析中: {video_path}")
-        print(f"📋 テストタイプ: {test_type}")
+        log_processing_start(str(video_path), test_type)
 
         extraction_result = self.pose_extractor.extract_landmarks(video_path)
+        self._last_context = {
+            "landmarks_sequence": extraction_result["landmarks"],
+            "fps": extraction_result["fps"],
+        }
 
-        print(f"📊 動画情報: {extraction_result['frame_count']}フレーム, "
-              f"{extraction_result['fps']:.1f}fps, "
-              f"{extraction_result['duration']:.1f}秒")
-        print(f"✅ ランドマーク抽出完了: {extraction_result['detected_frames']}フレーム検出")
+        log_info(
+            "Landmark extraction completed",
+            test_type=test_type,
+            context={
+                "frame_count": extraction_result['frame_count'],
+                "fps": round(extraction_result['fps'], 1),
+                "duration": round(extraction_result['duration'], 1),
+                "detected_frames": extraction_result['detected_frames']
+            }
+        )
 
         # CRITICAL: Health Check実行（ADR-004）
         # 2. ランドマーク品質チェック
-        print(f"🔍 品質チェック実行中...")
+        log_info("Quality check in progress", test_type=test_type)
         is_quality_ok, quality_result = self.health_checker.check_landmark_quality(
             extraction_result['landmarks'],
             video_path
         )
 
-        if is_quality_ok:
-            print(f"✅ 品質チェック完了: OK (検出率 {quality_result['detection_rate']:.1%})")
-        else:
-            print(f"⚠️  品質チェック: 低品質データ検出 (検出率 {quality_result['detection_rate']:.1%})")
-
         # PHASE 1: 品質モニタリング実行
-        print(f"📊 品質モニタリング実行中...")
+        log_info("Quality monitoring in progress", test_type=test_type)
         quality_metrics = self.quality_monitor.calculate_quality_metrics(
             extraction_result['landmarks'],
             total_frames=extraction_result['frame_count']
         )
-        print(f"✅ 品質スコア: {quality_metrics['quality_score']}/100")
-        if quality_metrics['recommend_retake']:
-            print(f"⚠️  再撮影推奨: 品質スコアが{self.quality_monitor.quality_score_threshold}点未満です")
+
+        detection_rate = float(quality_result['detection_rate'])
+        quality_score = quality_metrics['quality_score']
+
+        log_quality_check(
+            detection_rate=detection_rate,
+            quality_score=quality_score,
+            test_type=test_type,
+            passed=is_quality_ok and not quality_metrics['recommend_retake']
+        )
+
+        # PHASE CORE LOGIC: CloudWatch Metrics送信
+        # LandmarkDetectionRate: ランドマーク検出率（既存）
+        emit_metric("LandmarkDetectionRate", detection_rate * 100, unit="Percent")
+
+        # QualityScore: 総合品質スコア（新規追加 - Phase 1実装）
+        # 参照: config/monitoring/quality_thresholds.yaml
+        emit_metric("QualityScore", quality_score, unit="None")
+
+        # DetectionRate: フレーム検出率（新規追加 - Phase 1実装）
+        # 注: LandmarkDetectionRateと同一だが、監視用に明示的に送信
+        emit_metric("DetectionRate", detection_rate * 100, unit="Percent")
+
+        if not (is_quality_ok and not quality_metrics['recommend_retake']):
+            emit_metric("LandmarkDetectionFailures", 1)
 
         # 3. 正規化（base_width計算）
-        print(f"📏 ランドマーク正規化中...")
+        log_info("Landmark normalization in progress", test_type=test_type)
         representative_values, _frame_values = self.normalizer.normalize_landmarks_sequence(
             extraction_result['landmarks']
         )
         base_width = representative_values.get('base_width', 1.0)
-        print(f"✅ 正規化完了: base_width={base_width:.3f}")
+        log_info(
+            "Normalization completed",
+            test_type=test_type,
+            context={"base_width": round(base_width, 3)}
+        )
 
         # 4. 評価（バージョン切り替え対応）
-        print(f"📈 評価を実行中... (システムバージョン: {self.scoring_version})")
+        log_info(
+            "Evaluation in progress",
+            test_type=test_type,
+            context={"scoring_version": self.scoring_version}
+        )
 
         # PHASE B: バージョン選択ロジック（ADR-022, ADR-023）
-        if self.scoring_version in ['v2', 'v2.1']:
-            # v2/v2.1: 8原則・560点満点評価システム
-            evaluator = self.evaluators_v2[test_type]
-            evaluation_result = evaluator.evaluate(
-                extraction_result['landmarks'],
-                base_width=base_width,
-                shoulder_width=representative_values.get('shoulder_width', 0.4),
-                leg_length=representative_values.get('leg_length', 0.9)
-            )
-            # CRITICAL: v2システムでは'total_score'を'score'にマッピング
-            score = evaluation_result.get('total_score', 0)
-            max_score = evaluation_result.get('max_possible', 80)
-        else:
-            # v1: 既存システム（7原則・12点満点）
-            evaluator = self.evaluators[test_type]
-            evaluation_result = evaluator.evaluate(
-                extraction_result['landmarks'],
-                base_width=base_width,
-                shoulder_width=representative_values.get('shoulder_width', 0.4),
-                leg_length=representative_values.get('leg_length', 1.0)
-            )
-            score = evaluation_result.get('total', 0)
-            max_score = 12
+        with xray_recorder.in_subsegment('score_calculation') as subsegment:
+            subsegment.put_annotation('scoringVersion', self.scoring_version)
+            subsegment.put_annotation('testCode', test_type)
+            if self.scoring_version in ['v2', 'v2.1']:
+                # v2/v2.1: 8原則・560点満点評価システム
+                evaluator = self.evaluators_v2[test_type]
+                evaluation_result = evaluator.evaluate(
+                    extraction_result['landmarks'],
+                    base_width=base_width,
+                    shoulder_width=representative_values.get('shoulder_width', 0.4),
+                    leg_length=representative_values.get('leg_length', 0.9)
+                )
+                # CRITICAL: v2システムでは'total_score'を'score'にマッピング
+                score = evaluation_result.get('total_score', 0)
+                max_score = evaluation_result.get('max_possible', 80)
+            else:
+                # v1: 既存システム（7原則・12点満点）
+                evaluator = self.evaluators[test_type]
+                evaluation_result = evaluator.evaluate(
+                    extraction_result['landmarks'],
+                    base_width=base_width,
+                    shoulder_width=representative_values.get('shoulder_width', 0.4),
+                    leg_length=representative_values.get('leg_length', 1.0)
+                )
+                score = evaluation_result.get('total', 0)
+                max_score = 12
+            subsegment.put_metadata('score', score, 'motion_scan')
+            subsegment.put_metadata('maxScore', max_score, 'motion_scan')
 
-        print(f"✅ 評価完了: スコア {score:.1f}/{max_score}")
+        log_processing_complete(
+            test_type=test_type,
+            score=round(score, 1),
+            max_score=max_score
+        )
+
+        rep_detection = None
+        if test_type == "single_leg_squat":
+            rep_detection = detect_single_leg_squat_reps(
+                extraction_result["landmarks"],
+                fps=extraction_result["fps"],
+            )
+            if rep_detection and rep_detection.get("reps"):
+                for rep in rep_detection["reps"]:
+                    rep_index = int(rep.get("rep_index", len(rep_detection["reps"])))
+                    rep["rep_id"] = f"{session_id}-{rep_index:03d}"
 
         # 5. 結果をまとめる
+        qc_gate_result = None
+        if self.qc_gate:
+            qc_gate_result = self.qc_gate.evaluate(test_type, evaluation_result)
+            log_qc_gate(
+                test_type=test_type,
+                passed=qc_gate_result["passed"],
+                violations=qc_gate_result.get("violations"),
+            )
+
         result = {
             'video_path': str(video_path),
             'test_type': test_type,
@@ -235,14 +322,18 @@ class VideoProcessingWorker:
             'score': score,  # v1: 'total', v2: 'total_score'
             'max_score': max_score,  # v1: 12, v2: 80
             'evaluation': evaluation_result,
+            'qc_gate': qc_gate_result or {"passed": True, "violations": []},
             'video_info': {
                 'fps': extraction_result['fps'],
                 'frame_count': extraction_result['frame_count'],
                 'duration': extraction_result['duration'],
-                'detected_frames': extraction_result['detected_frames']
+                'detected_frames': extraction_result['detected_frames'],
+                'rotation': extraction_result.get('rotation', 0)  # 自動検出された回転角度
             },
+            'rotation': extraction_result.get('rotation', 0),  # CRITICAL: handler.pyでトップレベル参照
             'health_check': quality_result,
             'quality_metrics': quality_metrics,  # Phase 1: 品質メトリクス追加
+            'rep_detection': rep_detection or {"series": [], "reps": []},
             'processed_at': datetime.now().isoformat()
         }
 
@@ -253,21 +344,33 @@ class VideoProcessingWorker:
                 result, output_dir, athlete_id, session_id, test_type
             )
             result['score_file'] = str(score_path)
-            print(f"💾 score.json保存: {score_path}")
+            log_info(
+                "Results saved to score.json",
+                test_type=test_type,
+                context={"score_path": str(score_path)}
+            )
 
             # CRITICAL: manifest.json更新（ADR-017）
             manifest_path = self._update_manifest(
                 output_dir, athlete_id, session_id, test_type, result['score']
             )
             result['manifest_file'] = str(manifest_path)
-            print(f"📋 manifest.json更新: {manifest_path}")
+            log_info(
+                "Manifest updated",
+                test_type=test_type,
+                context={"manifest_path": str(manifest_path)}
+            )
 
             # CRITICAL: warnings.json出力（ADR-004, ADR-017）
             warnings_dir = Path(output_dir) / 'processed' / athlete_id / session_id
             warnings_path = self.health_checker.save_warnings(
                 str(warnings_dir / 'warnings.json')
             )
-            print(f"⚠️  warnings.json保存: {warnings_path}")
+            log_info(
+                "Warnings saved",
+                test_type=test_type,
+                context={"warnings_path": str(warnings_path)}
+            )
 
             # PHASE 1: quality_log.json保存
             measurement_id = f"{athlete_id}_{session_id}_{test_type}"
@@ -278,7 +381,11 @@ class VideoProcessingWorker:
                 total_frames=extraction_result['frame_count']
             )
             result['quality_log_file'] = str(quality_log_path)
-            print(f"📊 quality_log.json保存: {quality_log_path}")
+            log_info(
+                "Quality log saved",
+                test_type=test_type,
+                context={"quality_log_path": str(quality_log_path)}
+            )
 
             # PHASE CORE LOGIC: 出力形式エクスポート（ADR-011）
             if output_formats:
@@ -286,6 +393,14 @@ class VideoProcessingWorker:
                 result['exported_files'] = exported_files
 
         return result
+
+    def get_last_context(self) -> Dict[str, Any]:
+        """
+        What: Return artifacts from the most recent process_video execution.
+        Why: Downstream handlers (Lambda/CLI) use landmarks for overlay generation.
+        Design Decision: Lightweight accessor instead of mutating result payloads.
+        """
+        return getattr(self, "_last_context", {})
 
     def _export_formats(self, result: Dict, output_dir: str, formats: list) -> Dict[str, str]:
         """
@@ -314,25 +429,46 @@ class VideoProcessingWorker:
                     exporter = CSVExporter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['csv'] = filepath
-                    print(f"📄 CSV出力: {filepath}")
+                    log_info(
+                        f"CSV export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 elif fmt == 'png':
                     exporter = PNGPlotter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['png'] = filepath
-                    print(f"📊 PNG出力: {filepath}")
+                    log_info(
+                        f"PNG export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 elif fmt == 'pdf':
                     exporter = PDFReporter(output_dir)
                     filepath = exporter.export(result, base_filename)
                     exported['pdf'] = filepath
-                    print(f"📋 PDF出力: {filepath}")
+                    log_info(
+                        f"PDF export completed",
+                        test_type=result['test_type'],
+                        context={"filepath": filepath}
+                    )
 
                 else:
-                    print(f"⚠️  未サポート形式: {fmt}")
+                    log_warning(
+                        f"Unsupported format: {fmt}",
+                        test_type=result['test_type'],
+                        context={"format": fmt}
+                    )
 
             except Exception as e:
-                print(f"❌ {fmt}エクスポート失敗: {e}")
+                log_error(
+                    f"{fmt} export failed",
+                    test_type=result['test_type'],
+                    context={"format": fmt},
+                    exc_info=e
+                )
 
         return exported
 

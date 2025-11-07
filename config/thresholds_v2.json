@@ -1,0 +1,38 @@
+{
+  "versions": {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "normalization_version": "1.0.0",
+    "artifact_sha": "local-dev"
+  },
+  "tests": [
+    {
+      "code": "overall_score",
+      "metric": "overall_score",
+      "unit": "score",
+      "direction": "higher",
+      "primary": {
+        "bands": [
+          {
+            "name": "pass",
+            "op": "gte",
+            "value": 60
+          },
+          {
+            "name": "border",
+            "op": "range_inc",
+            "value": [
+              40,
+              60
+            ]
+          },
+          {
+            "name": "fail",
+            "op": "lt",
+            "value": 40
+          }
+        ]
+      }
+    }
+  ]
+}

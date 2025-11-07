@@ -1,0 +1,39 @@
+# Development Environment Overrides
+# Purpose: Relaxed thresholds for development environment
+# Base: config/monitoring/base.yaml
+# Created: 2025-11-04
+# Decision Log: ADR-040 (UI Monitoring System)
+
+environment: dev
+
+# Override billing thresholds (more relaxed for dev)
+billing:
+  cost:
+    warn_threshold: 4.0   # $4 USD
+    fail_threshold: 5.0   # $5 USD
+
+# Override UI performance thresholds (more relaxed for dev)
+ui:
+  render_time_ms:
+    warn_threshold_p75: 1000   # 1000ms (more relaxed than base 800ms)
+    fail_threshold_p90: 1500   # 1500ms (more relaxed than base 1200ms)
+
+  error_rate:
+    warn_threshold_p75: 0.10   # 10% error rate (more relaxed)
+    fail_threshold_p90: 0.20   # 20% error rate
+
+  availability:
+    warn_threshold_percent: 95.0   # 95% uptime (relaxed for dev)
+    fail_threshold_percent: 90.0   # 90% uptime
+
+# Override incident response (longer response times acceptable in dev)
+incident_response:
+  primary_response_minutes: 10   # 10 minutes (vs 5 in base)
+  resolution_target_minutes: 60  # 60 minutes (vs 30 in base)
+
+# Override mini-review triggers (more lenient in dev)
+mini_review:
+  triggers:
+    - condition: "false_positive_rate"
+      threshold: "+30%"   # More relaxed than base (+20%)
+      description: "False positive rate increased by 30%+"

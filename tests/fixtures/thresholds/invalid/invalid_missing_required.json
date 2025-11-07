@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-01-01T00:00:00Z"
+  },
+  "tests": {
+    "jump_landing": {
+      "code": "jump_landing",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 0.2
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.1, 0.19]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.1
+            }
+          ]
+        }
+      }
+    }
+  }
+}

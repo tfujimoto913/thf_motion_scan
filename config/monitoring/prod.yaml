@@ -1,0 +1,23 @@
+# Production environment monitoring overrides
+# Base: config/monitoring/base.yaml
+# Purpose: Stricter thresholds for production environment
+# Created: 2025-11-04
+
+version: "1.0.0"
+environment: prod
+
+# Production: Stricter billing thresholds
+billing:
+  cost:
+    warn_threshold: 3.5  # 70% of budget (earlier warning)
+    fail_threshold: 4.5  # 90% of budget (stricter limit)
+
+# Production: Stricter UI performance requirements
+ui:
+  render_time_ms:
+    warn_threshold_p75: 600   # Faster response required
+    fail_threshold_p90: 1000
+
+  availability:
+    warn_threshold_percent: 99.9  # Higher uptime SLA
+    fail_threshold_percent: 99.0

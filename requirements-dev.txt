@@ -1,0 +1,7 @@
+-r requirements.txt
+jsonschema>=4.21,<5
+pre-commit>=3.6,<4
+black==24.4.2
+ruff==0.4.7
+pytest>=8.0,<9
+pyyaml>=6.0,<7

@@ -1,0 +1,24 @@
+{
+  "templates": [
+    {
+      "test_code": "T02_B2_stability_score",
+      "metric": "stability_score",
+      "unit": "score",
+      "direction": "higher",
+      "thresholds": {
+        "pass": {
+          "op": "gte",
+          "value": 80
+        },
+        "border": {
+          "op": "range_inc",
+          "value": [60, 80]
+        },
+        "fail": {
+          "op": "lt",
+          "value": 60
+        }
+      }
+    }
+  ]
+}

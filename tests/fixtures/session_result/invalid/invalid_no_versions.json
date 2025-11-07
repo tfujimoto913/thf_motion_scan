@@ -1,0 +1,24 @@
+{
+  "session_id": "session-no-versions",
+  "athlete_id": "athlete-012",
+  "test_code": "T06_cross_step",
+  "qc_pass_count": 2,
+  "total_reps": 5,
+  "aggregates": {
+    "best_score": 62.0,
+    "average_score": 55.5
+  },
+  "validation": {
+    "state": "WARN",
+    "violations": [
+      {
+        "category": "compatibility",
+        "field": "thresholds_version",
+        "status": "WARN",
+        "current": "0.9.0",
+        "expected": "1.0.0",
+        "severity": "WARN"
+      }
+    ]
+  }
+}

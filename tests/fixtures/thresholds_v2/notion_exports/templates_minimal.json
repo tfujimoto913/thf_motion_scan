@@ -1,0 +1,23 @@
+{
+  "templates": [
+    {
+      "test_code": "T02_B2",
+      "metric": "bos_mediolateral_excursion_norm",
+      "unit": "norm",
+      "thresholds": {
+        "pass": {
+          "op": "lt",
+          "value": 0.10
+        },
+        "border": {
+          "op": "range_inc",
+          "value": [0.10, 0.18]
+        },
+        "fail": {
+          "op": "gt",
+          "value": 0.18
+        }
+      }
+    }
+  ]
+}

@@ -16,6 +16,149 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: THF Motion Scan - AWS Serverless Application
 
+Parameters:
+  Environment:
+    Type: String
+    Description: Deployment environment identifier.
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Default: dev
+  AlertsEmail:
+    Type: String
+    Description: Email endpoint for thf-alerts topic notifications (leave blank to disable).
+    Default: ''
+  Namespace:
+    Type: String
+    Description: CloudWatch custom metrics namespace.
+    Default: THF/MotionScan
+  AlarmLambdaErrorsThreshold:
+    Type: Number
+    Description: Lambda Errors alarm threshold per 5 minutes.
+    Default: 10
+  AlarmLambdaDurationMaxMs:
+    Type: Number
+    Description: Lambda maximum duration alarm threshold in milliseconds.
+    Default: 300000
+  AlarmDynamoUserErrorsThreshold:
+    Type: Number
+    Description: DynamoDB UserErrors alarm threshold per 5 minutes.
+    Default: 5
+  AlarmLandmarkDetectionFailuresThreshold:
+    Type: Number
+    Description: Landmark detection failure alarm threshold per 5 minutes.
+    Default: 3
+  ResultsTableName:
+    Type: String
+    Description: DynamoDB table name for motion scan results.
+    Default: motion-scan-results
+  RepsTableName:
+    Type: String
+    Description: DynamoDB table name for rep-level artifacts.
+    Default: motion-scan-reps
+  RescoreDefaultThresholdVersion:
+    Type: String
+    Description: Default threshold version used for bulk rescore launcher.
+    Default: v2.1
+  InfoRetentionInDays:
+    Type: Number
+    Description: Retention period for informational logs.
+    Default: 30
+  WarnRetentionInDays:
+    Type: Number
+    Description: Retention period for warning logs.
+    Default: 90
+  ErrorRetentionInDays:
+    Type: Number
+    Description: Retention period for error logs.
+    Default: 180
+  MetricsRetentionInDays:
+    Type: Number
+    Description: Retention period for application metrics logs.
+    Default: 365
+  MonthlyBillingBudgetAmount:
+    Type: Number
+    Description: Monthly budget amount in USD for billing alarms.
+    Default: 5
+  EstimatedChargesWarnUsd:
+    Type: Number
+    Description: Absolute USD amount that triggers the billing WARN alarm.
+    Default: 4
+  EstimatedChargesFailUsd:
+    Type: Number
+    Description: Absolute USD amount that triggers the billing FAIL alarm.
+    Default: 5
+  UnattachedEbsWarnCount:
+    Type: Number
+    Description: Count of unattached EBS volumes before WARN alarm fires.
+    Default: 1
+  UnattachedEbsFailCount:
+    Type: Number
+    Description: Count of unattached EBS volumes before FAIL alarm fires.
+    Default: 2
+  LambdaInvocationsWarn5Min:
+    Type: Number
+    Description: Five-minute total Lambda invocation threshold for WARN alarm.
+    Default: 3000
+  LambdaInvocationsFail5Min:
+    Type: Number
+    Description: Five-minute total Lambda invocation threshold for FAIL alarm.
+    Default: 5000
+  DashboardURL:
+    Type: String
+    Description: Dashboard URL for SNS notification deeplink (threshold editor, monitoring page).
+    Default: 'https://console.aws.amazon.com/cloudwatch/'
+  AutoSuspendRequestThreshold:
+    Type: Number
+    Description: Two-hour aggregated request count threshold that triggers auto-suspend.
+    Default: 1
+  AutoSuspendLookbackHours:
+    Type: Number
+    Description: Lookback window in hours for measuring recent traffic.
+    Default: 2
+  AutoSuspendMetricSources:
+    Type: String
+    Description: JSON array describing CloudWatch metrics that signal recent traffic.
+    Default: '[{"namespace":"AWS/ApiGateway","metric":"Count","dimensions":[{"Name":"ApiName","Value":"thf-api"}]}]'
+  AutoSuspendScheduleExpression:
+    Type: String
+    Description: EventBridge schedule expression for the auto-suspend Lambda.
+    Default: 'cron(0 * * * ? *)'
+  AutoCleanupDryRun:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Description: Whether the EBS cleanup Lambda runs in dry-run mode.
+    Default: 'true'
+  AutoCleanupUnattachedTtlHours:
+    Type: Number
+    Description: Minimum unattached EBS age in hours before cleanup is attempted.
+    Default: 48
+  AutoCleanupScheduleExpression:
+    Type: String
+    Description: EventBridge schedule expression for the EBS cleanup Lambda.
+    Default: 'cron(30 0 * * ? *)'
+  BillingMonitorLogRetentionInDays:
+    Type: Number
+    Description: Retention period in days for structured billing monitor logs.
+    Default: 90
+  AllowedOrigins:
+    Type: String
+    Description: Comma-separated list of allowed CORS origins (use '*' for dev, specific domains for stg/prod).
+    Default: '*'
+
+Conditions:
+  HasAlertsEmail: !Not [!Equals [!Ref AlertsEmail, '']]
+
+Mappings:
+  RescoreConcurrencyMap:
+    dev:
+      MaxConcurrency: 4
+    staging:
+      MaxConcurrency: 8
+    prod:
+      MaxConcurrency: 16
+
 Globals:
   Function:
     Timeout: 900  # 15分（動画処理用）
@@ -24,21 +167,344 @@ Globals:
       Variables:
         RESULTS_BUCKET: !Ref ResultsBucket
         TABLE_NAME: !Ref ResultsTable
+        REPS_TABLE_NAME: !Ref RepsTable
+        ENVIRONMENT: !Ref Environment
+        ALLOWED_ORIGINS: !Ref AllowedOrigins
+        LOG_GROUP_INFO: !Ref ApplicationInfoLogGroup
+        LOG_GROUP_WARN: !Ref ApplicationWarnLogGroup
+        LOG_GROUP_ERROR: !Ref ApplicationErrorLogGroup
+        LOG_GROUP_METRICS: !Ref ApplicationMetricsLogGroup
+        METRICS_NAMESPACE: !Ref Namespace
+    Tracing: Active
 
   # API Gateway設定（Week 1 Lambda用）
+  # NOTE: CORS詳細制御はLambda関数のレスポンスヘッダーで実施（response_utils.py）
+  # SECURITY: AllowedOrigins パラメータで環境別に制限（dev: '*', stg/prod: ホワイトリスト）
   Api:
     Cors:
-      AllowOrigin: "'*'"
+      AllowOrigin: "'*'"  # プリフライトOPTIONSリクエスト用（実際の制御はLambda側）
       AllowHeaders: "'Content-Type,Authorization'"
       AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
 
 Resources:
+  ApplicationInfoLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/thf/motion-scan/${Environment}/logs/info'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  ApplicationWarnLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/thf/motion-scan/${Environment}/logs/warn'
+      RetentionInDays: !Ref WarnRetentionInDays
+
+  ApplicationErrorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/thf/motion-scan/${Environment}/logs/error'
+      RetentionInDays: !Ref ErrorRetentionInDays
+
+  ApplicationMetricsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/thf/motion-scan/${Environment}/logs/metrics'
+      RetentionInDays: !Ref MetricsRetentionInDays
+
   # CloudWatch Logs: Lambda関数ログ保持期間設定（ADR-013）
   ProcessingFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-ProcessingFunction'
-      RetentionInDays: 30
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  TeamManagementFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-TeamManagement'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  PlayerAuthFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-PlayerAuth'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  UploadUrlFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-UploadUrl'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepsQueryFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepsQuery'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  AdminEditFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-AdminEdit'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreLauncherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreLauncher'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreWorker'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreDiffReporterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreDiffReporter'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  RepRescoreDLQRedriveLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-RepRescoreDLQRedrive'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  AutoSuspendFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-AutoSuspend'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  AutoCleanupFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-AutoCleanup'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  BillingGuardFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-BillingGuard'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  MetricsMonitorFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-MetricsMonitor'
+      RetentionInDays: !Ref InfoRetentionInDays
+
+  BillingMonitorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/thf/billing/${Environment}'
+      RetentionInDays: !Ref BillingMonitorLogRetentionInDays
+
+  RepRescoreLauncherFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreLauncherLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreLauncher'
+      Runtime: python3.11
+      Handler: rep_rescore/launcher.lambda_handler
+      CodeUri: lambda/
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ResultsTable
+          STATE_MACHINE_ARN: !GetAtt RepRescoreStateMachine.Arn
+          VERSION_TOGGLE: !Ref RescoreDefaultThresholdVersion
+      Events:
+        RepRescoreApi:
+          Type: Api
+          Properties:
+            Path: /admin/rep-rescore
+            Method: POST
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !GetAtt RepRescoreStateMachine.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+              Resource: !GetAtt ResultsTable.Arn
+
+  RepRescoreWorkerFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreWorkerLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreWorker'
+      Runtime: python3.11
+      Handler: rep_rescore/worker.lambda_handler
+      CodeUri: lambda/
+      Timeout: 120
+      MemorySize: 512
+      ReservedConcurrentExecutions: 20
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ResultsTable
+          DLQ_URL: !Ref RepRescoreDLQ
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt RepRescoreDLQ.Arn
+
+  RepRescoreDiffReporterFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreDiffReporterLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreDiffReporter'
+      Runtime: python3.11
+      Handler: rep_rescore/diff_reporter.lambda_handler
+      CodeUri: lambda/
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          REPORT_BUCKET: !Ref RescoreReportBucket
+          REPORT_PREFIX: 'diffs/'
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RescoreReportBucket
+
+  RepRescoreDLQRedriveFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepRescoreDLQRedriveLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepRescoreDLQRedrive'
+      Runtime: python3.11
+      Handler: rep_rescore/dlq_redrive.lambda_handler
+      CodeUri: lambda/
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          DLQ_URL: !Ref RepRescoreDLQ
+          STATE_MACHINE_ARN: !GetAtt RepRescoreStateMachine.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt RepRescoreDLQ.Arn
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !GetAtt RepRescoreStateMachine.Arn
+
+  # IAM Role for RepRescoreStateMachine
+  # Allows Step Functions to invoke Lambda and send SQS messages
+  RepRescoreStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RepRescoreStateMachinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt RepRescoreWorkerFunction.Arn
+                  - !GetAtt RepRescoreDiffReporterFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt RepRescoreDLQ.Arn
+
+  RepRescoreStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-RepRescore'
+      RoleArn: !GetAtt RepRescoreStateMachineRole.Arn
+      DefinitionString: !Sub
+        - |
+          {
+            "Comment": "THF Motion Scan rep rescore pipeline",
+            "StartAt": "RescoreReps",
+            "States": {
+              "RescoreReps": {
+                "Type": "Map",
+                "ItemsPath": "$.rep_ids",
+                "MaxConcurrency": ${MaxConcurrencyValue},
+                "Iterator": {
+                  "StartAt": "PrepareInput",
+                  "States": {
+                    "PrepareInput": {
+                      "Type": "Pass",
+                      "Parameters": {
+                        "rep_id.$": "$",
+                        "threshold_version.$": "$$.Execution.Input.threshold_version",
+                        "execution_id.$": "$$.Execution.Input.execution_id",
+                        "artifact_sha.$": "$$.Execution.Input.artifact_sha",
+                        "rules_version.$": "$$.Execution.Input.rules_version"
+                      },
+                      "Next": "RescoreWorker"
+                    },
+                    "RescoreWorker": {
+                      "Type": "Task",
+                      "Resource": "${WorkerArn}",
+                      "ResultPath": "$.result",
+                      "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "ResultPath": "$.error",
+                        "Next": "SendToDLQ"
+                      }],
+                      "End": true
+                    },
+                    "SendToDLQ": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::sqs:sendMessage",
+                      "Parameters": {
+                        "QueueUrl": "${DLQUrl}",
+                        "MessageBody.$": "$"
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                "ResultPath": "$.rescore_results",
+                "Next": "GenerateDiffReport"
+              },
+              "GenerateDiffReport": {
+                "Type": "Task",
+                "Resource": "${ReporterArn}",
+                "Parameters": {
+                  "execution_id.$": "$.execution_id",
+                  "threshold_version.$": "$.threshold_version",
+                  "artifact_sha.$": "$.artifact_sha",
+                  "rules_version.$": "$.rules_version",
+                  "results.$": "$.rescore_results"
+                },
+                "ResultPath": "$.report",
+                "End": true
+              }
+            }
+          }
+        - MaxConcurrencyValue: !FindInMap [RescoreConcurrencyMap, !Ref Environment, MaxConcurrency]
+          WorkerArn: !GetAtt RepRescoreWorkerFunction.Arn
+          DLQUrl: !Ref RepRescoreDLQ
+          ReporterArn: !GetAtt RepRescoreDiffReporterFunction.Arn
 
   # S3バケット: アップロード用
   VideosBucket:
@@ -86,6 +552,16 @@ Resources:
               - TransitionInDays: 90
                 StorageClass: GLACIER
 
+  RescoreReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'thf-motion-scan-reports-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   # SQSキュー
   ProcessingQueue:
     Type: AWS::SQS::Queue
@@ -103,6 +579,13 @@ Resources:
     Properties:
       QueueName: thf-motion-scan-dlq
       MessageRetentionPeriod: 1209600  # 14日
+
+  RepRescoreDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'rep-rescore-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 60
 
   # SQSポリシー（S3からの通知を許可）
   QueuePolicy:
@@ -129,7 +612,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-ProcessingFunction'
       PackageType: Image
-      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/thf-motion-scan:latest'
+      ImageUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/thf-motion-scan:v2.1-b1-feedback'
       Architectures:
         - x86_64
       Events:
@@ -145,6 +628,27 @@ Resources:
             BucketName: !Sub 'thf-motion-scan-results-${AWS::AccountId}'
         - DynamoDBCrudPolicy:
             TableName: !Ref ResultsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RepsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
 
   # ==============================================================================
   # Week 1 Lambda Functions（チーム一括受付システム、ADR-018）
@@ -176,6 +680,7 @@ Resources:
   # Lambda関数: チーム管理
   TeamManagementFunction:
     Type: AWS::Serverless::Function
+    DependsOn: TeamManagementFunctionLogGroup
     Properties:
       FunctionName: !Sub '${AWS::StackName}-TeamManagement'
       Runtime: python3.11
@@ -197,6 +702,25 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ResultsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
         - S3CrudPolicy:
             BucketName: !Ref QRCodeBucket
         - Statement:
@@ -204,10 +728,30 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Ref JWTSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
 
   # Lambda関数: 選手認証
   PlayerAuthFunction:
     Type: AWS::Serverless::Function
+    DependsOn: PlayerAuthFunctionLogGroup
     Properties:
       FunctionName: !Sub '${AWS::StackName}-PlayerAuth'
       Runtime: python3.11
@@ -238,10 +782,30 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Ref JWTSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
 
   # Lambda関数: アップロードURL生成
   UploadUrlFunction:
     Type: AWS::Serverless::Function
+    DependsOn: UploadUrlFunctionLogGroup
     Properties:
       FunctionName: !Sub '${AWS::StackName}-UploadUrl'
       Runtime: python3.11
@@ -270,10 +834,77 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Ref JWTSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
+
+  RepsQueryFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RepsQueryFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-RepsQuery'
+      Runtime: python3.11
+      Handler: reps_query/handler.lambda_handler
+      CodeUri: lambda/
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          JWT_SECRET_NAME: thf-jwt-secret
+      Events:
+        ListReps:
+          Type: Api
+          Properties:
+            Path: /reps
+            Method: GET
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref RepsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref JWTSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:DescribeLogStreams
+                - logs:PutLogEvents
+              Resource:
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationInfoLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationWarnLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationErrorLogGroup.Arn }
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt ApplicationMetricsLogGroup.Arn }
 
   # Lambda関数: 管理者用編集（Phase 2.5 - Stage 1）
   AdminEditFunction:
     Type: AWS::Serverless::Function
+    DependsOn: AdminEditFunctionLogGroup
     Properties:
       FunctionName: !Sub '${AWS::StackName}-AdminEdit'
       Runtime: python3.11
@@ -303,7 +934,7 @@ Resources:
   ResultsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: thf-motion-scan-results
+      TableName: !Ref ResultsTableName
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: video_id
@@ -349,6 +980,47 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  RepsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref RepsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # DynamoDBテーブル: メトリクス監視状態管理（Phase 5）
+  # Purpose: BCR/κ/override継続監視のデバウンス状態保持
+  # Decision Log: ADR-040（UI監視2-tier alert設計）
+  MetricsMonitoringStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'metrics-monitoring-state-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: metric_name
+          AttributeType: S
+        - AttributeName: env_version
+          AttributeType: S
+      KeySchema:
+        - AttributeName: metric_name
+          KeyType: HASH
+        - AttributeName: env_version
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   # ==============================================================================
   # CloudWatch Monitoring（監視基盤）
   # Purpose: Lambda処理エラー、パフォーマンス、SQS滞留の早期検知
@@ -360,115 +1032,1143 @@ Resources:
   # ==============================================================================
 
   # SNSトピック: アラーム通知先
-  AlarmTopic:
+  AlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: thf-motion-scan-alarms
-      DisplayName: THF Motion Scan Alarms
-      # CRITICAL: デプロイ後に手動でEmailサブスクリプション追加が必要
-      # aws sns subscribe --topic-arn <ARN> --protocol email --notification-endpoint <email>
+      TopicName: !Sub 'thf-alerts-${Environment}'
+      DisplayName: THF Motion Scan Alerts
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarmsToPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: SNS:Publish
+            Resource: !Ref AlertsTopic
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertsEmail
+    Properties:
+      Endpoint: !Ref AlertsEmail
+      Protocol: email
+      TopicArn: !Ref AlertsTopic
 
   # アラーム1: Lambda実行エラー率
   ProcessingFunctionErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-Lambda-ErrorRate'
-      AlarmDescription: 'Lambda実行エラー率が5%を超過'
+      AlarmName: !Sub 'MotionScan-${Environment}-LambdaErrors'
+      AlarmDescription: 'Lambda Errors ≥ threshold within 5 minutes'
       MetricName: Errors
       Namespace: AWS/Lambda
       Statistic: Sum
       Period: 300  # 5分
-      EvaluationPeriods: 2
-      Threshold: 1  # 5分間に1回以上のエラー
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: !Ref AlarmLambdaErrorsThreshold
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
         - Name: FunctionName
           Value: !Ref ProcessingFunction
       TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref AlarmTopic
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
 
   # アラーム2: Lambda実行時間超過
   ProcessingFunctionDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-Lambda-Duration'
-      AlarmDescription: 'Lambda実行時間が150秒を超過（v2.1想定: 140秒）'
+      AlarmName: !Sub 'MotionScan-${Environment}-LambdaDurationMax'
+      AlarmDescription: 'Lambda Duration (Max) exceeds threshold within 5 minutes'
       MetricName: Duration
-      Namespace: AWS/Lambda
-      Statistic: Average
-      Period: 300  # 5分
-      EvaluationPeriods: 2
-      Threshold: 150000  # 150秒（ミリ秒）
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref ProcessingFunction
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-
-  # アラーム3: Lambdaメモリ使用量超過
-  # CRITICAL: MaxMemoryUsedメトリクスは5分ごとに発行されるため、Period=300推奨
-  ProcessingFunctionMemoryAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub '${AWS::StackName}-Lambda-Memory'
-      AlarmDescription: 'Lambdaメモリ使用量が2400MB（80%）を超過'
-      MetricName: MaxMemoryUsed
       Namespace: AWS/Lambda
       Statistic: Maximum
       Period: 300  # 5分
-      EvaluationPeriods: 2
-      Threshold: 2400  # 3008MB * 0.8 = 2406MB
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: !Ref AlarmLambdaDurationMaxMs
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
         - Name: FunctionName
           Value: !Ref ProcessingFunction
       TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref AlarmTopic
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
 
-  # アラーム4: SQSキュー滞留
-  ProcessingQueueDepthAlarm:
+  # アラーム3: DynamoDB UserErrors検知
+  DynamoUserErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-SQS-QueueDepth'
-      AlarmDescription: 'SQSキューに10件以上のメッセージが滞留'
-      MetricName: ApproximateNumberOfMessagesVisible
-      Namespace: AWS/SQS
-      Statistic: Average
-      Period: 300  # 5分
-      EvaluationPeriods: 2
-      Threshold: 10
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      Dimensions:
-        - Name: QueueName
-          Value: !GetAtt ProcessingQueue.QueueName
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-
-  # アラーム5: デッドレターキュー（DLQ）メッセージ検知
-  DeadLetterQueueAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub '${AWS::StackName}-DLQ-Messages'
-      AlarmDescription: 'DLQに失敗メッセージが到達（3回リトライ後）'
-      MetricName: ApproximateNumberOfMessagesVisible
-      Namespace: AWS/SQS
+      AlarmName: !Sub 'MotionScan-${Environment}-DynamoUserErrors'
+      AlarmDescription: 'DynamoDB UserErrors ≥ threshold within 5 minutes'
+      Namespace: AWS/DynamoDB
+      MetricName: UserErrors
       Statistic: Sum
-      Period: 60  # 1分（即座に通知）
+      Period: 300
       EvaluationPeriods: 1
-      Threshold: 1  # 1件でもアラーム
+      DatapointsToAlarm: 1
+      Threshold: !Ref AlarmDynamoUserErrorsThreshold
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
-        - Name: QueueName
-          Value: !GetAtt DeadLetterQueue.QueueName
+        - Name: TableName
+          Value: !Ref ResultsTable
       TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref AlarmTopic
+        - !Ref AlertsTopic
 
+  # アラーム4: カスタムメトリクス（LandmarkDetectionFailures）
+  LandmarkDetectionFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-LandmarkDetectionFailures'
+      AlarmDescription: 'Landmark detection failures exceed threshold within 5 minutes'
+      Namespace: !Ref Namespace
+      MetricName: LandmarkDetectionFailures
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: !Ref AlarmLandmarkDetectionFailuresThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  BillingEstimatedChargesWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Warn'
+      AlarmDescription: 'Estimated AWS charges have exceeded 80% of the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 0.8
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Billing
+              MetricName: EstimatedCharges
+              Dimensions:
+                - Name: Currency
+                  Value: USD
+            Period: 21600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${MonthlyBillingBudgetAmount}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  BillingEstimatedChargesFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'MotionScan-${Environment}-Billing-Fail'
+      AlarmDescription: 'Estimated AWS charges have reached the configured monthly budget.'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1.0
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: actual
+          MetricStat:
+            Metric:
+              Namespace: AWS/Billing
+              MetricName: EstimatedCharges
+              Dimensions:
+                - Name: Currency
+                  Value: USD
+            Period: 21600
+            Stat: Maximum
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub "actual / ${MonthlyBillingBudgetAmount}"
+          ReturnData: true
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # Dev Billing Guardrails: absolute threshold alarms (us-east-1 deployment)
+  DevEstimatedChargesWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'thf-billing-EstimatedCharges-WARN-${Environment}'
+      AlarmDescription: 'WARN when estimated AWS charges exceed the configured USD threshold.'
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: !Ref EstimatedChargesWarnUsd
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  DevEstimatedChargesFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'thf-billing-EstimatedCharges-FAIL-${Environment}'
+      AlarmDescription: 'FAIL when estimated AWS charges exceed the configured USD threshold.'
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: !Ref EstimatedChargesFailUsd
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  DevUnattachedEbsWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'thf-ebs-unattached-WARN-${Environment}'
+      AlarmDescription: 'WARN when unattached EBS volumes exceed the configured threshold.'
+      Namespace: THF/Billing
+      MetricName: UnattachedEBSCount
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref UnattachedEbsWarnCount
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  DevUnattachedEbsFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'thf-ebs-unattached-FAIL-${Environment}'
+      AlarmDescription: 'FAIL when unattached EBS volumes exceed the configured threshold.'
+      Namespace: THF/Billing
+      MetricName: UnattachedEBSCount
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref UnattachedEbsFailCount
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # ==============================================================================
+  # Lambda Invocations Alarms - TEMPORARILY DISABLED
+  #
+  # Reason: CloudWatch API does not support SEARCH expressions with Period property.
+  # Error: "Period must not be null" occurs with both Expression-based metrics.
+  #
+  # Workaround Options:
+  # 1. Use MetricStat with individual Lambda functions (per-function alarms)
+  # 2. Use custom metrics aggregation
+  # 3. Monitor representative Lambda functions only
+  #
+  # Tracking: To be implemented in Phase 5.1
+  # Decision Log: ADR-040 (UI Monitoring 2-Tier Alert Design)
+  # ==============================================================================
+
+  # DevLambdaInvocationsWarnAlarm: DISABLED (see above)
+  # DevLambdaInvocationsFailAlarm: DISABLED (see above)
+
+  # ==============================================================================
+  # Metrics Monitoring Alarms（BCR/κ/override継続監視）
+  # Decision Log: ADR-040（UI監視2-tier alert設計）
+  # ==============================================================================
+
+  # BCR WARN Alarm (15 consecutive minutes)
+  BCRWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-BCR-WARN-${Environment}'
+      AlarmDescription: 'BCR has been in WARN state for 15 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: BCR
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 15
+      DatapointsToAlarm: 15
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # BCR FAIL Alarm (5 consecutive minutes)
+  BCRFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-BCR-FAIL-${Environment}'
+      AlarmDescription: 'BCR has been in FAIL state for 5 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: BCR
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # Kappa WARN Alarm (15 consecutive minutes)
+  KappaWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-Kappa-WARN-${Environment}'
+      AlarmDescription: 'Kappa has been in WARN state for 15 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: Kappa
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 15
+      DatapointsToAlarm: 15
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # Kappa FAIL Alarm (5 consecutive minutes)
+  KappaFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-Kappa-FAIL-${Environment}'
+      AlarmDescription: 'Kappa has been in FAIL state for 5 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: Kappa
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # OverrideRatio WARN Alarm (15 consecutive minutes)
+  OverrideRatioWarnAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-OverrideRatio-WARN-${Environment}'
+      AlarmDescription: 'OverrideRatio has been in WARN state for 15 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: OverrideRatio
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 15
+      DatapointsToAlarm: 15
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+  # OverrideRatio FAIL Alarm (5 consecutive minutes)
+  OverrideRatioFailAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'Metrics-OverrideRatio-FAIL-${Environment}'
+      AlarmDescription: 'OverrideRatio has been in FAIL state for 5 consecutive minutes'
+      Namespace: !Sub '${Namespace}/Monitoring'
+      MetricName: MonitoringState
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+        - Name: RulesVersion
+          Value: v2.1
+        - Name: MetricName
+          Value: OverrideRatio
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+
+
+  # ==============================================================================
+  # Phase 5: CloudWatch Dashboard（運用監視基盤）
+  # ==============================================================================
+  OperationalDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'MotionScan-Ops-${Environment}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "Requests (24h)",
+                "metrics": [
+                  [
+                    "AWS/Lambda",
+                    "Invocations",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "stat": "Sum",
+                      "period": 3600
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 3600
+              }
+            },
+            {
+              "type": "metric",
+              "x": 6,
+              "y": 0,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Error Rate (1h)",
+                "metrics": [
+                  [
+                    {
+                      "expression": "IF(m2>0,m1/m2*100,0)",
+                      "label": "Error Rate (%)",
+                      "id": "e1"
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Errors",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "id": "m1",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Invocations",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "id": "m2",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Error Rate (%)",
+                    "min": 0,
+                    "max": 100
+                  }
+                },
+                "annotations": {
+                  "horizontal": [
+                    {
+                      "value": 10,
+                      "label": "Alarm Threshold",
+                      "color": "#d13212"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "Duration Percentiles",
+                "metrics": [
+                  [
+                    "AWS/Lambda",
+                    "Duration",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "stat": "p50",
+                      "label": "P50"
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Duration",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "stat": "p95",
+                      "label": "P95"
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Duration",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "stat": "p99",
+                      "label": "P99"
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 18,
+              "y": 0,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "Uptime",
+                "metrics": [
+                  [
+                    {
+                      "expression": "IF(m2>0,(1-m1/m2)*100,100)",
+                      "label": "Uptime (%)",
+                      "id": "e1"
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Errors",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "id": "m1",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ],
+                  [
+                    "AWS/Lambda",
+                    "Invocations",
+                    "FunctionName",
+                    "${ProcessingFunction}",
+                    {
+                      "id": "m2",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Uptime (%)",
+                    "min": 0,
+                    "max": 100
+                  }
+                },
+                "annotations": {
+                  "horizontal": [
+                    {
+                      "value": 99,
+                      "label": "SLO",
+                      "color": "#2ca02c"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u89e3\u6790\u5b8c\u4e86\u6570 (24h)",
+                "metrics": [
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    {
+                      "stat": "Sum",
+                      "period": 3600,
+                      "label": "Completed"
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 3600
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u30c6\u30b9\u30c8\u5225\u5229\u7528\u72b6\u6cc1",
+                "metrics": [
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "single_leg_squat",
+                    {
+                      "stat": "Sum",
+                      "label": "SingleLegSquat"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "upper_body_swing",
+                    {
+                      "stat": "Sum",
+                      "label": "UpperBodySwing"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "skater_lunge",
+                    {
+                      "stat": "Sum",
+                      "label": "SkaterLunge"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "cross_step",
+                    {
+                      "stat": "Sum",
+                      "label": "CrossStep"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "stride_mimic",
+                    {
+                      "stat": "Sum",
+                      "label": "StrideMimic"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "push_pull",
+                    {
+                      "stat": "Sum",
+                      "label": "PushPull"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "AnalysesCompleted",
+                    "Environment",
+                    "${Environment}",
+                    "TestCode",
+                    "jump_landing",
+                    {
+                      "stat": "Sum",
+                      "label": "JumpLanding"
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": true,
+                "region": "${AWS::Region}",
+                "period": 3600
+              }
+            },
+            {
+              "type": "log",
+              "x": 16,
+              "y": 6,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u30b9\u30b3\u30a2\u5206\u5e03 (0-3)",
+                "query": "SOURCE '${ApplicationInfoLogGroup}' | filter environment = '${Environment}' and level = 'INFO' and ispresent(score) | stats count(*) as samples by floor(score) as score_bucket | sort score_bucket asc",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u30a8\u30e9\u30fc\u30bf\u30a4\u30d7\u5225\u4ef6\u6570",
+                "query": "SOURCE '${ApplicationErrorLogGroup}' | filter environment = '${Environment}' | parse error.type as error_type | stats count(*) as errors by error_type | sort errors desc",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 8,
+              "y": 12,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u6700\u591a\u30a8\u30e9\u30fc\u95a2\u6570",
+                "query": "SOURCE '${ApplicationErrorLogGroup}' | filter environment = '${Environment}' | stats count(*) as errors by function_name | sort errors desc | limit 10",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16,
+              "y": 12,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "\u30ea\u30c8\u30e9\u30a4\u6210\u529f\u7387",
+                "metrics": [
+                  [
+                    {
+                      "expression": "IF(m1+m2>0,m1/(m1+m2)*100,0)",
+                      "label": "Success Rate (%)",
+                      "id": "e1"
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "RedriveSuccessCount",
+                    "Environment",
+                    "${Environment}",
+                    {
+                      "id": "m1",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ],
+                  [
+                    "${Namespace}",
+                    "RedriveFailureCount",
+                    "Environment",
+                    "${Environment}",
+                    {
+                      "id": "m2",
+                      "stat": "Sum",
+                      "period": 300
+                    }
+                  ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Success Rate (%)",
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 18,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "ERROR\u4ef6\u6570\u63a8\u79fb",
+                "query": "SOURCE '${ApplicationErrorLogGroup}' | filter environment = '${Environment}' | stats count(*) as errors by bin(5m)",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 6,
+              "y": 18,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "\u89e3\u6790\u6642\u9593\u5206\u5e03",
+                "query": "SOURCE '${ApplicationInfoLogGroup}' | filter environment = '${Environment}' and ispresent(execution_time_ms) | stats pct(execution_time_ms, 50) as p50, pct(execution_time_ms, 95) as p95, pct(execution_time_ms, 99) as p99 by bin(5m)",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 12,
+              "y": 18,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "\u691c\u51fa\u7387\u30e9\u30f3\u30ad\u30f3\u30b0",
+                "query": "SOURCE '${ApplicationMetricsLogGroup}' | filter environment = '${Environment}' and metric_name = 'LandmarkDetectionRate' | stats avg(metric_value) as avg_rate by test_code | sort avg_rate desc | limit 10",
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "log",
+              "x": 18,
+              "y": 18,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "title": "testCode\u5225\u5229\u7528\u72b6\u6cc1",
+                "query": "SOURCE '${ApplicationInfoLogGroup}' | filter environment = '${Environment}' and ispresent(test_code) | stats count(*) as requests by test_code | sort requests desc",
+                "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
+  # ==============================================================================
+  # Billing Guardrails（Auto Suspend / Cleanup / Billing Guard）
+  # ==============================================================================
+
+  AutoSuspendFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - AutoSuspendFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-AutoSuspend'
+      CodeUri: lambda/
+      Runtime: python3.11
+      Handler: billing/auto_suspend.handler
+      Timeout: 180
+      MemorySize: 512
+      Environment:
+        Variables:
+          REQ_THRESHOLD: !Ref AutoSuspendRequestThreshold
+          LOOKBACK_H: !Ref AutoSuspendLookbackHours
+          METRIC_SOURCES: !Ref AutoSuspendMetricSources
+          BILLING_LOG_GROUP: !Ref BillingMonitorLogGroup
+          AUTOSUSPEND_TAG_KEY: AutoSuspend
+          AUTOSUSPEND_TAG_VALUE: 'true'
+          ENVIRONMENT: !Ref Environment
+      Events:
+        AutoSuspendSchedule:
+          Type: Schedule
+          Properties:
+            Name: auto-suspend-hourly
+            Schedule: !Ref AutoSuspendScheduleExpression
+            Enabled: true
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricStatistics
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:StopInstances
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:ListFunctions
+                - lambda:ListTags
+                - lambda:GetFunctionConfiguration
+                - lambda:PutFunctionConcurrency
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:ListRuleNamesByTarget
+                - events:DisableRule
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - !GetAtt BillingMonitorLogGroup.Arn
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt BillingMonitorLogGroup.Arn }
+
+  AutoCleanupFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - AutoCleanupFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-AutoCleanup'
+      CodeUri: lambda/
+      Runtime: python3.11
+      Handler: billing/auto_cleanup.handler
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          SNS_ARN: !Ref AlertsTopic
+          DRY_RUN: !Ref AutoCleanupDryRun
+          UNATTACHED_TTL_H: !Ref AutoCleanupUnattachedTtlHours
+          BILLING_LOG_GROUP: !Ref BillingMonitorLogGroup
+          AUTOCLEANUP_TAG_KEY: AutoCleanup
+          AUTOCLEANUP_TAG_VALUE: allow
+          ENVIRONMENT: !Ref Environment
+      Events:
+        AutoCleanupSchedule:
+          Type: Schedule
+          Properties:
+            Name: auto-cleanup-schedule
+            Schedule: !Ref AutoCleanupScheduleExpression
+            Enabled: true
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeVolumes
+                - ec2:CreateSnapshot
+                - ec2:CreateTags
+                - ec2:DeleteVolume
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                - !Ref AlertsTopic
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - !GetAtt BillingMonitorLogGroup.Arn
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt BillingMonitorLogGroup.Arn }
+
+  BillingGuardFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - BillingGuardFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-BillingGuard'
+      CodeUri: lambda/
+      Runtime: python3.11
+      Handler: billing/billing_guard.handler
+      Timeout: 180
+      MemorySize: 512
+      Environment:
+        Variables:
+          BILLING_LOG_GROUP: !Ref BillingMonitorLogGroup
+          AUTOSUSPEND_TAG_KEY: AutoSuspend
+          AUTOSUSPEND_TAG_VALUE: 'true'
+          ENVIRONMENT: !Ref Environment
+      Events:
+        BillingFailAlert:
+          Type: SNS
+          Properties:
+            Topic: !Ref AlertsTopic
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:StopInstances
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:ListFunctions
+                - lambda:ListTags
+                - lambda:GetFunctionConfiguration
+                - lambda:PutFunctionConcurrency
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:ListRuleNamesByTarget
+                - events:DisableRule
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - !GetAtt BillingMonitorLogGroup.Arn
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt BillingMonitorLogGroup.Arn }
+
+  # ==============================================================================
+  # Metrics Monitoring（BCR/κ/override継続監視）
+  # ==============================================================================
+
+  MetricsMonitorFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - MetricsMonitorFunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-MetricsMonitor'
+      CodeUri: lambda/
+      Runtime: python3.11
+      Handler: monitoring/metrics_monitor.handler
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          METRICS_NAMESPACE: !Ref Namespace
+          STATE_TABLE_NAME: !Ref MetricsMonitoringStateTable
+          SNS_TOPIC_ARN: !Ref AlertsTopic
+          ENVIRONMENT: !Ref Environment
+          RULES_VERSION: v2.1
+          DASHBOARD_URL: !Ref DashboardURL
+      Events:
+        MetricsMonitorSchedule:
+          Type: Schedule
+          Properties:
+            Name: metrics-monitor-1min
+            Schedule: 'rate(1 minute)'
+            Enabled: true
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricStatistics
+              Resource: '*'
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MetricsMonitoringStateTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                - !Ref AlertsTopic
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - !GetAtt MetricsMonitorFunctionLogGroup.Arn
+                - !Sub
+                  - '${LogGroupArn}:*'
+                  - { LogGroupArn: !GetAtt MetricsMonitorFunctionLogGroup.Arn }
 Outputs:
   # 既存リソース
   VideosBucketName:
@@ -500,6 +2200,12 @@ Outputs:
     Value: !Ref ResultsTable
     Export:
       Name: !Sub '${AWS::StackName}-TableName'
+
+  RepsTableNameOutput:
+    Description: "DynamoDBテーブル名（repレベル）"
+    Value: !Ref RepsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-RepsTableName'
 
   # Week 1リソース
   QRCodeBucketName:
@@ -538,15 +2244,69 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-UploadUrlArn'
 
+  RepsQueryFunctionArn:
+    Description: "Rep一覧取得Lambda関数ARN"
+    Value: !GetAtt RepsQueryFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RepsQueryArn'
+
   AdminEditFunctionArn:
     Description: "管理者用編集Lambda関数ARN（Phase 2.5 - Stage 1）"
     Value: !GetAtt AdminEditFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-AdminEditArn'
 
-  # CloudWatch Monitoring
-  AlarmTopicArn:
-    Description: "SNSトピックARN（アラーム通知）- Emailサブスクリプション設定が必要"
-    Value: !Ref AlarmTopic
+  RepRescoreStateMachineArn:
+    Description: "Step Functions State Machine ARN for rep rescoring"
+    Value: !GetAtt RepRescoreStateMachine.Arn
     Export:
-      Name: !Sub '${AWS::StackName}-AlarmTopic'
+      Name: !Sub '${AWS::StackName}-RepRescoreStateMachineArn'
+
+  RepRescoreLauncherFunctionArn:
+    Description: "Launcher Lambda ARN for rep rescore workflow"
+    Value: !GetAtt RepRescoreLauncherFunction.Arn
+
+  RepRescoreReportBucketName:
+    Description: "S3 bucket storing rescore difference reports"
+    Value: !Ref RescoreReportBucket
+
+  RepRescoreDLQUrl:
+    Description: "SQS dead-letter queue URL for rep rescore workflow"
+    Value: !Ref RepRescoreDLQ
+
+  # CloudWatch Monitoring
+  AlertsTopicArn:
+    Description: "SNSトピックARN（アラーム通知）"
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-AlertsTopic'
+
+  AutoSuspendFunctionArn:
+    Description: "自動サスペンドLambda ARN"
+    Value: !GetAtt AutoSuspendFunction.Arn
+
+  AutoCleanupFunctionArn:
+    Description: "EBS自動クリーンアップLambda ARN"
+    Value: !GetAtt AutoCleanupFunction.Arn
+
+  BillingGuardFunctionArn:
+    Description: "Billing Guard Lambda ARN"
+    Value: !GetAtt BillingGuardFunction.Arn
+
+  BillingMonitorLogGroupName:
+    Description: "Billing監視用の構造化ロググループ名"
+    Value: !Ref BillingMonitorLogGroup
+
+  DashboardUrl:
+    Description: "CloudWatch Dashboard URL（運用監視）"
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=MotionScan-Ops-${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardUrl'
+
+  MetricsMonitorFunctionArn:
+    Description: "Metrics Monitor Lambda ARN"
+    Value: !GetAtt MetricsMonitorFunction.Arn
+
+  MetricsMonitoringStateTableName:
+    Description: "DynamoDB table name for metrics monitoring state"
+    Value: !Ref MetricsMonitoringStateTable

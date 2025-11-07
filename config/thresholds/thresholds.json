@@ -1,0 +1,53 @@
+{
+  "schema_version": "2.0",
+  "versions": {
+    "thresholds_json": "2.0.0",
+    "scoring_engine": "1.6.3",
+    "dashboard": "2.1.0"
+  },
+  "tests": {
+    "SLS": {
+      "metrics": {
+        "B4.pelvis_drop_deg": {
+          "unit": "deg",
+          "banding": "three_tier_half_open",
+          "by_side": true,
+          "left": {
+            "ok": [0, 10],
+            "attn": [10, 18],
+            "ng": [18, 90]
+          },
+          "right": {
+            "ok": [0, 10],
+            "attn": [10, 18],
+            "ng": [18, 90]
+          }
+        }
+      }
+    },
+    "JUMP_LANDING": {
+      "metrics": {
+        "B2.knee_valgus_deg": {
+          "unit": "deg",
+          "banding": "three_tier_half_open",
+          "by_side": false,
+          "ok": [0, 12],
+          "attn": [12, 20],
+          "ng": [20, 90]
+        }
+      }
+    },
+    "CROSSOVER": {
+      "metrics": {
+        "C1.skate_width_ratio": {
+          "unit": "ratio",
+          "banding": "three_tier_half_open",
+          "by_side": false,
+          "ok": [0.9, 1.2],
+          "attn": [1.2, 1.4],
+          "ng": [1.4, 3.0]
+        }
+      }
+    }
+  }
+}

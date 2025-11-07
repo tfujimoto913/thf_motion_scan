@@ -1,0 +1,66 @@
+{
+  "versions": {
+    "rules_version": "v1.2.3",
+    "normalization_version": "v0.4.0",
+    "artifact_sha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-03-15T12:34:56Z",
+    "notes": "Covers two tests with different operator combinations."
+  },
+  "tests": {
+    "skater_lunge": {
+      "code": "skater_lunge",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gt",
+              "value": 1.8
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [1.2, 1.8]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 1.2
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "lateral"],
+      "refs": ["ADR-023"],
+      "notes": "Validated against season 2025 dataset."
+    },
+    "jump_landing": {
+      "code": "jump_landing",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 0.2
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.1, 0.19]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.1
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "eccentric"]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "athlete_id": "ath-0001",
+  "session_id": "20240301-0800-A",
+  "test_code": "T01_single_leg_squat",
+  "ai_score": 78.5,
+  "human_score": 82.0,
+  "override_flag": true,
+  "reviewer": "coach_123",
+  "rules_version": "v2.1.0",
+  "artifact_sha": "local-dev",
+  "created_at": "2024-03-01T08:30:00Z",
+  "notes": [
+    "左膝のランドマーク検出にブレがあるため手動補正",
+    "Override 理由: コーチ評価 82 > AI 78.5"
+  ]
+}

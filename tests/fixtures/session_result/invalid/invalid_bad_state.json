@@ -1,0 +1,20 @@
+{
+  "session_id": "session-bad-state",
+  "athlete_id": "athlete-011",
+  "test_code": "T05_skater_lunge",
+  "qc_pass_count": 1,
+  "total_reps": 4,
+  "aggregates": {
+    "best_score": 60.0,
+    "average_score": 52.0
+  },
+  "versions": {
+    "rules_version": "2.0.0",
+    "thresholds_version": "1.0.0",
+    "artifact_sha": "local-dev"
+  },
+  "validation": {
+    "state": "PENDING",
+    "violations": []
+  }
+}

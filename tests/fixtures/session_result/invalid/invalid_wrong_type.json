@@ -1,0 +1,20 @@
+{
+  "session_id": "session-wrong-type",
+  "athlete_id": "athlete-013",
+  "test_code": "T07_stride_mimic",
+  "qc_pass_count": "three",
+  "total_reps": 3,
+  "aggregates": {
+    "best_score": 70.0,
+    "average_score": 64.3
+  },
+  "versions": {
+    "rules_version": "2.1.0",
+    "thresholds_version": "1.0.0",
+    "artifact_sha": "local-dev"
+  },
+  "validation": {
+    "state": "OK",
+    "violations": []
+  }
+}

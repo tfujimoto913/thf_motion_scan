@@ -1,0 +1,204 @@
+{
+  "versions": {
+    "rules_version": "v0.1.0",
+    "thresholds_version": "v0.1.0",
+    "normalization_version": "none",
+    "artifact_sha": "local-dev"
+  },
+  "metadata": {
+    "schema_version": "1.0.0",
+    "updated_at": "2025-11-02T00:00:00Z",
+    "notes": "Initial version - placeholder thresholds for MVP. To be updated with validated thresholds from cross_step_mimic validation templates (ADR-023)."
+  },
+  "tests": {
+    "single_leg_squat": {
+      "code": "single_leg_squat",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 80
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [60, 79]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 60
+            }
+          ]
+        }
+      },
+      "features": ["bilateral"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: knee flexion depth threshold (degrees)"
+    },
+    "skater_lunge": {
+      "code": "skater_lunge",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 1.5
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [1.0, 1.49]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 1.0
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "lateral"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: step width ratio threshold (normalized to shoulder width)"
+    },
+    "stride_mimic": {
+      "code": "stride_mimic",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "range_inc",
+              "value": [60, 90]
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [45, 59]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 45
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "dynamic"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: knee flexion range threshold (degrees)"
+    },
+    "jump_landing": {
+      "code": "jump_landing",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 0.15
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.10, 0.14]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.10
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "eccentric"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: jump height ratio threshold (normalized to body height)"
+    },
+    "upper_body_swing": {
+      "code": "upper_body_swing",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 90
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [60, 89]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 60
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "rotation"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: trunk rotation range threshold (degrees)"
+    },
+    "push_pull": {
+      "code": "push_pull",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 0.8
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.5, 0.79]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.5
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "anterior_posterior"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: push distance ratio threshold (normalized to shoulder width)"
+    },
+    "cross_step": {
+      "code": "cross_step",
+      "thresholds": {
+        "primary": {
+          "bands": [
+            {
+              "name": "pass",
+              "op": "gte",
+              "value": 1.2
+            },
+            {
+              "name": "border",
+              "op": "range_inc",
+              "value": [0.8, 1.19]
+            },
+            {
+              "name": "fail",
+              "op": "lt",
+              "value": 0.8
+            }
+          ]
+        }
+      },
+      "features": ["bilateral", "lateral", "rotation"],
+      "refs": ["ADR-023"],
+      "notes": "Placeholder: cross distance ratio threshold (normalized to shoulder width)"
+    }
+  }
+}
