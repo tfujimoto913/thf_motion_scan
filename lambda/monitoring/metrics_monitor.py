@@ -66,27 +66,43 @@ WARN_DEBOUNCE_MINUTES = 15
 FAIL_DEBOUNCE_MINUTES = 5
 
 # Metric definitions with thresholds
+# NOTE: BCR/Kappa/OverrideRatio are design-only (no CloudWatch data)
+#       LandmarkDetectionRate is implemented and monitored
+# Reference: config/monitoring/quality_thresholds.yaml
 METRICS_CONFIG = [
+    {
+        "metric_name": "LandmarkDetectionRate",
+        "cloudwatch_metric": "LandmarkDetectionRate",
+        "warn_threshold": 95.0,  # P95-based threshold (actual: 100%)
+        "fail_threshold": 90.0,  # 10% degradation threshold
+        "comparison": "less_than",  # Lower is worse
+        "enabled": True,  # CRITICAL: This metric is actively sent by worker.py
+    },
+    # Design-only metrics (CloudWatch data not available)
+    # TODO: Implement CloudWatch metric emission for these in future tasks
     {
         "metric_name": "BCR",
         "cloudwatch_metric": "BalancedCorrectRate",
         "warn_threshold": 0.5,
         "fail_threshold": 0.3,
-        "comparison": "less_than",  # BCR lower is worse
+        "comparison": "less_than",
+        "enabled": False,  # CRITICAL: No CloudWatch data (requires Ground Truth)
     },
     {
         "metric_name": "Kappa",
         "cloudwatch_metric": "CohenKappa",
         "warn_threshold": 0.3,
         "fail_threshold": 0.2,
-        "comparison": "less_than",  # Kappa lower is worse
+        "comparison": "less_than",
+        "enabled": False,  # CRITICAL: No CloudWatch data (requires Ground Truth)
     },
     {
         "metric_name": "OverrideRatio",
         "cloudwatch_metric": "OverrideRatio",
         "warn_threshold": 30.0,
         "fail_threshold": 50.0,
-        "comparison": "greater_than",  # Override higher is worse
+        "comparison": "greater_than",
+        "enabled": False,  # CRITICAL: No CloudWatch data (requires Ground Truth)
     },
 ]
 
@@ -507,6 +523,11 @@ def handler(event, context):
     for metric_config in METRICS_CONFIG:
         metric_name = metric_config["metric_name"]
         cw_metric = metric_config["cloudwatch_metric"]
+
+        # Skip disabled metrics (no CloudWatch data available)
+        if not metric_config.get("enabled", True):
+            print(f"Skipping {metric_name} (disabled - no CloudWatch data)")
+            continue
 
         # 1. Fetch metric from CloudWatch
         value = fetch_metric_from_cloudwatch(cw_metric)

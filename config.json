@@ -3,6 +3,7 @@
     "confidence_min": 0.7,
     "joint_distance_max": 150,
     "frame_skip_tolerance": 3,
+    "low_visibility_frames_ratio": 0.35,
     "T01_single_leg_squat": {
       "execution": {
         "knee_flexion": {

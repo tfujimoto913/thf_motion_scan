@@ -1,0 +1,101 @@
+{
+  "generated_at": "2025-11-05T17:51:27.223596+00:00",
+  "data_range": {
+    "cutoff_date": "2025-11-01",
+    "total_records": 26
+  },
+  "detection_rate": {
+    "count": 26,
+    "mean": 1.0,
+    "min": 1.0,
+    "max": 1.0,
+    "p50": 1.0,
+    "p95": 1.0
+  },
+  "quality_score": {
+    "statistics": {
+      "count": 26,
+      "mean": 87.3076923076923,
+      "min": 81.0,
+      "max": 95.0,
+      "p50": 86.0,
+      "p95": 93.0
+    },
+    "distribution": {
+      "histogram": {
+        "0-10": 0,
+        "10-20": 0,
+        "20-30": 0,
+        "30-40": 0,
+        "40-50": 0,
+        "50-60": 0,
+        "60-70": 0,
+        "70-80": 0,
+        "80-90": 20,
+        "90-100": 6
+      },
+      "percentiles": {
+        "p10": 85.0,
+        "p25": 85.0,
+        "p50": 86.0,
+        "p75": 88.75,
+        "p90": 92.5
+      }
+    }
+  },
+  "quality_patterns": {
+    "total_count": 26,
+    "is_quality_ok_false_count": 15,
+    "is_quality_ok_false_ratio": 0.5769230769230769,
+    "recommend_retake_true_count": 0,
+    "recommend_retake_true_ratio": 0.0
+  },
+  "low_quality_top3": [
+    {
+      "video_id": "/tmp/tmp7oe443l8.mp4",
+      "quality_score": 81,
+      "detection_rate": 1.0,
+      "is_quality_ok": true,
+      "recommend_retake": false,
+      "warnings": [
+        "High frame loss rate"
+      ],
+      "test_type": "stride_mimic",
+      "landmark_visibility_avg": 0.8932770992444705,
+      "frame_completeness": 0.7613378684807256,
+      "low_visibility_frames": 96,
+      "total_frames": 1343
+    },
+    {
+      "video_id": "/tmp/tmpnkvxb3r1.mp4",
+      "quality_score": 84,
+      "detection_rate": 1.0,
+      "is_quality_ok": false,
+      "recommend_retake": false,
+      "warnings": [],
+      "test_type": "stride_mimic",
+      "landmark_visibility_avg": 0.7508675156246489,
+      "frame_completeness": 0.9083191850594228,
+      "low_visibility_frames": 886,
+      "total_frames": 2140
+    },
+    {
+      "video_id": "/tmp/tmpafd1raac.mp4",
+      "quality_score": 85,
+      "detection_rate": 1.0,
+      "is_quality_ok": true,
+      "recommend_retake": false,
+      "warnings": [
+        "High frame loss rate"
+      ],
+      "test_type": "single_leg_squat",
+      "landmark_visibility_avg": 0.8966524776820102,
+      "frame_completeness": 0.8310588235294117,
+      "low_visibility_frames": 45,
+      "total_frames": 1766
+    }
+  ],
+  "recommend_retake_causes": {
+    "High frame loss rate": 16
+  }
+}

@@ -51,6 +51,10 @@ class HealthChecker:
         # 閾値取得
         self.confidence_min = self.config['thresholds']['confidence_min']
         self.frame_skip_tolerance = self.config['thresholds']['frame_skip_tolerance']
+        # Phase 3: is_quality_ok判定改善（統計分析に基づく閾値緩和）
+        # 参照: docs/monitoring/quality_metrics_analysis.md
+        # 根拠: 統計P75（30.7%）を許容、0.2→0.35に緩和
+        self.low_visibility_frames_ratio = self.config['thresholds'].get('low_visibility_frames_ratio', 0.35)
 
         # warnings履歴
         self.warnings: List[Dict] = []
@@ -112,12 +116,13 @@ class HealthChecker:
 
         # CRITICAL: frame_skip_tolerance検証（ADR-004）
         # CRITICAL: total_frames=0の場合はis_quality_ok=False
+        # Phase 3: low_visibility_frames_ratio閾値をconfig.jsonから取得（0.35）
         if total_frames == 0:
             is_quality_ok = False
         else:
             is_quality_ok = (
                 skip_rate <= (self.frame_skip_tolerance / total_frames) and
-                (low_visibility_frames / total_frames) < 0.2
+                (low_visibility_frames / total_frames) < self.low_visibility_frames_ratio
             )
 
         result = {

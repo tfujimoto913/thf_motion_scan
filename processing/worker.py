@@ -10,7 +10,7 @@ CRITICAL: Health Check必須実行、warnings.json出力必須
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from aws_xray_sdk.core import xray_recorder
 
 # PHASE 5: 構造化ロギング（JSON形式）
@@ -214,13 +214,27 @@ class VideoProcessingWorker:
         )
 
         detection_rate = float(quality_result['detection_rate'])
+        quality_score = quality_metrics['quality_score']
+
         log_quality_check(
             detection_rate=detection_rate,
-            quality_score=quality_metrics['quality_score'],
+            quality_score=quality_score,
             test_type=test_type,
             passed=is_quality_ok and not quality_metrics['recommend_retake']
         )
+
+        # PHASE CORE LOGIC: CloudWatch Metrics送信
+        # LandmarkDetectionRate: ランドマーク検出率（既存）
         emit_metric("LandmarkDetectionRate", detection_rate * 100, unit="Percent")
+
+        # QualityScore: 総合品質スコア（新規追加 - Phase 1実装）
+        # 参照: config/monitoring/quality_thresholds.yaml
+        emit_metric("QualityScore", quality_score, unit="None")
+
+        # DetectionRate: フレーム検出率（新規追加 - Phase 1実装）
+        # 注: LandmarkDetectionRateと同一だが、監視用に明示的に送信
+        emit_metric("DetectionRate", detection_rate * 100, unit="Percent")
+
         if not (is_quality_ok and not quality_metrics['recommend_retake']):
             emit_metric("LandmarkDetectionFailures", 1)
 
@@ -313,8 +327,10 @@ class VideoProcessingWorker:
                 'fps': extraction_result['fps'],
                 'frame_count': extraction_result['frame_count'],
                 'duration': extraction_result['duration'],
-                'detected_frames': extraction_result['detected_frames']
+                'detected_frames': extraction_result['detected_frames'],
+                'rotation': extraction_result.get('rotation', 0)  # 自動検出された回転角度
             },
+            'rotation': extraction_result.get('rotation', 0),  # CRITICAL: handler.pyでトップレベル参照
             'health_check': quality_result,
             'quality_metrics': quality_metrics,  # Phase 1: 品質メトリクス追加
             'rep_detection': rep_detection or {"series": [], "reps": []},

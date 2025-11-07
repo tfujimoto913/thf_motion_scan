@@ -1,0 +1,133 @@
+# Quality Metrics Monitoring Thresholds
+#
+# Purpose: 品質メトリクスの監視閾値定義
+# Created: 2025-11-06
+# Decision Log: 品質・処理監視ルール見直し（代替メトリクス）v1
+# Data Source: S3品質メトリクス分析（N=26, 2025-11-01〜11-06）
+# Reference: docs/monitoring/quality_metrics_analysis.md
+#
+# CRITICAL:
+# - LandmarkDetectionRate: 実装済み（CloudWatchメトリクス送信中）
+# - quality_score, detection_rate: 設計のみ（メトリクス送信未実装）
+
+version: "1.0.0"
+environment: dev
+rules_version: "v2.1"
+
+# 実装済みメトリクス（CloudWatch送信済み）
+metrics:
+  LandmarkDetectionRate:
+    status: implemented
+    description: "ランドマーク検出率（CloudWatchメトリクス）"
+    unit: "Percent"
+    range: "0-100"
+    cloudwatch_metric: "LandmarkDetectionRate"
+    namespace: "THF/MotionScan"
+
+    # 閾値設定（分析結果に基づく）
+    # 分析結果: 平均100%, 範囲100-100%, P50=100%, P95=100%
+    # 設計判断: 現状完璧だが、5%低下で警告、10%低下で異常とする
+    warn_threshold: 95.0  # 95%未満で警告
+    fail_threshold: 90.0  # 90%未満で異常
+    comparison: "less_than"  # 低いほど悪い
+
+    debounce:
+      warn_minutes: 15  # 15分連続でWARN判定時に通知
+      fail_minutes: 5   # 5分連続でFAIL判定時に通知
+
+    notification:
+      enabled: true
+      sns_topic: "${SNS_TOPIC_ARN}"
+      severity_map:
+        OK: "INFO"
+        WARN: "WARN"
+        FAIL: "CRITICAL"
+
+# 設計のみメトリクス（CloudWatch送信未実装）
+# CRITICAL: これらのメトリクスは現在CloudWatchに送信されていません
+#           実装は別タスク「品質メトリクスのCloudWatch送信実装」で対応
+design_only_metrics:
+  quality_score:
+    status: design_only
+    description: "総合品質スコア（照明・距離・姿勢等）"
+    unit: "points"
+    range: "0-100"
+
+    # 分析結果: 平均87.3, 範囲81-95, P50=86, P95=93
+    # 設計判断: P25=85を警告閾値、最小値=81を異常閾値とする
+    warn_threshold: 85.0  # 85点未満で警告（下位25%）
+    fail_threshold: 81.0  # 81点未満で異常（最小値以下）
+    comparison: "less_than"
+
+    implementation_status: "未実装 - CloudWatchメトリクス送信処理が必要"
+    required_changes:
+      - "processing/worker.py: quality_metricsからquality_scoreを取得"
+      - "emit_metric('QualityScore', quality_score, unit='None')を追加"
+      - "metrics_monitor.py: 監視ロジック追加"
+
+    notes:
+      - "現状: S3結果JSONには存在、DynamoDBには欠損"
+      - "分析: N=26, 平均87.3, 範囲81-95"
+      - "推奨: Ground Truth基盤整備と合わせて実装"
+
+  detection_rate:
+    status: design_only
+    description: "フレーム検出率（health_check内のdetection_rate）"
+    unit: "ratio"
+    range: "0.0-1.0"
+
+    # 分析結果: 平均1.0, 範囲1.0-1.0, P50=1.0, P95=1.0
+    # 設計判断: 5%低下で警告、10%低下で異常
+    warn_threshold: 0.95  # 0.95未満で警告
+    fail_threshold: 0.90  # 0.90未満で異常
+    comparison: "less_than"
+
+    implementation_status: "未実装 - CloudWatchメトリクス送信処理が必要"
+    required_changes:
+      - "processing/worker.py: health_checkからdetection_rateを取得"
+      - "emit_metric('DetectionRate', detection_rate * 100, unit='Percent')を追加"
+      - "注: LandmarkDetectionRateと重複する可能性あり（要確認）"
+
+    notes:
+      - "現状: S3結果JSON、health_check内に存在"
+      - "分析: N=26, 全件1.0（100%検出）"
+      - "推奨: LandmarkDetectionRateとの差異を確認後に実装判断"
+
+# 分析結果サマリー（参考情報）
+analysis_summary:
+  date: "2025-11-06"
+  data_source: "S3結果JSON（2025-11-01以降）"
+  sample_size: 26
+  findings:
+    - "detection_rate: 全件1.0（完璧な検出）"
+    - "quality_score: 平均87.3、範囲81-95（高品質）"
+    - "is_quality_ok=False: 57.7%（要調査）"
+    - "recommend_retake=True: 0件"
+    - "主要警告: High frame loss rate（61.5%）"
+
+  recommendations:
+    - "LandmarkDetectionRateの監視を優先実装"
+    - "quality_score/detection_rateは将来対応"
+    - "is_quality_ok閾値の見直しは別タスク化"
+    - "low_visibility_frames閾値の調整検討"
+
+# 技術的負債
+technical_debt:
+  - issue: "DynamoDBにquality_metricsが保存されていない"
+    doc: "docs/technical_debt/dynamodb_quality_metrics.md"
+    priority: "中"
+
+  - issue: "quality_score/detection_rateのCloudWatch送信未実装"
+    doc: "docs/technical_debt/quality_metrics_cloudwatch.md"
+    priority: "中"
+
+  - issue: "BCR/Kappa/OverrideRatioメトリクスが存在しない"
+    doc: "docs/monitoring/cloudwatch_metrics_verification.md"
+    priority: "低（Ground Truth必須）"
+
+# メタデータ
+metadata:
+  created_by: "Claude Code"
+  created_at: "2025-11-06"
+  last_updated: "2025-11-06"
+  schema_version: "1.0.0"

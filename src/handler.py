@@ -44,6 +44,7 @@ from processing.logger import (
     emit_metric,
 )
 from processing.overlay_drawer import draw_overlay
+from processing.utils import rotate_frame
 
 patch_all()
 
@@ -97,6 +98,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     result: Optional[Dict[str, Any]] = None
 
     try:
+        # 変数初期化
+        skip_metadata_fetch = False
+        team_id = None
+        athlete_id = None
+        session_id = None
+        test_type = None
+
         # S3イベントからバケット名とキーを取得
         if 'Records' in event:
             # S3またはSQS経由
@@ -107,51 +115,86 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 bucket = record['s3']['bucket']['name']
                 key = unquote_plus(record['s3']['object']['key'])
             elif 'body' in record:
-                # SQS経由のS3イベント（直接）
+                # SQS経由
                 body = json.loads(record['body'])
-                # bodyに直接S3イベント構造が含まれている
-                s3_record = body['Records'][0]
-                bucket = s3_record['s3']['bucket']['name']
-                key = unquote_plus(s3_record['s3']['object']['key'])
+
+                # カスタムフォーマット判定（videoKey存在チェック）
+                if 'videoKey' in body:
+                    # カスタムSQSメッセージフォーマット
+                    # {"teamId": "...", "playerId": "...", "testType": "...", "videoKey": "...", "sessionId": "..."}
+                    videos_bucket = os.environ.get('VIDEOS_BUCKET', 'thf-motion-scan-videos')
+                    bucket = videos_bucket
+                    key = body['videoKey']
+                    # メタデータをbodyから直接取得
+                    team_id = body.get('teamId')
+                    athlete_id = body.get('playerId')
+                    session_id = body.get('sessionId')
+                    test_type = body.get('testType')
+
+                    # 早期セット（S3メタデータ取得をスキップ）
+                    set_processing_context(test_code=test_type, athlete_id=athlete_id, session_id=session_id)
+
+                    log_info(
+                        "Processing target identified (custom SQS format)",
+                        test_type=test_type,
+                        context={
+                            "bucket": bucket,
+                            "key": key,
+                            "athlete_id": athlete_id,
+                            "session_id": session_id,
+                            "team_id": team_id
+                        }
+                    )
+
+                    # S3メタデータ取得をスキップするフラグ
+                    skip_metadata_fetch = True
+                elif 'Records' in body:
+                    # SQS経由のS3イベント（直接）
+                    s3_record = body['Records'][0]
+                    bucket = s3_record['s3']['bucket']['name']
+                    key = unquote_plus(s3_record['s3']['object']['key'])
+                    skip_metadata_fetch = False
+                else:
+                    raise ValueError("未知のSQSメッセージフォーマット")
             else:
                 raise ValueError("未知のイベントフォーマット")
-
         else:
             raise ValueError("イベントにRecordsが含まれていません")
 
-        # テストタイプをキーから抽出（例: videos/single_leg_squat/xxx.mp4）
-        test_type = extract_test_type(key)
+        # S3メタデータ取得（カスタムSQS形式の場合はスキップ）
+        if not skip_metadata_fetch:
+            # テストタイプをキーから抽出（例: videos/single_leg_squat/xxx.mp4）
+            test_type = extract_test_type(key)
 
-        team_id = None
-        # S3オブジェクトのメタデータからathlete_id, session_idを取得
-        try:
-            obj_metadata = s3_client.head_object(Bucket=bucket, Key=key)
-            metadata = obj_metadata.get('Metadata', {})
-            athlete_id = metadata.get('athlete-id', None)
-            session_id = metadata.get('session-id', None)
-            team_id = metadata.get('team-id', None)
-        except Exception as e:
-            log_warning(
-                "Failed to retrieve S3 object metadata",
+            # S3オブジェクトのメタデータからathlete_id, session_idを取得
+            try:
+                obj_metadata = s3_client.head_object(Bucket=bucket, Key=key)
+                metadata = obj_metadata.get('Metadata', {})
+                athlete_id = metadata.get('athlete-id', None)
+                session_id = metadata.get('session-id', None)
+                team_id = metadata.get('team-id', None)
+            except Exception as e:
+                log_warning(
+                    "Failed to retrieve S3 object metadata",
+                    test_type=test_type,
+                    context={"error": str(e)}
+                )
+                athlete_id = None
+                session_id = None
+                team_id = None
+
+            set_processing_context(test_code=test_type, athlete_id=athlete_id, session_id=session_id)
+
+            log_info(
+                "Processing target identified",
                 test_type=test_type,
-                context={"error": str(e)}
+                context={
+                    "bucket": bucket,
+                    "key": key,
+                    "athlete_id": athlete_id,
+                    "session_id": session_id
+                }
             )
-            athlete_id = None
-            session_id = None
-            team_id = None
-
-        set_processing_context(test_code=test_type, athlete_id=athlete_id, session_id=session_id)
-
-        log_info(
-            "Processing target identified",
-            test_type=test_type,
-            context={
-                "bucket": bucket,
-                "key": key,
-                "athlete_id": athlete_id,
-                "session_id": session_id
-            }
-        )
         
         # 動画をダウンロード
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -283,7 +326,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
         # DynamoDBに記録
-        save_to_dynamodb(result, bucket, key, result_key, player_id, result_session_id)
+        save_to_dynamodb(result, bucket, key, result_key, environment, player_id, result_session_id)
         log_info(
             "Results saved to DynamoDB",
             test_type=test_type,
@@ -542,6 +585,15 @@ def upload_rep_overlays(
         )
         return overlays
 
+    # CRITICAL: analyzer.pyで自動検出された回転角度を使用（メタデータに依存しない）
+    rotation = result.get("rotation", 0)
+
+    log_info(
+        "Overlay rotation from processing context",
+        test_type=test_type,
+        context={"rotation": rotation},
+    )
+
     try:
         for rep in reps:
             rep_id = rep.get("rep_id")
@@ -557,6 +609,8 @@ def upload_rep_overlays(
             success, frame = cap.read()
             if not success or frame is None:
                 continue
+
+            frame = rotate_frame(frame, rotation)
 
             landmarks = frame_data.get("landmarks")
             if not landmarks:
@@ -685,6 +739,7 @@ def save_to_dynamodb(
     bucket: str,
     video_key: str,
     result_key: str,
+    environment: str,
     athlete_id: str = None,
     session_id: str = None
 ):
@@ -709,16 +764,22 @@ def save_to_dynamodb(
 
     # PHASE B: v2.1システム対応（max_scoreとversionを追加）
     # Stage 4: athlete_id, session_idを追加
+    # Phase 2: quality_metricsを追加（技術的負債解消）
     item = {
         'video_id': f"{bucket}/{video_key}",
         'processed_at': result['processed_at'],
+        'env': environment,
         'test_type': result['test_type'],
         'score': result['score'],
+        'ai_score': result['score'],
         'max_score': result.get('max_score', 12),  # v1: 12, v2.1: 80
         'scoring_version': result.get('evaluation', {}).get('version', 'v1'),  # v1 or v2.1
         'result_s3_key': result_key,
+        'video_key': video_key,
+        'viz_key': result_key,
         'video_info': result['video_info'],
         'health_check': result['health_check'],
+        'quality_metrics': result.get('quality_metrics', {}),  # Phase 2: 品質メトリクス保存
         'evaluation': result.get('evaluation', {}),  # CRITICAL: Dashboard表示用に評価詳細も保存
         'ttl': int(datetime.now().timestamp()) + (90 * 24 * 60 * 60)  # 90日後に削除
     }
